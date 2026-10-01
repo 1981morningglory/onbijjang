@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <title>온비짱 캡처</title>
+    <link rel="stylesheet" href="ui.css" />
+    <style>
+      body { width: 320px; }
+      .wrap { display: flex; flex-direction: column; gap: 12px; padding: 14px; }
+      .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      .modes { display: flex; flex-direction: column; gap: 8px; }
+      .mode {
+        display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px;
+        text-align: left; border: 1px solid var(--line-strong); border-radius: var(--r-lg);
+        background: var(--surface); box-shadow: var(--shadow-1);
+        transition: background-color 150ms, border-color 150ms, transform 150ms;
+      }
+      .mode:hover:not(:disabled) { background: var(--brand-soft); border-color: var(--brand); }
+      .mode:active:not(:disabled) { transform: translateY(1px); }
+      .mode:disabled { opacity: 0.45; }
+      .mode .icon { width: 22px; height: 22px; color: var(--brand); }
+      .mode strong { display: block; font-size: var(--text-base); font-weight: 700; }
+      .mode span { display: block; font-size: var(--text-sm); color: var(--muted); }
+      .busy { display: flex; flex-direction: column; gap: 10px; }
+      .busy-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: var(--text-sm); color: var(--ink-2); }
+      .foot { display: flex; align-items: center; justify-content: space-between; font-size: var(--text-xs); color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="head">
+        <div class="brand">
+          <img src="icons/icon48.png" alt="" />
+          <span class="brand-name">온비짱 캡처</span>
+        </div>
+        <button id="open-options" class="btn btn-ghost btn-sm" type="button" title="옵션 열기"><i data-icon="settings"></i>옵션</button>
+      </div>
+
+      <div id="notice" class="callout callout-danger" role="alert" hidden>
+        <i data-icon="circle-x"></i>
+        <div id="notice-text"></div>
+      </div>
+      <div id="limited" class="callout callout-warn" role="note" hidden>
+        <i data-icon="triangle-alert"></i>
+        <div>이 페이지는 브라우저가 보호하고 있어 '보이는 부분'만 캡처할 수 있습니다.</div>
+      </div>
+
+      <div id="menu" class="modes">
+        <button class="mode" type="button" data-mode="full">
+          <i data-icon="scroll-text"></i>
+          <div><strong>전체 페이지</strong><span>맨 위부터 끝까지 스크롤하며 한 장으로</span></div>
+        </button>
+        <button class="mode" type="button" data-mode="visible">
+          <i data-icon="app-window"></i>
+          <div><strong>보이는 부분</strong><span>지금 화면에 보이는 만큼만</span></div>
+        </button>
+        <button class="mode" type="button" data-mode="region">
+          <i data-icon="square-dashed-mouse-pointer"></i>
+          <div><strong>영역 선택</strong><span>끌어서 고른 부분만</span></div>
+        </button>
+      </div>
+
+      <div id="busy" class="busy" hidden>
+        <div class="busy-row">
+          <span id="busy-label">페이지를 캡처하고 있습니다</span>
+          <span id="busy-percent" class="num muted">0%</span>
+        </div>
+        <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="busy-bar"><div></div></div>
+        <p class="hint">끝날 때까지 이 탭을 그대로 두세요. 페이지에서 Esc 를 눌러도 취소됩니다.</p>
+        <button id="cancel" class="btn btn-block" type="button"><i data-icon="x"></i>캡처 취소</button>
+      </div>
+
+      <div class="foot">
+        <span>캡처는 이 브라우저 안에서만 처리됩니다</span>
+        <span id="version" class="num"></span>
+      </div>
+    </div>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

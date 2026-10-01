@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>온비짱 캡처 옵션</title>
+    <link rel="icon" href="icons/icon48.png" />
+    <link rel="stylesheet" href="ui.css" />
+    <style>
+      main { max-width: 640px; margin: 0 auto; padding: 32px 16px 64px; display: flex; flex-direction: column; gap: 20px; }
+      .title { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+      .title h1 { font-size: var(--text-xl); }
+      .row { display: flex; gap: 8px; flex-wrap: wrap; }
+      .row .input { flex: 1; min-width: 200px; }
+      .line { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+      ul.plain { margin: 0; padding-left: 1.2em; color: var(--ink-2); font-size: var(--text-sm); }
+      ul.plain li + li { margin-top: 4px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="title">
+        <div class="brand">
+          <img src="icons/icon48.png" alt="" />
+          <h1>온비짱 캡처 옵션</h1>
+        </div>
+        <span id="version" class="badge num"></span>
+      </div>
+
+      <div class="panel">
+        <section class="section">
+          <h2>온비짱 주소</h2>
+          <div class="field">
+            <label for="origin">'온비짱에서 편집'을 누르면 열리는 사이트</label>
+            <div class="row">
+              <input id="origin" class="input" type="text" spellcheck="false" autocomplete="off" placeholder="http://localhost:5173" />
+              <button id="save-origin" class="btn btn-primary" type="button"><i data-icon="save"></i>주소 저장</button>
+            </div>
+            <p id="origin-error" class="error" role="alert" hidden></p>
+            <p class="hint">팀에서 쓰는 온비짱 주소를 넣으세요. 처음 편집으로 보낼 때 이 주소에 접근해도 되는지 브라우저가 한 번 묻습니다.</p>
+          </div>
+          <button id="reset-origin" class="btn btn-ghost btn-sm" type="button" style="align-self: flex-start">기본 주소로 되돌리기</button>
+        </section>
+
+        <section class="section">
+          <h2>전체 페이지 캡처</h2>
+          <div class="field">
+            <span class="field-label" id="wait-label">스크롤할 때마다 기다리는 시간</span>
+            <div class="seg" role="radiogroup" aria-labelledby="wait-label">
+              <label><input type="radio" name="wait" value="normal" /><span>보통</span></label>
+              <label><input type="radio" name="wait" value="slow" /><span>길게</span></label>
+            </div>
+            <p class="hint">이미지가 늦게 뜨는 페이지에서 그림이 비어 찍히면 '길게'로 바꾸세요. 캡처 시간은 더 걸립니다.</p>
+          </div>
+          <label class="switch">
+            <span class="switch-text">
+              <strong>이미지 아래에 주소와 캡처 시각 넣기</strong>
+              <span>결과 화면에서도 켜고 끌 수 있습니다.</span>
+            </span>
+            <input id="footer" type="checkbox" />
+            <span class="switch-track"></span>
+          </label>
+        </section>
+
+        <section class="section">
+          <h2>임시 보관</h2>
+          <div class="line">
+            <p id="stored" class="small muted">확인하는 중</p>
+            <button id="clear" class="btn btn-danger btn-sm" type="button"><i data-icon="trash"></i>지금 모두 지우기</button>
+          </div>
+          <p class="hint">캡처는 결과 화면을 보여 주기 위해 이 브라우저 안에만 잠시 둡니다. 1시간이 지나거나 새 캡처가 3개를 넘으면 오래된 것부터 지워집니다.</p>
+        </section>
+
+        <section class="section">
+          <h2>이 확장 프로그램이 하는 일</h2>
+          <ul class="plain">
+            <li>아이콘을 눌러 캡처를 시작한 탭에서만 동작합니다.</li>
+            <li>캡처한 이미지는 어디에도 보내지 않습니다. '온비짱에서 편집'을 누를 때만 위에 적은 주소의 탭으로 넘깁니다.</li>
+            <li>방문 기록이나 페이지 내용을 모으지 않습니다.</li>
+          </ul>
+        </section>
+      </div>
+    </main>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

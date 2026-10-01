@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "온비짱 캡처",
+  "short_name": "온비짱 캡처",
+  "version": "1.0.0",
+  "description": "웹페이지를 맨 위부터 끝까지 한 장으로 캡처하고 온비짱에서 바로 편집합니다.",
+  "minimum_chrome_version": "116",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "온비짱 캡처",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "permissions": ["activeTab", "scripting", "storage"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"]
+}

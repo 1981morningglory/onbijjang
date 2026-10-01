@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>캡처 결과 · 온비짱 캡처</title>
+    <link rel="icon" href="icons/icon48.png" />
+    <link rel="stylesheet" href="ui.css" />
+    <style>
+      .top { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--surface); flex-wrap: wrap; }
+      .top-info { min-width: 0; flex: 1 1 280px; }
+      .top-info h1 { font-size: var(--text-lg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .top-info p { font-size: var(--text-sm); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .layout { display: grid; gap: 20px; padding: 20px; align-items: start; grid-template-columns: minmax(0, 1fr); }
+      @media (min-width: 960px) { .layout { grid-template-columns: minmax(0, 1fr) 340px; } aside { position: sticky; top: 20px; } }
+      .work { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+      .stage { min-height: 360px; max-height: calc(100dvh - 150px); overflow: auto; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+      .stage.center { justify-content: center; }
+      .shots { display: flex; flex-direction: column; align-items: center; width: 100%; }
+      .shots canvas { display: block; width: 100%; height: auto; background: #fff; box-shadow: var(--shadow-3); }
+      .shots .cut { width: 100%; display: flex; align-items: center; gap: 8px; margin: 10px 0; font-size: var(--text-xs); font-weight: 600; color: var(--on-mat); }
+      .shots .cut::before, .shots .cut::after { content: ''; flex: 1; border-top: 1px dashed var(--mat-line); }
+      .state { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; max-width: 46ch; padding: 24px; }
+      .state .icon { width: 28px; height: 28px; }
+      .state strong { font-size: var(--text-base); }
+      .state .progress { width: 220px; background: var(--mat-deep); }
+      .state .progress > div { background: var(--mark); }
+      .facts { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: var(--text-sm); color: var(--muted); }
+      .stack { display: flex; flex-direction: column; gap: 8px; }
+      .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      .origin { font-size: var(--text-sm); color: var(--muted); word-break: break-all; }
+      .linkish { background: none; border: 0; padding: 0; color: var(--brand-ink); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+      .linkish:hover { color: var(--brand); }
+    </style>
+  </head>
+  <body>
+    <header class="top">
+      <div class="brand">
+        <img src="icons/icon48.png" alt="" />
+        <span class="brand-name">온비짱 캡처</span>
+      </div>
+      <div class="top-info">
+        <h1 id="page-title">캡처 결과</h1>
+        <p id="page-url"></p>
+      </div>
+    </header>
+
+    <div class="layout">
+      <div class="work">
+        <div id="truncated" class="callout callout-warn" role="note" hidden>
+          <i data-icon="triangle-alert"></i>
+          <div id="truncated-text"></div>
+        </div>
+        <div id="split-note" class="callout callout-info" role="note" hidden>
+          <i data-icon="info"></i>
+          <div id="split-text"></div>
+        </div>
+        <div id="stage" class="mat stage center">
+          <div id="loading" class="state" role="status">
+            <i data-icon="loader-circle" class="spin"></i>
+            <strong id="loading-text">캡처를 불러오는 중</strong>
+            <div class="progress"><div id="loading-bar"></div></div>
+          </div>
+          <div id="failed" class="state" role="alert" hidden>
+            <i data-icon="circle-x"></i>
+            <strong id="failed-title">캡처를 찾을 수 없습니다</strong>
+            <p id="failed-text" class="small">임시로 보관하던 캡처가 지워졌습니다. 원래 페이지에서 확장 아이콘을 눌러 다시 캡처해 주세요.</p>
+          </div>
+          <div id="shots" class="shots" hidden></div>
+        </div>
+        <div id="facts" class="facts num" hidden></div>
+      </div>
+
+      <aside class="panel">
+        <section class="section">
+          <h2>저장</h2>
+          <div class="stack">
+            <button id="save-png" class="btn btn-primary btn-block" type="button" disabled><i data-icon="download"></i>PNG 로 저장</button>
+            <div class="pair">
+              <button id="save-jpg" class="btn" type="button" disabled><i data-icon="image"></i>JPG 로 저장</button>
+              <button id="save-pdf" class="btn" type="button" disabled><i data-icon="file-text"></i>PDF 로 저장</button>
+            </div>
+            <button id="copy" class="btn btn-block" type="button" disabled><i data-icon="copy"></i>클립보드에 복사</button>
+          </div>
+          <p class="hint">PDF 는 A4 폭에 맞춰 여러 쪽으로 나뉩니다.</p>
+        </section>
+
+        <section class="section">
+          <h2>표시</h2>
+          <label class="switch">
+            <span class="switch-text">
+              <strong>아래에 주소와 캡처 시각 넣기</strong>
+              <span>저장·복사·편집으로 보내는 이미지 맨 아래에 한 줄이 붙습니다.</span>
+            </span>
+            <input id="footer" type="checkbox" />
+            <span class="switch-track"></span>
+          </label>
+        </section>
+
+        <section class="section">
+          <h2>온비짱에서 편집</h2>
+          <button id="edit" class="btn btn-block" type="button" disabled><i data-icon="square-pen"></i>온비짱에서 편집</button>
+          <div id="edit-progress" class="progress" hidden><div id="edit-bar"></div></div>
+          <p class="origin">열리는 주소: <span id="origin"></span> <button id="open-options" class="linkish" type="button">주소 바꾸기</button></p>
+          <p class="hint">자르기, 높이 기준 분할, 모자이크 같은 편집은 온비짱에서 이어서 할 수 있습니다. 처음 보낼 때 브라우저가 이 주소에 접근해도 되는지 묻습니다.</p>
+          <div id="edit-error" class="callout callout-danger" role="alert" hidden>
+            <i data-icon="circle-x"></i>
+            <div id="edit-error-text"></div>
+          </div>
+        </section>
+      </aside>
+    </div>
+    <script type="module" src="result.js"></script>
+  </body>
+</html>

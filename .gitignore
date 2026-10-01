@@ -1,0 +1,8 @@
+node_modules
+dist
+data/*.json
+data/library
+data/uploads
+*.log
+.env
+.art-src

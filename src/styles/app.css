@@ -1,0 +1,205 @@
+@import 'tailwindcss';
+@import 'pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css';
+@import '@fontsource/black-han-sans/korean-400.css';
+@import '@fontsource/black-han-sans/latin-400.css';
+
+/*
+ * 온비짱 디자인 토큰 — "작업 매트" 세계관
+ * 종이(paper) 위에 잉크(ink), 작업 매트 초록(brand/mat), 형광펜 노랑(mark).
+ * 색은 반드시 아래 토큰으로만 쓴다. 임의 hex 금지.
+ */
+@theme {
+  --font-sans: 'Pretendard Variable', Pretendard, -apple-system, 'Malgun Gothic', 'Apple SD Gothic Neo', system-ui, sans-serif;
+  --font-display: 'Black Han Sans', 'Pretendard Variable', sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Mono', 'D2Coding', Consolas, monospace;
+
+  --color-paper: #f7f4ec;
+  --color-panel: #efebdf;
+  --color-surface: #fffefb;
+  --color-sunken: #f2eee3;
+  --color-line: #dfd8c6;
+  --color-line-strong: #c4baa1;
+
+  --color-ink: #14201a;
+  --color-ink-2: #36443c;
+  --color-muted: #5a665f;
+  --color-faint: #8a9289;
+
+  --color-brand: #0b7a53;
+  --color-brand-strong: #075e40;
+  --color-brand-soft: #dcefe4;
+  --color-brand-ink: #064a33;
+  --color-on-brand: #ffffff;
+
+  --color-mat: #0f5a41;
+  --color-mat-deep: #0a4632;
+  --color-mat-line: #2a7a5e;
+  --color-on-mat: #eaf5ee;
+
+  /* 잉크색(어두운) 바탕 위에서 쓰는 상태색 */
+  --color-ink-danger: #ff9b8a;
+  --color-ink-success: #7fe0b6;
+
+  --color-mark: #ffe55c;
+  --color-mark-soft: #fff5bf;
+  --color-accent: #e8551f;
+  --color-accent-soft: #fde6dc;
+
+  --color-danger: #c22f1c;
+  --color-danger-soft: #fbe3de;
+  --color-warn: #96590a;
+  --color-warn-soft: #fbedc9;
+  --color-info: #1f4fbf;
+  --color-info-soft: #e0e9fb;
+  --color-success: #0b7a53;
+  --color-success-soft: #dcefe4;
+
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-2xl: 28px;
+
+  --shadow-1: 0 1px 2px rgb(60 48 20 / 0.06), 0 1px 1px rgb(60 48 20 / 0.04);
+  --shadow-2: 0 2px 4px rgb(60 48 20 / 0.06), 0 6px 16px -4px rgb(60 48 20 / 0.1);
+  --shadow-3: 0 4px 8px rgb(60 48 20 / 0.06), 0 18px 40px -10px rgb(60 48 20 / 0.22);
+
+  --text-2xs: 0.6875rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-lg: 1.0625rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 1.875rem;
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    font-size: 16px;
+    color: var(--color-ink);
+    background: var(--color-paper);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    scrollbar-color: var(--color-line-strong) transparent;
+    scrollbar-width: thin;
+  }
+  body {
+    margin: 0;
+    font-size: var(--text-base);
+    line-height: 1.55;
+    min-height: 100dvh;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+  }
+  ::selection {
+    background: var(--color-mark);
+    color: var(--color-ink);
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+    border-radius: var(--radius-xs);
+  }
+  h1, h2, h3, h4 {
+    margin: 0;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.25;
+    text-wrap: balance;
+  }
+  p { margin: 0; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  button:disabled { cursor: not-allowed; }
+  input, textarea, select { caret-color: var(--color-brand); accent-color: var(--color-brand); }
+  a { color: inherit; text-underline-offset: 3px; }
+  table { font-variant-numeric: tabular-nums; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-line-strong);
+    border-radius: 99px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover { background-color: var(--color-faint); }
+  input[type='number']::-webkit-inner-spin-button { opacity: 0.5; }
+}
+
+@layer components {
+  /* 숫자가 세로로 정렬되어야 하는 모든 곳 */
+  .num { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; }
+
+  /* 형광펜 밑줄 — 브랜드 강조. 제목의 한 단어에만 쓴다. */
+  .marker {
+    background-image: linear-gradient(transparent 58%, var(--color-mark) 58%, var(--color-mark) 92%, transparent 92%);
+    padding: 0 0.12em;
+    margin: 0 -0.12em;
+    border-radius: 2px;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }
+
+  /* 작업 매트 — 이미지·영상·캔버스가 놓이는 무대 */
+  .mat {
+    background-color: var(--color-mat);
+    background-image:
+      linear-gradient(var(--color-mat-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--color-mat-line) 1px, transparent 1px),
+      linear-gradient(rgb(255 255 255 / 0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(255 255 255 / 0.045) 1px, transparent 1px);
+    background-size: 80px 80px, 80px 80px, 16px 16px, 16px 16px;
+    background-position: -1px -1px;
+    color: var(--color-on-mat);
+  }
+
+  /* 투명 영역 표시용 체커보드 */
+  .checker {
+    background-color: #fff;
+    background-image:
+      linear-gradient(45deg, #e4e0d6 25%, transparent 25%, transparent 75%, #e4e0d6 75%),
+      linear-gradient(45deg, #e4e0d6 25%, transparent 25%, transparent 75%, #e4e0d6 75%);
+    background-size: 16px 16px;
+    background-position: 0 0, 8px 8px;
+  }
+
+  .skeleton {
+    background: linear-gradient(100deg, var(--color-sunken) 40%, var(--color-surface) 50%, var(--color-sunken) 60%);
+    background-size: 200% 100%;
+    animation: skeleton 1.4s linear infinite;
+    border-radius: var(--radius-sm);
+  }
+
+  /* 긴 글(도움말, 안내문) */
+  .prose-ob { max-width: 68ch; color: var(--color-ink-2); }
+  .prose-ob > * + * { margin-top: 0.6em; }
+  .prose-ob ul { padding-left: 1.2em; margin: 0; list-style: disc; }
+  .prose-ob li + li { margin-top: 0.25em; }
+}
+
+@keyframes skeleton { to { background-position: -200% 0; } }
+@keyframes ob-pop { from { opacity: 0; transform: translateY(6px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes ob-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ob-spin { to { transform: rotate(360deg); } }
+
+@utility animate-pop { animation: ob-pop 0.22s var(--ease-out-expo) both; }
+@utility animate-fade { animation: ob-fade 0.18s ease-out both; }
+@utility animate-spin-slow { animation: ob-spin 0.9s linear infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media print {
+  .no-print { display: none !important; }
+  html, body { background: #fff; }
+}
