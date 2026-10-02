@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 /**
  * localStorage 에 남는 상태. 도구 설정을 새로고침 뒤에도 유지할 때 쓴다.
@@ -92,7 +92,7 @@ export function useAbortable() {
   }, [])
   const abort = useCallback(() => ref.current?.abort(), [])
   useEffect(() => () => ref.current?.abort(), [])
-  return { start, abort }
+  return useMemo(() => ({ start, abort }), [start, abort])
 }
 
 export function useDebounced<T>(value: T, ms = 200): T {
