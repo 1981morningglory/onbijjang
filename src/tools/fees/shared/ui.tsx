@@ -171,7 +171,7 @@ export function AmountField({ label, value, onValue, def, hint, className }: { l
 // ── 카테고리 고르기 ───────────────────────────────────────
 function CategoryList({ categories, value, onPick }: { categories: CategoryRate[]; value: string; onPick: (c: CategoryRate) => void }) {
   const [query, setQuery] = useState('')
-  const found = useMemo(() => searchCategories(categories, query, 80), [categories, query])
+  const found = useMemo(() => searchCategories(categories, query, 400), [categories, query])
   const box = useRef<HTMLDivElement>(null)
   // 팝오버는 자리를 잡기 전까지 숨겨져 있어 autoFocus 가 먹지 않는다. 보인 뒤에 검색칸으로 옮긴다.
   useEffect(() => {

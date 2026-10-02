@@ -1,4 +1,4 @@
-import { Callout, ColorField, Field, NumberInput, Section, Segmented, Select, Slider } from '@/ui'
+import { Callout, ColorField, Field, NumberInput, Section, Segmented, Select, Slider, Switch } from '@/ui'
 import type { EncodeSupport } from './capabilities'
 import { layoutFor } from './convert'
 import {
@@ -35,11 +35,13 @@ export interface OutputSectionsProps {
   support: EncodeSupport | null
   /** 원본 크기를 알면 결과 크기·비트레이트를 미리 보여 준다 */
   source?: { width: number; height: number } | null
+  /** 지금 영상에 소리를 담을 수 없는 이유(원본이 너무 큼 등). 담을 수 있으면 null */
+  audioBlocked?: string | null
   disabled?: boolean
 }
 
 /** 출력 형식·크기·화질·출력 틀 설정. clips 와 gif 가 같은 화면을 쓴다. ToolLayout 의 panel 안에 그대로 넣는다. */
-export function OutputSections({ value, onChange, support, source, disabled }: OutputSectionsProps) {
+export function OutputSections({ value, onChange, support, source, audioBlocked, disabled }: OutputSectionsProps) {
   const set = (patch: Partial<OutputSettings>) => onChange({ ...value, ...patch })
   const isVideo = value.format === 'mp4'
   const layout = source ? layoutFor(source.width, source.height, value) : null
@@ -61,11 +63,20 @@ export function OutputSections({ value, onChange, support, source, disabled }: O
           ]}
         />
         {value.format === 'gif' && <p className="text-sm text-muted">어디서나 바로 움직이지만 용량이 큽니다. 짧은 구간에 알맞습니다.</p>}
-        {isVideo && support?.video === 'mp4' && <p className="text-sm text-muted">같은 화질에서 용량이 가장 작습니다. 소리는 담기지 않습니다.</p>}
+        {isVideo && support?.video === 'mp4' && <p className="text-sm text-muted">같은 화질에서 용량이 가장 작고, 소리도 담을 수 있습니다.</p>}
         {isVideo && support?.video === 'webm' && (
           <Callout tone="info" title="이 브라우저에서는 WebM 으로 저장됩니다">
-            MP4(H.264) 인코딩을 지원하지 않는 브라우저입니다. MP4 가 꼭 필요하면 크롬이나 엣지에서 열어 주세요. 소리는 담기지 않습니다.
+            MP4(H.264) 인코딩을 지원하지 않는 브라우저입니다. MP4 가 꼭 필요하면 크롬이나 엣지에서 열어 주세요.
           </Callout>
+        )}
+        {isVideo && support?.video != null && (
+          <Switch
+            checked={value.videoAudio}
+            onChange={(videoAudio) => set({ videoAudio })}
+            disabled={disabled}
+            label="소리 포함"
+            hint={value.videoAudio && audioBlocked ? audioBlocked : '원본에 소리가 있으면 함께 담습니다(원본 200MB·15분 이하).'}
+          />
         )}
         {isVideo && support?.video === null && (
           <Callout tone="warn" title="이 브라우저는 영상 저장을 지원하지 않습니다">

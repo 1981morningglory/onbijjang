@@ -327,3 +327,20 @@ describe('보관함에서 온 서명 확인', () => {
     expect(isAssetLike(null)).toBe(false)
   })
 })
+
+describe('암호화 표시 찾기', () => {
+  const enc = (s: string) => new TextEncoder().encode(s)
+  it('trailer 에 /Encrypt 가 있으면 찾는다', async () => {
+    const { hasEncryptMarker } = await import('./docs')
+    expect(hasEncryptMarker(enc('%PDF-1.4\ntrailer\n<< /Root 1 0 R /Encrypt 6 0 R >>\n%%EOF'))).toBe(true)
+    expect(hasEncryptMarker(enc('%PDF-1.4\ntrailer\n<< /Root 1 0 R >>\n%%EOF'))).toBe(false)
+  })
+  it('큰 파일은 앞뒤만 본다', async () => {
+    const { hasEncryptMarker } = await import('./docs')
+    const big = new Uint8Array(100_000)
+    big.set(enc('/Encrypt'), 50_000)
+    expect(hasEncryptMarker(big)).toBe(false)
+    big.set(enc('/Encrypt'), 99_000)
+    expect(hasEncryptMarker(big)).toBe(true)
+  })
+})

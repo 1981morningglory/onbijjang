@@ -402,6 +402,7 @@ export default function SignatureTool() {
       if (format === 'pdf') {
         if (doc.kind === 'pdf') {
           try {
+            if (doc.rasterOnly) throw new PdfStructureError('encrypted')
             files = [await savePdfKeepingOriginal(doc, items, onProgress, signal)]
           } catch (err) {
             if (!(err instanceof PdfStructureError)) throw err
@@ -614,7 +615,7 @@ export default function SignatureTool() {
                   ]}
                 />
                 <p className="text-sm text-muted">
-                  {saveSettings.pdf === 'pdf' ? '원본 PDF 에 서명 이미지만 얹습니다. 글자 선택과 선명도는 그대로입니다.' : doc.pages.length > 1 ? '쪽마다 PNG 한 장씩, ZIP 으로 묶어 저장합니다.' : '쪽을 PNG 이미지로 저장합니다.'}
+                  {saveSettings.pdf === 'pdf' ? (doc.rasterOnly ? '암호·편집 제한이 걸린 PDF 라, 쪽을 이미지로 바꾼 새 PDF 로 저장합니다(글자 선택 불가).' : '원본 PDF 에 서명 이미지만 얹습니다. 글자 선택과 선명도는 그대로입니다.') : doc.pages.length > 1 ? '쪽마다 PNG 한 장씩, ZIP 으로 묶어 저장합니다.' : '쪽을 PNG 이미지로 저장합니다.'}
                 </p>
               </>
             )}
@@ -705,7 +706,7 @@ export default function SignatureTool() {
         <>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-line bg-surface px-3 py-2 shadow-1">
             <div className="flex min-w-0 flex-1 basis-40 items-center gap-2">
-              <Badge tone="brand">{DOC_KIND_LABEL[doc.kind]}</Badge>
+              <Badge tone="brand" className="shrink-0">{DOC_KIND_LABEL[doc.kind]}</Badge>
               <span className="truncate text-sm font-semibold text-ink" title={doc.file.name}>
                 {doc.file.name}
               </span>

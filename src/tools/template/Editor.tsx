@@ -94,7 +94,7 @@ function RailButton({ icon: Icon, label, active, ref, className, ...rest }: Butt
       type="button"
       aria-pressed={active}
       className={clsx(
-        'flex h-14 w-14 shrink-0 flex-col items-center justify-center gap-1 rounded-md border text-2xs font-semibold transition-colors duration-150 disabled:opacity-45',
+        'flex h-14 min-w-11 flex-1 shrink-0 flex-col items-center justify-center gap-1 rounded-md border text-2xs font-semibold transition-colors duration-150 disabled:opacity-45 lg:w-14 lg:flex-none',
         active ? 'border-brand/40 bg-brand-soft text-brand-ink' : 'border-transparent text-ink-2 hover:bg-sunken hover:text-ink',
         className,
       )}
@@ -202,7 +202,11 @@ export function Editor({ fabric }: { fabric: Fabric }) {
       onSelection: setSel,
       onLayers: setLayers,
       onZoom: setZoom,
-      onMode: setModeState,
+      onMode: (m) => {
+        setModeState(m)
+        // 펜 설정은 속성 탭에 있다.
+        if (m !== 'select') setTab('props')
+      },
     })
     ctl.current = c
     ;(window as unknown as Record<string, unknown>).__tctl = c // DEBUG-TEMP

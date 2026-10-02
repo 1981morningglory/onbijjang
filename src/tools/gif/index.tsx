@@ -6,12 +6,13 @@ import { useHandoffFiles } from '@/app/handoff'
 import { blobToFile, downloadBlob, downloadZip, extOf, fileKind, formatBytes, todayStamp } from '@/lib/files'
 import { useAbortable, useObjectUrl, usePersistentState } from '@/lib/hooks'
 import { Badge, Button, Callout, Dropzone, EmptyState, Field, IconButton, NumberInput, Panel, Progress, Section, SendToMenu, Spinner, Stage, ToolLayout, WatermarkControls, toast } from '@/ui'
+import { audioLimitReason, decodeAudio } from '../clips/shared/audio'
 import { useEncodeSupport } from '../clips/shared/capabilities'
 import { convertRange } from '../clips/shared/convert'
 import { openVideo } from '../clips/shared/frameSource'
 import { OutputSections, videoFormatLabel } from '../clips/shared/OutputSettings'
 import { FramePreview } from '../clips/shared/player'
-import { isAbort, type FrameSink } from '../clips/shared/sinks'
+import { AbortError, isAbort, type FrameSink } from '../clips/shared/sinks'
 import { TimeInput } from '../clips/shared/TimeInput'
 import { formatDuration, outputName } from '../clips/shared/time'
 import { DEFAULT_OUTPUT, GIF_MAX_SECONDS, type OutputSettings } from '../clips/shared/types'
@@ -23,6 +24,7 @@ interface ResultItem {
   kind: FrameSink['kind']
   width: number
   height: number
+  audio: boolean
 }
 
 interface JobState {
@@ -31,6 +33,7 @@ interface JobState {
   fraction: number
   name: string
   id: string
+  preparing?: string
 }
 
 /** 목록에 보일 작은 장면 그림 */
@@ -219,6 +222,14 @@ export default function GifTool() {
         setJob({ index, total: targets.length, fraction: 0, name: item.file.name, id: item.id })
         let lastPaint = 0
         try {
+          // 소리를 담을 수 있는 크기면 원본 소리를 먼저 푼다. 이 영상의 변환이 끝나면 버린다.
+          let audio: AudioBuffer | null = null
+          if (output.format === 'mp4' && output.videoAudio && !audioLimitReason(item.file.size, item.duration)) {
+            setJob((j) => (j ? { ...j, preparing: '원본 소리를 읽는 중' } : j))
+            audio = await decodeAudio(item.file)
+            if (signal.aborted) throw new AbortError()
+            setJob((j) => (j ? { ...j, preparing: undefined } : j))
+          }
           const src = await openVideo(item.file, signal)
           try {
             const res = await convertRange({
@@ -227,6 +238,7 @@ export default function GifTool() {
               end: item.end,
               output,
               watermark,
+              audio,
               signal,
               onProgress: (fraction) => {
                 const now = performance.now()
@@ -237,7 +249,7 @@ export default function GifTool() {
             })
             // 원본과 같은 형식으로 줄였을 때는 이름이 겹치지 않게 꼬리표를 붙인다.
             const sameFormat = extOf(item.file.name) === res.ext
-            const result: ResultItem = { blob: res.blob, name: outputName(item.file.name, sameFormat ? '줄임' : '', res.ext), kind: res.kind, width: res.width, height: res.height }
+            const result: ResultItem = { blob: res.blob, name: outputName(item.file.name, sameFormat ? '줄임' : '', res.ext), kind: res.kind, width: res.width, height: res.height, audio: res.audio }
             setResults((prev) => ({ ...prev, [item.id]: result }))
             done++
           } finally {
@@ -292,14 +304,21 @@ export default function GifTool() {
               모두 전체 길이로 되돌리기
             </Button>
           </Section>
-          <OutputSections value={output} onChange={setOutput} support={support} source={active ? { width: active.width, height: active.height } : null} disabled={busy} />
+          <OutputSections
+            value={output}
+            onChange={setOutput}
+            support={support}
+            source={active ? { width: active.width, height: active.height } : null}
+            audioBlocked={ready.some((i) => audioLimitReason(i.file.size, i.duration)) ? '200MB 또는 15분을 넘는 영상은 소리 없이 화면만 저장합니다.' : null}
+            disabled={busy}
+          />
           <Section title="워터마크" hint="모든 프레임에 들어갑니다.">
             <WatermarkControls value={watermark} onChange={setWatermark} />
           </Section>
           <Section title="변환">
             {busy && job ? (
               <>
-                <Progress value={((job.index + job.fraction) / job.total) * 100} label={<span className="break-all">{`${job.name} (${job.index + 1}/${job.total})`}</span>} />
+                <Progress value={job.preparing ? null : ((job.index + job.fraction) / job.total) * 100} label={<span className="break-all">{job.preparing ? `${job.preparing} — ${job.name}` : `${job.name} (${job.index + 1}/${job.total})`}</span>} />
                 <Button icon={X} block onClick={abortable.abort}>
                   취소
                 </Button>
@@ -478,6 +497,7 @@ function ItemRow({ item, active, busy, working, problem, error, result, onActiva
           <Badge tone="brand">{result.kind.toUpperCase()}</Badge>
           <span className="num text-sm text-ink-2">
             {result.width} × {result.height}px · {formatBytes(result.blob.size)}
+            {(result.kind === 'mp4' || result.kind === 'webm') && (result.audio ? ' · 소리 포함' : ' · 소리 없음')}
             {result.blob.size < item.file.size && ` (원본의 ${Math.min(99, Math.max(1, Math.round((result.blob.size / item.file.size) * 100)))}%)`}
           </span>
           <div className="ml-auto flex flex-wrap items-center gap-2">

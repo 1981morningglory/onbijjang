@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import bwipjs from 'bwip-js'
 import fontkit from '@pdf-lib/fontkit'
-import { PDFArray, PDFDocument, PDFRawStream, decodePDFRawStream } from 'pdf-lib'
+import { PDFArray, PDFDict, PDFDocument, PDFName, PDFRawStream, decodePDFRawStream } from 'pdf-lib'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { makeBarcode, setBarcodeLib } from './barcode'
 import { DEFAULT_SERIAL, MM_PER_PT, cellRect, type LabelDoc, type LabelElement, type Measure } from './model'
@@ -160,6 +160,27 @@ describe('PDF 저장', () => {
     expect((content.match(/ Tj\n/g) ?? []).length).toBe(4)
     // 글꼴은 쓰인 글자만 담아 작아야 한다(원본은 한 벌에 2.6MB)
     expect(bytes.length).toBeLessThan(200_000)
+    // 심은 부분 글꼴의 글리프 모양이 원본과 같아야 한다(홀수 길이 글리프가 어긋나던 결함의 회귀 방지).
+    const { pdf } = await pageContent(bytes)
+    const files = pdf.context
+      .enumerateIndirectObjects()
+      .map(([, obj]) => obj)
+      .filter((obj): obj is PDFDict => obj instanceof PDFDict && obj.has(PDFName.of('FontFile2')))
+      .map((d) => pdf.context.lookup(d.get(PDFName.of('FontFile2'))) as PDFRawStream)
+    expect(files).toHaveLength(2)
+    const original = fontkit.create(Buffer.from(fonts.bold))
+    const embedded = files.map((f) => fontkit.create(Buffer.from(decodePDFRawStream(f).decode()))).find((f) => f.numGlyphs > 1)!
+    // 처음 그린 줄 "홍길동 님 귀하" 의 글리프가 쓰인 순서대로 1번부터 들어간다.
+    const firstLine = content.match(/<([0-9A-F]+)> Tj/)![1]
+    const codes = firstLine.match(/.{4}/g)!.map((h) => parseInt(h, 16))
+    const glyphs = original.layout('홍길동 님 귀하').glyphs
+    expect(codes).toHaveLength(glyphs.length)
+    glyphs.forEach((g, i) => {
+      expect(embedded.getGlyph(codes[i]).path.toSVG(), `글리프 ${i}`).toBe(g.path.toSVG())
+    })
+    // 이 글꼴에는 길이가 홀수인 글리프가 실제로 있다(없다면 위 검사가 결함을 잡지 못한다).
+    expect((original as unknown as { loca: { offsets: number[] } }).loca.offsets.some((o) => o % 2 === 1)).toBe(true)
+
     // 글꼴이 없고 그림으로 바꿀 방법도 없으면 글자를 건너뛴다(오류는 아니다)
     const none = await buildLabelPdf(d, env)
     expect(none.stats.labels).toBe(2)

@@ -7,12 +7,13 @@ import { blobToFile, downloadBlob, downloadZip, fileKind, formatBytes, stripExt 
 import { useAbortable, useObjectUrl, usePersistentState } from '@/lib/hooks'
 import { Badge, Button, Callout, Checkbox, Dropzone, EmptyState, IconButton, Kbd, Panel, Progress, Section, SendToMenu, Spinner, Stage, TextInput, ToolLayout, WatermarkControls, toast } from '@/ui'
 import { MAX_DURATION, MAX_FILE_BYTES, addRange, moveEdge, rangeProblem, type ClipRange } from './ranges'
+import { audioLimitReason, decodeAudio } from './shared/audio'
 import { useEncodeSupport } from './shared/capabilities'
 import { convertRange, layoutFor } from './shared/convert'
 import { openVideo, type OpenedVideo } from './shared/frameSource'
 import { OutputSections, videoFormatLabel } from './shared/OutputSettings'
 import { FramePreview, useCurrentTime, usePlaying } from './shared/player'
-import { isAbort, type FrameSink } from './shared/sinks'
+import { AbortError, isAbort, type FrameSink } from './shared/sinks'
 import { TimeInput } from './shared/TimeInput'
 import { estimateGifBytes, estimateVideoBytes, formatDuration, formatTime, outputName } from './shared/time'
 import { DEFAULT_OUTPUT, GIF_MAX_SECONDS, effectiveSize, resolveBitrate, type OutputSettings } from './shared/types'
@@ -30,6 +31,7 @@ interface ResultItem {
   kind: FrameSink['kind']
   width: number
   height: number
+  audio: boolean
 }
 
 interface JobState {
@@ -37,6 +39,8 @@ interface JobState {
   total: number
   fraction: number
   name: string
+  /** 구간 변환에 앞서 하는 준비 작업(소리 읽기) 안내 */
+  preparing?: string
 }
 
 const ZOOMS = [1, 2, 4, 8, 16, 32]
@@ -67,6 +71,8 @@ export default function ClipsTool() {
   const abortable = useAbortable()
   const alive = useRef(true)
   const previewEnd = useRef<number | null>(null)
+  /** 한 번 풀어 둔 원본 소리(파일이 바뀌면 버린다). 소리가 없는 파일이면 buffer 가 null */
+  const audioCache = useRef<{ file: File; buffer: AudioBuffer | null } | null>(null)
   const busy = job !== null
   const duration = loaded?.source.duration ?? 0
 
@@ -263,6 +269,7 @@ export default function ClipsTool() {
   const gifHeavy = output.format === 'gif' && layout != null && estimateGifBytes(layout.width, layout.height, longest * fps, output.gifQuality) > GIF_WARN_BYTES
   const formatUnavailable = (output.format === 'mp4' && support?.video === null) || (output.format === 'webp' && support?.webp === false)
   const resultList = ranges.flatMap((r) => (results[r.id] ? [results[r.id]] : []))
+  const audioBlocked = loaded ? audioLimitReason(loaded.file.size, duration) : null
 
   const convert = async () => {
     if (!loaded || !convertible.length || busy) return
@@ -273,6 +280,17 @@ export default function ClipsTool() {
     let done = 0
     let failed = 0
     try {
+      // 소리를 담는 경우 원본 소리를 먼저 한 번 풀어 둔다(구간마다 다시 풀지 않는다).
+      let audio: AudioBuffer | null = null
+      if (output.format === 'mp4' && output.videoAudio && !audioBlocked) {
+        if (audioCache.current?.file !== loaded.file) {
+          setJob({ index: 0, total: targets.length, fraction: 0, name: targets[0].name, preparing: '원본 소리를 읽는 중' })
+          const buffer = await decodeAudio(loaded.file)
+          if (signal.aborted) throw new AbortError()
+          audioCache.current = { file: loaded.file, buffer }
+        }
+        audio = audioCache.current.buffer
+      }
       for (const [index, r] of targets.entries()) {
         setJob({ index, total: targets.length, fraction: 0, name: r.name })
         let lastPaint = 0
@@ -283,6 +301,7 @@ export default function ClipsTool() {
             end: r.end,
             output,
             watermark,
+            audio,
             signal,
             onProgress: (fraction) => {
               const now = performance.now()
@@ -291,7 +310,7 @@ export default function ClipsTool() {
               setJob((j) => (j ? { ...j, fraction } : j))
             },
           })
-          const item: ResultItem = { blob: res.blob, name: outputName(loaded.file.name, r.name, res.ext), kind: res.kind, width: res.width, height: res.height }
+          const item: ResultItem = { blob: res.blob, name: outputName(loaded.file.name, r.name, res.ext), kind: res.kind, width: res.width, height: res.height, audio: res.audio }
           setResults((prev) => ({ ...prev, [r.id]: item }))
           done++
         } catch (err) {
@@ -330,14 +349,14 @@ export default function ClipsTool() {
               <FramePreview video={player} output={output} watermark={watermark} />
             </Section>
           )}
-          <OutputSections value={output} onChange={setOutput} support={support} source={loaded ? { width: loaded.source.width, height: loaded.source.height } : null} disabled={busy} />
+          <OutputSections value={output} onChange={setOutput} support={support} source={loaded ? { width: loaded.source.width, height: loaded.source.height } : null} audioBlocked={audioBlocked} disabled={busy} />
           <Section title="워터마크" hint="모든 프레임에 들어갑니다.">
             <WatermarkControls value={watermark} onChange={setWatermark} />
           </Section>
           <Section title="변환">
             {busy && job ? (
               <>
-                <Progress value={((job.index + job.fraction) / job.total) * 100} label={`${job.name} 변환 중 (${job.index + 1}/${job.total})`} />
+                <Progress value={job.preparing ? null : ((job.index + job.fraction) / job.total) * 100} label={job.preparing ?? `${job.name} 변환 중 (${job.index + 1}/${job.total})`} />
                 <Button icon={X} block onClick={abortable.abort}>
                   취소
                 </Button>
@@ -517,7 +536,7 @@ export default function ClipsTool() {
                     range={r}
                     active={r.id === activeId}
                     busy={busy}
-                    working={busy && job != null && convertible[job.index]?.id === r.id}
+                    working={busy && job != null && !job.preparing && convertible[job.index]?.id === r.id}
                     problem={r.selected ? rangeProblem(r, output.format) : null}
                     error={errors[r.id]}
                     result={results[r.id]}
@@ -614,6 +633,7 @@ function RangeRow({ range, active, busy, working, problem, error, result, onActi
           <Badge tone="brand">{result.kind.toUpperCase()}</Badge>
           <span className="num text-sm text-ink-2">
             {result.width} × {result.height}px · {formatBytes(result.blob.size)}
+            {(result.kind === 'mp4' || result.kind === 'webm') && (result.audio ? ' · 소리 포함' : ' · 소리 없음')}
           </span>
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <Button size="sm" icon={Download} onClick={() => downloadBlob(result.blob, result.name)}>

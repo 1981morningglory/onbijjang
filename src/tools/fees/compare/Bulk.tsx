@@ -151,7 +151,7 @@ export function Bulk({ all, onOpenSettings }: { all: AllSettings; onOpenSettings
             <Textarea
               value={text}
               onChange={(e) => loadText(e.target.value)}
-              placeholder={'상품명\t판매가\t원가\t배송비\t카테고리\n텀블러\t19,800\t8,500\t3,000\t주방용품'}
+              placeholder="엑셀에서 복사한 칸을 여기에 붙여넣으세요 (Ctrl+V)"
               aria-label="엑셀에서 복사한 표"
               spellCheck={false}
               className="num min-h-36 whitespace-pre font-mono text-sm"

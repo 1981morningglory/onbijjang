@@ -3,6 +3,7 @@ import type { PDFDocument, PDFFont, PDFPage } from 'pdf-lib'
 import boldFontUrl from 'pretendard/dist/public/static/alternative/Pretendard-Bold.ttf?url'
 import regularFontUrl from 'pretendard/dist/public/static/alternative/Pretendard-Regular.ttf?url'
 import { canvasToBlob, fitWithin, hexToRgb, loadBitmap, makeCanvas, ctx2d, resizeCanvas } from '@/lib/image'
+import { fixedFontkit } from './fontkit-fix'
 import { MM, fitImagePage, normalizeRotation, visualSize, visualToUser, type PaperSettings } from './geometry'
 import { pdfPageSize, renderPdfPage } from './pdfjs'
 import { formatPageNumber, type NumberFormat } from './ranges'
@@ -143,11 +144,15 @@ function loadFontBytes(weight: 'regular' | 'bold'): Promise<ArrayBuffer> {
   return fontBytes[weight]!
 }
 
-/** 한글이 들어 있는 글꼴(Pretendard)을 쓰는 글자만 골라 문서에 넣는다. */
+/**
+ * 한글이 들어 있는 글꼴(Pretendard)을 문서에 넣는다. 쓰는 글자만 골라 넣어 파일이 거의 커지지 않는다.
+ * (fontkit 의 글꼴 줄이기 오류는 fontkit-fix 로 고쳐 쓴다. 고칠 수 없는 구조면 글꼴을 통째로 넣는다 — 약 1.2MB)
+ */
 export async function embedKoreanFont(doc: PDFDocument, weight: 'regular' | 'bold' = 'regular'): Promise<PDFFont> {
-  const fontkit = (await import('@pdf-lib/fontkit')).default
+  const [mod, bytes] = await Promise.all([import('@pdf-lib/fontkit'), loadFontBytes(weight)])
+  const { fontkit, safe } = fixedFontkit(mod.default, bytes)
   doc.registerFontkit(fontkit)
-  return doc.embedFont(await loadFontBytes(weight), { subset: true })
+  return doc.embedFont(bytes, { subset: safe })
 }
 
 const charsets = new WeakMap<PDFFont, Set<number>>()

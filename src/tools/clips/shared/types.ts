@@ -21,6 +21,8 @@ export interface OutputSettings {
   videoBitrate: BitrateChoice
   /** 직접 입력일 때 Mbps */
   videoMbps: number
+  /** MP4 에 원본 소리를 함께 담을지 */
+  videoAudio: boolean
   aspect: AspectMode
   fit: FitMode
   padColor: string
@@ -35,6 +37,7 @@ export const DEFAULT_OUTPUT: OutputSettings = {
   videoFps: 30,
   videoBitrate: 'medium',
   videoMbps: 2,
+  videoAudio: true,
   aspect: 'source',
   fit: 'pad',
   padColor: '#000000',

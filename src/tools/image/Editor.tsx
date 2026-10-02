@@ -455,7 +455,11 @@ export default function Editor({ photo, onApply, onClose }: EditorProps) {
     if (!drag) return
     e.preventDefault()
     dragRef.current = drag
-    e.currentTarget.setPointerCapture(e.pointerId)
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId)
+    } catch {
+      // 포인터를 붙잡지 못해도 캔버스 안에서는 그대로 동작한다.
+    }
   }
 
   const onPointerMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {

@@ -15,6 +15,8 @@ export interface ConvertJob {
   end: number
   output: OutputSettings
   watermark: WatermarkSettings
+  /** 풀어 둔 원본 소리(decodeAudio). 영상 형식일 때만 쓰인다. */
+  audio?: AudioBuffer | null
   signal: AbortSignal
   /** 0–1 */
   onProgress?: (fraction: number) => void
@@ -29,6 +31,8 @@ export interface ConvertResult {
   height: number
   frames: number
   seconds: number
+  /** 소리가 함께 담겼는지 */
+  audio: boolean
 }
 
 export const NO_VIDEO_ENCODER = '이 브라우저는 영상(MP4·WebM) 저장을 지원하지 않습니다. GIF 로 바꾸거나 최신 크롬·엣지에서 열어 주세요.'
@@ -39,12 +43,12 @@ export function layoutFor(srcW: number, srcH: number, output: OutputSettings): F
   return computeLayout(srcW, srcH, { aspect: output.aspect, fit: output.fit, longSide, even: output.format === 'mp4' })
 }
 
-export async function createSinkFor(output: OutputSettings, layout: FrameLayout, seconds: number): Promise<FrameSink> {
+export async function createSinkFor(output: OutputSettings, layout: FrameLayout, seconds: number, audio?: { buffer: AudioBuffer; start: number; end: number }): Promise<FrameSink> {
   const { fps } = effectiveSize(output)
   if (output.format === 'gif') return createGifSink({ width: layout.width, height: layout.height, quality: output.gifQuality })
   if (output.format === 'webp') return createWebpSink({ width: layout.width, height: layout.height, quality: output.gifQuality })
   const bitrate = resolveBitrate(output, layout.width, layout.height, fps)
-  const sink = await createVideoSink({ width: layout.width, height: layout.height, fps, bitrate, expectedSeconds: seconds })
+  const sink = await createVideoSink({ width: layout.width, height: layout.height, fps, bitrate, expectedSeconds: seconds, audio })
   if (!sink) throw new Error(NO_VIDEO_ENCODER)
   return sink
 }
@@ -64,7 +68,7 @@ export async function convertRange(job: ConvertJob): Promise<ConvertResult> {
   if (!ctx) throw new Error('캔버스를 만들 수 없습니다. 출력 크기를 줄여 주세요.')
   ctx.imageSmoothingQuality = 'high'
   const drawMark = await prepareWatermark(job.watermark)
-  const sink = await createSinkFor(output, layout, seconds)
+  const sink = await createSinkFor(output, layout, seconds, job.audio ? { buffer: job.audio, start: job.start, end: job.start + seconds } : undefined)
   const stepMs = 1000 / fps
   // 인코더가 밀려 기다리는 중에도 취소가 바로 먹도록 한다.
   const onAbort = () => sink.close()
@@ -83,7 +87,7 @@ export async function convertRange(job: ConvertJob): Promise<ConvertResult> {
     if (signal.aborted) throw new AbortError()
     const blob = await sink.finish(times.length * stepMs)
     job.onProgress?.(1)
-    return { blob, kind: sink.kind, ext: sink.ext, width: layout.width, height: layout.height, frames: times.length, seconds }
+    return { blob, kind: sink.kind, ext: sink.ext, width: layout.width, height: layout.height, frames: times.length, seconds, audio: sink.hasAudio === true }
   } finally {
     signal.removeEventListener('abort', onAbort)
     sink.close()

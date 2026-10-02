@@ -1,3 +1,4 @@
+import { AudioFeeder, planAudio, type AudioPlan } from './audio'
 import { pickVideoCodec } from './capabilities'
 import { AbortError, type FrameSink } from './sinks'
 
@@ -8,10 +9,13 @@ export interface VideoSinkOptions {
   bitrate: number
   /** 예상 길이(초). 큰 파일은 메모리를 덜 쓰는 방식으로 묶는다. */
   expectedSeconds?: number
+  /** 함께 담을 소리: 풀어 둔 원본 소리와 쓸 구간(초) */
+  audio?: { buffer: AudioBuffer; start: number; end: number }
 }
 
 interface MuxerLike {
   addVideoChunk(chunk: EncodedVideoChunk, meta?: EncodedVideoChunkMetadata): void
+  addAudioChunk(chunk: EncodedAudioChunk, meta?: EncodedAudioChunkMetadata): void
   finalize(): void
   target: { buffer: ArrayBuffer }
 }
@@ -25,16 +29,29 @@ export async function createVideoSink(opts: VideoSinkOptions): Promise<FrameSink
   if (width % 2 || height % 2) throw new Error('영상 크기는 짝수여야 합니다.')
   const choice = await pickVideoCodec(width, height, fps, bitrate)
   if (!choice) return null
+  // 소리 인코더를 쓸 수 없으면 화면만 담는다(hasAudio 로 알린다).
+  const audioPlan: AudioPlan | null = opts.audio ? await planAudio(choice.container, opts.audio.buffer) : null
 
   let muxer: MuxerLike
   if (choice.container === 'mp4') {
     const { Muxer, ArrayBufferTarget } = await import('mp4-muxer')
     // 200MB 를 넘길 것 같으면 재생 정보를 파일 끝에 두어 메모리를 한 벌만 쓴다.
     const big = (bitrate * (opts.expectedSeconds ?? 0)) / 8 > 200 * 1024 * 1024
-    muxer = new Muxer({ target: new ArrayBufferTarget(), video: { codec: 'avc', width, height, frameRate: fps }, fastStart: big ? false : 'in-memory' })
+    muxer = new Muxer({
+      target: new ArrayBufferTarget(),
+      video: { codec: 'avc', width, height, frameRate: fps },
+      audio: audioPlan ? { codec: audioPlan.kind, numberOfChannels: audioPlan.channels, sampleRate: audioPlan.sampleRate } : undefined,
+      fastStart: big ? false : 'in-memory',
+      firstTimestampBehavior: 'offset',
+    })
   } else {
     const { Muxer, ArrayBufferTarget } = await import('webm-muxer')
-    muxer = new Muxer({ target: new ArrayBufferTarget(), video: { codec: choice.codec.startsWith('vp09') ? 'V_VP9' : 'V_VP8', width, height, frameRate: fps } })
+    muxer = new Muxer({
+      target: new ArrayBufferTarget(),
+      video: { codec: choice.codec.startsWith('vp09') ? 'V_VP9' : 'V_VP8', width, height, frameRate: fps },
+      audio: audioPlan ? { codec: 'A_OPUS', numberOfChannels: audioPlan.channels, sampleRate: audioPlan.sampleRate } : undefined,
+      firstTimestampBehavior: 'offset',
+    })
   }
 
   let failed: Error | null = null
@@ -60,6 +77,7 @@ export async function createVideoSink(opts: VideoSinkOptions): Promise<FrameSink
     latencyMode: 'quality',
     ...(choice.container === 'mp4' ? { avc: { format: 'avc' as const } } : {}),
   })
+  const feeder = audioPlan && opts.audio ? new AudioFeeder(opts.audio.buffer, opts.audio.start, opts.audio.end, audioPlan, (chunk, meta) => muxer.addAudioChunk(chunk, meta)) : null
 
   const keyEvery = Math.max(1, Math.round(fps * 2))
   let count = 0
@@ -82,6 +100,7 @@ export async function createVideoSink(opts: VideoSinkOptions): Promise<FrameSink
     kind: choice.container,
     mime: choice.container === 'mp4' ? 'video/mp4' : 'video/webm',
     ext: choice.container,
+    hasAudio: feeder != null,
     get busy() {
       return encoder.state === 'configured' && encoder.encodeQueueSize >= QUEUE_LIMIT
     },
@@ -98,6 +117,8 @@ export async function createVideoSink(opts: VideoSinkOptions): Promise<FrameSink
         frame.close()
       }
       count++
+      // 소리는 영상보다 반 초쯤 앞서게 넣어 파일 안에서 번갈아 놓이게 한다.
+      feeder?.feedUntil(timeMs / 1000 + 0.5)
       while (!failed && !closed && encoder.encodeQueueSize >= QUEUE_LIMIT) await waitForRoom()
       if (failed) throw failed
       if (closed) throw new AbortError()
@@ -107,6 +128,7 @@ export async function createVideoSink(opts: VideoSinkOptions): Promise<FrameSink
       if (closed) throw new AbortError()
       if (!count) throw new Error('프레임이 없습니다.')
       await encoder.flush()
+      await feeder?.finish()
       if (failed) throw failed
       encoder.close()
       closed = true
@@ -116,6 +138,7 @@ export async function createVideoSink(opts: VideoSinkOptions): Promise<FrameSink
     close() {
       if (closed) return
       closed = true
+      feeder?.close()
       try {
         if (encoder.state !== 'closed') encoder.close()
       } catch {

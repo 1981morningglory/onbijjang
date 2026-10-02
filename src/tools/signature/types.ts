@@ -74,6 +74,8 @@ export interface DocSource {
   destroy(): void
   /** PDF 원본 바이트(pdf-lib 저장용) */
   bytes?: Uint8Array
+  /** 암호·편집 제한 때문에 원본 구조를 유지한 저장이 안 되는 PDF */
+  rasterOnly?: boolean
   /** 화면에 알릴 주의 사항 */
   notes: string[]
 }

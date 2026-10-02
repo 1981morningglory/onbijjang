@@ -11,6 +11,8 @@ export interface FrameSink {
   readonly kind: 'gif' | 'mp4' | 'webm' | 'webp'
   readonly mime: string
   readonly ext: string
+  /** 소리가 함께 담기는지(영상 형식에서 원본 소리를 넘겼을 때만 true) */
+  readonly hasAudio?: boolean
   /** 처리 대기 중인 프레임이 많아 지금 넣으면 밀리는 상태(실시간 녹화에서 프레임을 건너뛸 때 본다) */
   readonly busy: boolean
   /** 캔버스의 현재 내용을 timeMs 시각의 프레임으로 넣는다. 인코더가 밀려 있으면 기다린 뒤 끝난다. */

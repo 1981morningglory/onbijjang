@@ -163,6 +163,8 @@ export class CanvasController {
   private pageId = ''
   /** 지금 화면에 올라와 있는(또는 올리는 중인) 객체 JSON. 같은 배열이면 다시 읽지 않는다. */
   private shown: ObjectJSON[] | null = null
+  /** 마지막으로 기록한 내용. 바뀐 것이 없으면 기록을 건너뛴다(글자 편집을 끝낼 때처럼 같은 일이 두 번 알려질 때). */
+  private shownText = ''
   private loadToken = 0
   private commitTimer: ReturnType<typeof setTimeout> | null = null
   private guides: Guide[] = []
@@ -519,6 +521,7 @@ export class CanvasController {
     live.forEach((o) => this.decorate(o))
     if (live.length) c.add(...live)
     this.guides = []
+    this.shownText = JSON.stringify(this.serialize())
     c.requestRenderAll()
     this.emitLayers()
     this.emitSelection()
@@ -534,8 +537,12 @@ export class CanvasController {
     if (this.commitTimer) clearTimeout(this.commitTimer)
     this.commitTimer = null
     const objects = this.serialize()
-    this.shown = objects
-    this.ev.onCommit(this.pageId, objects)
+    const text = JSON.stringify(objects)
+    if (text !== this.shownText) {
+      this.shownText = text
+      this.shown = objects
+      this.ev.onCommit(this.pageId, objects)
+    }
     this.emitLayers()
     this.emitSelection()
   }

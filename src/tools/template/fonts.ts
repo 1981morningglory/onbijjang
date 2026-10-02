@@ -29,6 +29,8 @@ export const MAX_FONT_BYTES = 30 * 1024 * 1024
 
 const fontDb = createStore('onbijjang-template-fonts', 'files')
 
+const DENIED = '글꼴 접근이 허용되지 않았습니다. 주소창 왼쪽의 사이트 설정에서 글꼴 권한을 허용한 뒤 다시 눌러 주세요. 글꼴 파일을 직접 추가할 수도 있습니다.'
+
 interface LocalFontData {
   family: string
 }
@@ -45,8 +47,10 @@ export async function queryLocalFamilies(): Promise<string[]> {
   try {
     list = await query.call(window)
   } catch {
-    throw new Error('글꼴 접근이 허용되지 않았습니다. 주소창 왼쪽의 사이트 설정에서 글꼴 권한을 허용해 주세요.')
+    throw new Error(DENIED)
   }
+  // 권한이 막혀 있으면 오류 대신 빈 목록이 온다.
+  if (!list.length) throw new Error(DENIED)
   return [...new Set(list.map((f) => f.family))].sort((a, b) => a.localeCompare(b, 'ko'))
 }
 

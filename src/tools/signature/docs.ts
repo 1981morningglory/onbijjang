@@ -120,6 +120,8 @@ async function openPdf(file: File, options: OpenOptions): Promise<DocSource> {
     })
   }
 
+  const restricted = usedPassword || hasEncryptMarker(bytes)
+
   return {
     kind: 'pdf',
     file,
@@ -127,7 +129,8 @@ async function openPdf(file: File, options: OpenOptions): Promise<DocSource> {
     pages,
     unitPx: 96 / 72,
     bytes,
-    notes: usedPassword ? ['암호가 걸린 PDF 입니다. 저장할 때는 쪽을 이미지로 바꿔 새 PDF 로 만듭니다(글자 선택 불가, 암호 없음).'] : [],
+    rasterOnly: restricted,
+    notes: restricted ? [`${usedPassword ? '암호가' : '편집 제한이'} 걸린 PDF 입니다. 원본을 그대로 고칠 수 없어, PDF 로 저장하면 쪽을 이미지로 바꾼 새 PDF 가 됩니다(글자 선택 불가, 암호·제한 없음).`] : [],
     async render(index, pxPerUnit, signal, forExport) {
       const page = await pdf.getPage(index + 1)
       const viewport = page.getViewport({ scale: pxPerUnit })
@@ -146,6 +149,14 @@ async function openPdf(file: File, options: OpenOptions): Promise<DocSource> {
       void task.destroy().catch(() => {})
     },
   }
+}
+
+/** 파일 앞뒤의 trailer 에 암호화 표시(/Encrypt)가 있는지. 암호 없이 열리는 '편집 제한' PDF 를 미리 알아낸다. */
+export function hasEncryptMarker(bytes: Uint8Array): boolean {
+  const decode = (part: Uint8Array) => new TextDecoder('latin1').decode(part)
+  const span = 16 * 1024
+  if (bytes.length <= span * 2) return decode(bytes).includes('/Encrypt')
+  return decode(bytes.subarray(bytes.length - span)).includes('/Encrypt') || decode(bytes.subarray(0, span)).includes('/Encrypt')
 }
 
 /** 렌더가 취소되어 난 오류인지 */
