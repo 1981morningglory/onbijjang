@@ -172,11 +172,11 @@ export function toExportTable(results: BulkResult[]): Array<Array<string | numbe
     const line: Array<string | number> = [p.name, p.price, p.cost, p.shippingCost, r.row.category]
     for (const m of MARKETS) {
       const found = r.markets.find((x) => x.market === m)
-      if (!found || found.result.missing.length) line.push('', '')
+      if (!found || found.result.blocked) line.push('', '')
       else line.push(found.result.profit, found.result.marginPct == null ? '' : round1(found.result.marginPct))
     }
     const best = r.markets.find((x) => x.market === r.best)
-    const missing = r.markets.filter((x) => x.result.missing.length).map((x) => x.label)
+    const missing = r.markets.filter((x) => x.result.blocked).map((x) => x.label)
     line.push(best ? best.label : '', best ? best.result.profit : '', r.row.error ?? (missing.length ? `요율 미입력: ${missing.join(', ')}` : ''))
     table.push(line)
   }

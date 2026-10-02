@@ -58,6 +58,11 @@ export interface CalcResult {
   marginPct: number | null
   /** 요율이 비어 있어 0 으로 계산한 항목 이름 */
   missing: string[]
+  /**
+   * 빠진 요율 중에 이익을 크게 바꾸는 주요 요율(판매 수수료 등)이 있으면 true.
+   * 배송비 수수료처럼 작은 항목만 빠졌으면 false — 0 원으로 계산한 결과도 비교에 쓸 수 있다.
+   */
+  blocked: boolean
   monthly?: Monthly
 }
 
@@ -85,6 +90,7 @@ const money = (n: number) => `${new Intl.NumberFormat('ko-KR').format(n)}원`
 interface Draft {
   lines: Line[]
   missing: string[]
+  blocked: boolean
 }
 
 function finish(d: Draft, price: number, monthly?: { on: boolean; orders: number; fee: number; label: string }): CalcResult {
@@ -107,6 +113,7 @@ function finish(d: Draft, price: number, monthly?: { on: boolean; orders: number
     profit,
     marginPct: price > 0 ? (profit / price) * 100 : null,
     missing: d.missing,
+    blocked: d.blocked,
   }
   if (monthly?.on) {
     const orders = int(monthly.orders)
@@ -131,10 +138,11 @@ function costLines(p: Product, opts: { shipping?: boolean } = {}): Line[] {
 }
 
 /** 요율이 필요한데 비어 있으면 missing 에 적고 0 으로 계산한다. */
-function rateFee(d: Draft, opts: { key: string; label: string; base: number; rate: number | null; rounding?: Rounding; baseLabel?: string }): void {
+function rateFee(d: Draft, opts: { key: string; label: string; base: number; rate: number | null; rounding?: Rounding; baseLabel?: string; minor?: boolean }): void {
   if (opts.base <= 0) return
   if (opts.rate == null) {
     d.missing.push(opts.label)
+    if (!opts.minor) d.blocked = true
     return
   }
   d.lines.push({
@@ -165,7 +173,7 @@ export interface SmartstoreSettings {
  */
 export function calcSmartstore(p: Product, s: SmartstoreSettings): CalcResult {
   const { lines, price, paidShipping } = baseLines(p)
-  const d: Draft = { lines, missing: [] }
+  const d: Draft = { lines, missing: [], blocked: false }
   rateFee(d, { key: 'orderFee', label: '네이버페이 주문관리 수수료', base: price + paidShipping, rate: s.orderFee[s.tier] })
   rateFee(d, { key: 'salesFee', label: '판매 수수료', base: price, rate: s.salesFee[s.inflow] })
   if (s.connect) rateFee(d, { key: 'connectFee', label: '쇼핑커넥트 수수료', base: price, rate: s.connectRate })
@@ -190,10 +198,10 @@ export interface CoupangSettings {
 
 export function calcCoupang(p: Product, s: CoupangSettings, categoryRate: number): CalcResult {
   const { lines, price, paidShipping } = baseLines(p)
-  const d: Draft = { lines, missing: [] }
+  const d: Draft = { lines, missing: [], blocked: false }
   const rate = s.rateOverride ?? categoryRate
   rateFee(d, { key: 'salesFee', label: s.vat ? '판매 수수료(부가세 포함)' : '판매 수수료', base: price, rate: withVat(rate, s.vat) })
-  rateFee(d, { key: 'shipFee', label: s.vat ? '배송비 수수료(부가세 포함)' : '배송비 수수료', base: paidShipping, rate: withVat(s.shipFeeRate, s.vat) })
+  rateFee(d, { key: 'shipFee', label: s.vat ? '배송비 수수료(부가세 포함)' : '배송비 수수료', base: paidShipping, rate: withVat(s.shipFeeRate, s.vat), minor: true })
   d.lines.push(...costLines(p))
   return finish(d, price, { on: s.monthlyFee, orders: s.monthlyOrders, fee: int(s.monthlyFeeAmount), label: '월 서비스 이용료' })
 }
@@ -239,14 +247,20 @@ const vatAmount = (amount: number, vat: boolean) => (vat ? Math.floor((int(amoun
 export function calcRocket(p: Pick<Product, 'name' | 'price' | 'cost'>, s: RocketSettings, categoryRate: number): CalcResult {
   const product: Product = { ...p, shipMode: 'free', buyerShipping: 0, shippingCost: 0 }
   const { lines, price } = baseLines(product, { shipping: false })
-  const d: Draft = { lines, missing: [] }
+  const d: Draft = { lines, missing: [], blocked: false }
   const rate = s.rateOverride ?? categoryRate
   rateFee(d, { key: 'salesFee', label: s.vat ? '판매 수수료(부가세 포함)' : '판매 수수료', base: price, rate: withVat(rate, s.vat) })
 
   const vatNote = s.logisticsVat ? ' + 부가세' : ''
-  if (s.fulfillFee == null) d.missing.push('입출고비')
+  if (s.fulfillFee == null) {
+    d.missing.push('입출고비')
+    d.blocked = true
+  }
   else d.lines.push({ key: 'fulfillFee', label: '입출고비', amount: vatAmount(s.fulfillFee, s.logisticsVat), kind: 'fee', basis: `개당 ${money(int(s.fulfillFee))}${vatNote}` })
-  if (s.deliveryFee == null) d.missing.push('배송비')
+  if (s.deliveryFee == null) {
+    d.missing.push('배송비')
+    d.blocked = true
+  }
   else d.lines.push({ key: 'deliveryFee', label: '배송비', amount: vatAmount(s.deliveryFee, s.logisticsVat), kind: 'fee', basis: `개당 ${money(int(s.deliveryFee))}${vatNote}` })
 
   const freeDays = s.saver ? int(s.saverFreeStorageDays) : int(s.freeStorageDays)
@@ -318,10 +332,10 @@ export interface EsmSettings {
  */
 export function calcEsm(p: Product, s: EsmSettings, categoryRate: number, extra: { discount?: number } = {}): CalcResult {
   const { lines, price, paidShipping } = baseLines(p)
-  const d: Draft = { lines, missing: [] }
+  const d: Draft = { lines, missing: [], blocked: false }
   const r = s.rounding
   rateFee(d, { key: 'salesFee', label: '카테고리 서비스 이용료', base: price, rate: s.rateOverride ?? categoryRate, rounding: r })
-  rateFee(d, { key: 'shipFee', label: '선결제 배송비 이용료', base: paidShipping, rate: s.shipFeeRate, rounding: r })
+  rateFee(d, { key: 'shipFee', label: '선결제 배송비 이용료', base: paidShipping, rate: s.shipFeeRate, rounding: r, minor: true })
   if (s.affiliate) rateFee(d, { key: 'affiliateFee', label: '제휴채널 이용료', base: price, rate: s.affiliateRate, rounding: r })
   if (s.promo) rateFee(d, { key: 'promoFee', label: '프로모션 참여 이용료', base: price, rate: s.promoRate, rounding: r })
   const discount = Math.min(int(extra.discount), price)
@@ -352,9 +366,9 @@ export interface ElevenstSettings {
  */
 export function calcElevenst(p: Product, s: ElevenstSettings, extra: { couponDiscount?: number } = {}): CalcResult {
   const { lines, price, paidShipping } = baseLines(p)
-  const d: Draft = { lines, missing: [] }
+  const d: Draft = { lines, missing: [], blocked: false }
   rateFee(d, { key: 'salesFee', label: '카테고리 서비스 이용료', base: price, rate: s.rate })
-  rateFee(d, { key: 'shipFee', label: '선결제 배송비 이용료', base: paidShipping, rate: s.shipFeeRate })
+  rateFee(d, { key: 'shipFee', label: '선결제 배송비 이용료', base: paidShipping, rate: s.shipFeeRate, minor: true })
   if (s.affiliate) {
     rateFee(d, {
       key: 'affiliateFee',

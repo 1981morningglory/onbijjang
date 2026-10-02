@@ -263,7 +263,7 @@ export function calcAllMarkets(p: Product, all: AllSettings, categoryQuery = '')
 export function bestMarket(results: MarketResult[]): MarketId | null {
   let best: MarketResult | null = null
   for (const r of results) {
-    if (r.result.missing.length) continue
+    if (r.result.blocked) continue
     if (!best || r.result.profit > best.result.profit) best = r
   }
   return best?.market ?? null

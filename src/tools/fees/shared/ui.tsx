@@ -569,9 +569,14 @@ export function CalcPage({ title, meta, product, result, calcAt, onPrice, onExam
                 </Button>
               }
             >
+              {result.blocked && (
+                <Callout tone="warn" title="주요 요율이 비어 있어 이익이 실제보다 크게 나옵니다">
+                  {result.missing.join(', ')} — 0원으로 계산했습니다. 왼쪽에서 요율을 입력하면 정확해집니다.
+                </Callout>
+              )}
               <div>
-                <p className="text-sm text-muted">예상 이익</p>
-                <p className={clsx('num text-2xl font-bold leading-tight', result.profit < 0 ? 'text-danger' : 'text-ink')}>{signed(result.profit)}</p>
+                <p className="text-sm text-muted">{result.blocked ? '예상 이익 (요율 입력 전 · 참고용)' : '예상 이익'}</p>
+                <p className={clsx('num text-2xl font-bold leading-tight', result.blocked ? 'text-faint' : result.profit < 0 ? 'text-danger' : 'text-ink')}>{signed(result.profit)}</p>
                 <p className="mt-0.5 text-sm text-ink-2">
                   이익률 <span className={clsx('num text-base font-bold', result.profit < 0 ? 'text-danger' : 'text-brand-ink')}>{pct(result.marginPct)}</span>
                   <span className="text-muted"> · 판매가 대비</span>
@@ -581,7 +586,7 @@ export function CalcPage({ title, meta, product, result, calcAt, onPrice, onExam
                 <Stat label="총 수수료" value={won(result.feeTotal)} />
                 <Stat label="정산 예상액" value={signed(result.settlement)} danger={result.settlement < 0} />
               </dl>
-              {result.missing.length > 0 && (
+              {!result.blocked && result.missing.length > 0 && (
                 <Callout tone="warn" title="요율을 넣지 않은 항목이 있습니다">
                   {result.missing.join(', ')} — 0원으로 계산했습니다. 왼쪽에서 요율을 입력하세요.
                 </Callout>

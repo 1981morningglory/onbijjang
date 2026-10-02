@@ -41,7 +41,7 @@ export function Bulk({ all, onOpenSettings }: { all: AllSettings; onOpenSettings
   const ok = results.length - errors
   const missingMarkets = useMemo(() => {
     const first = results.find((r) => r.markets.length)
-    return first ? first.markets.filter((m) => m.result.missing.length).map((m) => m.label) : []
+    return first ? first.markets.filter((m) => m.result.blocked).map((m) => m.label) : []
   }, [results])
 
   const apply = (next: string[][]) => {
@@ -260,7 +260,7 @@ export function Bulk({ all, onOpenSettings }: { all: AllSettings; onOpenSettings
                           <td className="num py-1.5 pr-3 text-right text-ink-2">{fmt.format(r.row.product.shippingCost)}</td>
                           {r.markets.map((m) => (
                             <td key={m.market} className={clsx('num whitespace-nowrap py-1.5 pr-3 text-right align-top', m.market === r.best && 'bg-brand-soft')}>
-                              {m.result.missing.length ? (
+                              {m.result.blocked ? (
                                 <span className="text-muted">-</span>
                               ) : (
                                 <>

@@ -51,7 +51,7 @@ function CompareTable({ results, best }: { results: MarketResult[]; best: Market
         <tbody>
           {results.map((r) => {
             const isBest = r.market === best
-            const missing = r.result.missing.length > 0
+            const missing = r.result.blocked
             const expanded = open === r.market
             return (
               <Fragment key={r.market}>
@@ -91,7 +91,14 @@ function CompareTable({ results, best }: { results: MarketResult[]; best: Market
                     <>
                       <td className="num whitespace-nowrap py-2 pr-2 text-right align-top text-ink-2">{won(r.result.feeTotal)}</td>
                       <td className={clsx('num whitespace-nowrap py-2 pr-2 text-right align-top font-bold', r.result.profit < 0 ? 'text-danger' : 'text-ink')}>{signed(r.result.profit)}</td>
-                      <td className={clsx('num whitespace-nowrap py-2 pr-1.5 text-right align-top', r.result.profit < 0 ? 'text-danger' : 'text-ink-2')}>{pct(r.result.marginPct)}</td>
+                      <td className={clsx('num whitespace-nowrap py-2 pr-1.5 text-right align-top', r.result.profit < 0 ? 'text-danger' : 'text-ink-2')}>
+                        {pct(r.result.marginPct)}
+                        {r.result.missing.length > 0 && (
+                          <span className="block text-2xs font-normal text-warn" title={`${r.result.missing.join(', ')} 요율이 비어 0원으로 계산했습니다`}>
+                            {r.result.missing.join(', ')} 0원
+                          </span>
+                        )}
+                      </td>
                     </>
                   )}
                 </tr>
@@ -121,7 +128,7 @@ function RequiredPrices({ product, resolved, onApply }: { product: Product; reso
     () =>
       MARKETS.map((market) => {
         const calcAt = (price: number) => calcMarket(market, { ...product, price }, resolved).result
-        const missing = calcAt(Math.max(1, product.price)).missing.length > 0
+        const missing = calcAt(Math.max(1, product.price)).blocked
         return { market, missing, price: !t || missing ? null : solvePrice(calcAt, t) }
       }),
     [product, resolved, t?.type, t?.value], // eslint-disable-line react-hooks/exhaustive-deps
@@ -167,7 +174,7 @@ function Single({ settings }: { settings: ReturnType<typeof useAllSettings> }) {
   const best = bestMarket(results)
   const shown = useMemo(() => {
     if (sort === 'market') return results
-    const rank = (r: MarketResult) => (r.result.missing.length ? -Infinity : r.result.profit)
+    const rank = (r: MarketResult) => (r.result.blocked ? -Infinity : r.result.profit)
     return [...results].sort((a, b) => rank(b) - rank(a))
   }, [results, sort])
   const ready = product.price > 0
@@ -176,7 +183,7 @@ function Single({ settings }: { settings: ReturnType<typeof useAllSettings> }) {
 
   const summary = (m: MarketId) => {
     const r = byMarket(m)
-    return r.result.missing.length ? (
+    return r.result.blocked ? (
       <span className="text-2xs font-semibold text-warn">요율 입력 필요</span>
     ) : (
       <span className="num text-2xs font-normal text-muted">{r.rate == null ? '' : `${trimPct(r.rate)}%`}</span>
@@ -330,7 +337,7 @@ function Single({ settings }: { settings: ReturnType<typeof useAllSettings> }) {
             <li>같은 판매가·원가·배송 조건을 여섯 마켓의 수수료 구조에 각각 넣어 주문 1건(로켓그로스는 상품 1개) 이익을 계산합니다.</li>
             <li>이익률 = 이익 ÷ 판매가. 월 서버 이용료·월 서비스 이용료 같은 월 고정비는 1건 이익에 넣지 않습니다.</li>
             <li>카테고리 이름을 넣으면 쿠팡·로켓그로스·G마켓·옥션의 공식 카테고리 표에서 가장 가까운 분류를 찾아 그 요율을 씁니다. 맞는 분류가 없으면 세부 설정의 카테고리를 씁니다.</li>
-            <li>요율을 넣지 않은 마켓은 ‘요율 입력 필요’로 표시하고 ‘가장 남음’ 순위에서 뺍니다.</li>
+            <li>판매 수수료처럼 주요 요율이 빈 마켓은 ‘요율 입력 필요’로 표시하고 ‘가장 남음’ 순위에서 뺍니다. 배송비 수수료처럼 작은 항목만 비면 0원으로 계산하고 그 사실을 표시합니다.</li>
             <li>마켓마다 계산 방식이 다릅니다. 자세한 기준은 각 마켓 계산기의 ‘계산 기준’에 있습니다.</li>
           </ul>
         </div>

@@ -266,10 +266,18 @@ describe('여섯 마켓 비교', () => {
     const top = Math.max(...results.map((r) => r.result.profit))
     expect(results.find((r) => r.market === best)?.result.profit).toBe(top)
   })
-  it('요율이 비어 있는 마켓은 "가장 남는 곳" 후보에서 뺀다', () => {
+  it('주요 요율이 비어 있는 마켓은 "가장 남는 곳" 후보에서 뺀다', () => {
     const results = calcAllMarkets(product, DEFAULT_SETTINGS)
-    expect(results.find((r) => r.market === 'smartstore')?.result.missing.length).toBeGreaterThan(0)
-    expect(['gmarket', 'auction']).toContain(bestMarket(results))
+    const smart = results.find((r) => r.market === 'smartstore')!
+    expect(smart.result.missing.length).toBeGreaterThan(0)
+    expect(smart.result.blocked).toBe(true)
+    expect(['coupang', 'gmarket', 'auction']).toContain(bestMarket(results))
+  })
+  it('배송비 수수료처럼 작은 요율만 비면 0원으로 계산하고 비교에는 남긴다', () => {
+    const paid = { ...product, shipMode: 'paid' as const, buyerShipping: 3000 }
+    const coupang = calcAllMarkets(paid, DEFAULT_SETTINGS).find((r) => r.market === 'coupang')!
+    expect(coupang.result.missing.some((m) => m.includes('배송비 수수료'))).toBe(true)
+    expect(coupang.result.blocked).toBe(false)
   })
   it('카테고리 이름을 주면 마켓마다 가장 가까운 카테고리 요율을 쓴다', () => {
     const results = calcAllMarkets(product, all, '모니터')
