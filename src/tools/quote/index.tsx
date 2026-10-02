@@ -1,578 +1,238 @@
-import clsx from 'clsx'
-import { ArrowDown, ArrowUp, Building2, CalendarDays, Copy, Download, FileSpreadsheet, FileText, History, Image as ImageIcon, KeyRound, Plus, ShieldCheck, Printer, RotateCcw, Settings2, Trash2, UserRound } from 'lucide-react'
-import { del, get, set } from 'idb-keyval'
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { downloadBlob, downloadZip } from '@/lib/files'
+import { Building2, FilePenLine, Inbox, KeyRound, LockKeyhole, LogIn, LogOut, Package, Settings2, ShieldCheck, Store, UsersRound, WifiOff } from 'lucide-react'
+import { useEffect, useState, type FormEvent } from 'react'
+import { Link } from 'react-router'
 import { usePersistentState } from '@/lib/hooks'
-import { Badge, Button, Callout, Field, IconButton, MenuItem, NumberInput, Panel, Popover, Section, Segmented, Select, Switch, Textarea, TextInput, toast } from '@/ui'
-import { hasOwnData, useKit } from './kit'
-import { KitDialog } from './KitDialog'
-import { buildPages, canvasMeasure, type Page } from './layout'
-import { calcTotals, contactLine, DOC_NAME, emptyItem, fileBase, makeDocNo, newDoc, todayIso, uid, won, type DocType, type LineItem, type QuoteDoc, type VatMode } from './model'
-import { PagePreview } from './Preview'
+import { Badge, Button, Callout, Field, Panel, Spinner, Tabs, TextInput, toast } from '@/ui'
+import { CustomersBoard, DocsBoard, ItemsBoard, type BoardFilter } from './Board'
+import { draftKey, Editor, freshDraft, type Draft } from './Editor'
+import { proposeDocNo, todayIso, uid, type QuoteDoc } from './model'
+import { TeamSettings, type SettingsSection } from './TeamSettings'
+import { useTeam, type TeamInfo } from './team'
 
-const HISTORY_KEY = 'onbijjang:quote:history'
-const SEQ_KEY = 'onbijjang:quote:seq'
+export default function QuoteTool() {
+  const phase = useTeam((s) => s.phase)
+  const team = useTeam((s) => s.team)
+  const load = useTeam((s) => s.load)
+  useEffect(() => {
+    void load()
+  }, [load])
 
-interface HistoryEntry {
-  id: string
-  savedAt: string
-  doc: QuoteDoc
+  if (phase === 'loading') {
+    return (
+      <div className="flex items-center justify-center gap-2 py-24 text-muted">
+        <Spinner /> 팀 공간을 여는 중
+      </div>
+    )
+  }
+  if (phase === 'offline') {
+    return (
+      <Callout tone="warn" title="서버에 연결되지 않습니다">
+        견적서·거래명세표는 팀별 문서함을 서버에 보관하므로 온비짱 서버가 켜져 있어야 씁니다. 잠시 뒤 새로고침해 주세요.
+        <div className="mt-2">
+          <Button size="sm" icon={WifiOff} onClick={() => void load()}>
+            다시 연결
+          </Button>
+        </div>
+      </Callout>
+    )
+  }
+  if (phase === 'out' || !team) return <Gate />
+  // 팀이 바뀌면 작성 중 문서·화면 상태를 새로 시작한다
+  return <TeamApp key={team.id} team={team} />
 }
 
-/** 그날 몇 번째 문서인지 세어 번호를 매긴다(이 브라우저 기준). */
-function nextDocNo(type: DocType, date: string): string {
-  let map: Record<string, number> = {}
-  try {
-    map = JSON.parse(localStorage.getItem(SEQ_KEY) ?? '{}')
-  } catch {
-    map = {}
-  }
-  const key = `${type}:${date}`
-  const seq = (map[key] ?? 0) + 1
-  map[key] = seq
-  try {
-    localStorage.setItem(SEQ_KEY, JSON.stringify(map))
-  } catch {
-    // 저장 못 해도 번호는 쓴다
-  }
-  return makeDocNo(type, date, seq)
-}
+// ── 입장 ──────────────────────────────────────────────────
+function Gate() {
+  const login = useTeam((s) => s.login)
+  const adminEnter = useTeam((s) => s.adminEnter)
+  const admin = useTeam((s) => s.admin)
+  const teams = useTeam((s) => s.teams)
+  const hasTeams = useTeam((s) => s.hasTeams)
+  const [code, setCode] = useState('')
+  const [busy, setBusy] = useState<string | null>(null)
 
-const isAutoNo = (no: string) => /^[QT]-\d{8}-\d{2,}$/.test(no)
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    if (!code.trim()) return
+    setBusy('code')
+    login(code.trim())
+      .then(() => setCode(''))
+      .catch((err) => toast.error(err instanceof Error ? err.message : '들어가지 못했습니다.'))
+      .finally(() => setBusy(null))
+  }
+  const enter = (t: TeamInfo) => {
+    setBusy(t.id)
+    adminEnter(t.id)
+      .catch((err) => toast.error(err instanceof Error ? err.message : '들어가지 못했습니다.'))
+      .finally(() => setBusy(null))
+  }
 
-function moneyInput(value: number | null, onValue: (v: number | null) => void, label: string) {
   return (
-    <input
-      aria-label={label}
-      inputMode="numeric"
-      value={value == null ? '' : won(value)}
-      onChange={(e) => {
-        const digits = e.target.value.replace(/[^\d.-]/g, '')
-        onValue(digits === '' || digits === '-' ? null : Number(digits))
-      }}
-      className="num h-9 w-full min-w-0 rounded-sm border border-line-strong bg-surface px-2 text-right text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
-    />
-  )
-}
+    <div className="mx-auto flex w-full max-w-xl flex-col gap-4 py-6">
+      <Panel className="overflow-hidden">
+        <div className="flex items-center gap-4 border-b border-line bg-paper px-6 py-5">
+          <span className="flex size-12 shrink-0 items-center justify-center rounded-full bg-brand-soft text-brand-ink">
+            <LockKeyhole className="size-6" aria-hidden />
+          </span>
+          <div className="min-w-0">
+            <h2 className="text-xl font-bold text-ink">팀 문서함 입장</h2>
+            <p className="text-sm text-ink-2">팀 코드를 넣으면 우리 팀의 견적서·거래명세표 공간으로 들어갑니다.</p>
+          </div>
+        </div>
+        <form onSubmit={submit} className="flex flex-col gap-3 px-6 py-5">
+          <Field label="팀 코드" hint="관리자나 팀장에게 받은 코드입니다. 다른 팀의 문서는 그 팀 코드 없이는 볼 수 없습니다.">
+            {(id) => <TextInput id={id} type="password" autoComplete="current-password" autoFocus value={code} onChange={(e) => setCode(e.target.value)} maxLength={40} placeholder="팀 코드 입력" />}
+          </Field>
+          <Button type="submit" variant="primary" size="lg" icon={LogIn} loading={busy === 'code'} disabled={!code.trim()} block>
+            들어가기
+          </Button>
+          <p className="flex items-center gap-1.5 text-xs text-muted">
+            <ShieldCheck className="size-3.5" aria-hidden /> 이 브라우저는 180일 동안 기억합니다. 팀 코드가 바뀌면 다시 물어봅니다.
+          </p>
+        </form>
+      </Panel>
 
-function ItemsEditor({ doc, setItems }: { doc: QuoteDoc; setItems: (items: LineItem[]) => void }) {
-  const totals = calcTotals(doc)
-  const setItem = (id: string, patch: Partial<LineItem>) => setItems(doc.items.map((i) => (i.id === id ? { ...i, ...patch } : i)))
-  const move = (idx: number, dir: -1 | 1) => {
-    const j = idx + dir
-    if (j < 0 || j >= doc.items.length) return
-    const next = [...doc.items]
-    ;[next[idx], next[j]] = [next[j], next[idx]]
-    setItems(next)
-  }
-  const statement = doc.type === 'statement'
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[640px] border-separate border-spacing-x-1 border-spacing-y-1 text-sm">
-          <thead>
-            <tr className="text-left text-xs text-muted">
-              <th className="w-6 font-semibold">#</th>
-              {statement && <th className="w-16 font-semibold">월/일</th>}
-              <th className="min-w-44 font-semibold">{statement ? '품목' : '비용항목'}</th>
-              <th className="w-20 font-semibold">규격</th>
-              <th className="w-16 text-right font-semibold">수량</th>
-              <th className="w-28 text-right font-semibold">단가</th>
-              <th className="w-28 text-right font-semibold">합계</th>
-              <th className="w-28 font-semibold">비고</th>
-              <th className="w-20" />
-            </tr>
-          </thead>
-          <tbody>
-            {doc.items.map((it, idx) => (
-              <tr key={it.id}>
-                <td className="num text-center text-xs text-faint">{idx + 1}</td>
-                {statement && (
-                  <td>
-                    <TextInput aria-label={`${idx + 1}번 월/일`} value={it.day} placeholder={doc.date.slice(5).replace('-', '/')} maxLength={5} onChange={(e) => setItem(it.id, { day: e.target.value })} className="h-9! px-2! text-sm!" />
-                  </td>
-                )}
-                <td>
-                  <TextInput aria-label={`${idx + 1}번 항목`} value={it.name} maxLength={80} onChange={(e) => setItem(it.id, { name: e.target.value })} className="h-9! px-2! text-sm!" />
-                </td>
-                <td>
-                  <TextInput aria-label={`${idx + 1}번 규격`} value={it.spec} maxLength={30} onChange={(e) => setItem(it.id, { spec: e.target.value })} className="h-9! px-2! text-sm!" />
-                </td>
-                <td>{moneyInput(it.qty, (qty) => setItem(it.id, { qty }), `${idx + 1}번 수량`)}</td>
-                <td>{moneyInput(it.unitPrice, (unitPrice) => setItem(it.id, { unitPrice }), `${idx + 1}번 단가`)}</td>
-                <td className="num whitespace-nowrap px-1 text-right font-semibold text-ink">{totals.lines[idx].filled ? won(totals.lines[idx].total) : ''}</td>
-                <td>
-                  <TextInput aria-label={`${idx + 1}번 비고`} value={it.note} maxLength={40} onChange={(e) => setItem(it.id, { note: e.target.value })} className="h-9! px-2! text-sm!" />
-                </td>
-                <td>
-                  <div className="flex">
-                    <IconButton icon={ArrowUp} label="위로" size="sm" disabled={idx === 0} onClick={() => move(idx, -1)} />
-                    <IconButton icon={ArrowDown} label="아래로" size="sm" disabled={idx === doc.items.length - 1} onClick={() => move(idx, 1)} />
-                    <IconButton icon={Trash2} label={`${idx + 1}번 줄 지우기`} size="sm" disabled={doc.items.length <= 1} onClick={() => setItems(doc.items.filter((x) => x.id !== it.id))} />
-                  </div>
-                </td>
-              </tr>
+      {!hasTeams && (
+        <Callout tone="info" title="아직 만들어진 팀이 없습니다">
+          {admin ? (
+            <>
+              관리자 화면 ‘팀·회사 자료’에서 팀을 만들고 팀 코드를 정해 팀에 알려 주세요.
+              <div className="mt-2">
+                <Link to="/admin" className="font-semibold text-brand-ink underline">
+                  관리자 화면으로
+                </Link>
+              </div>
+            </>
+          ) : (
+            '관리자에게 팀을 만들어 달라고 요청하세요.'
+          )}
+        </Callout>
+      )}
+
+      {admin && teams.length > 0 && (
+        <Panel className="p-4">
+          <h3 className="mb-1 flex items-center gap-2 font-bold text-ink">
+            <UsersRound className="size-4 text-brand" aria-hidden /> 관리자로 팀 들어가기
+          </h3>
+          <p className="mb-3 text-sm text-muted">관리자는 팀 코드 없이 모든 팀 공간을 열 수 있습니다.</p>
+          <ul className="grid gap-2 sm:grid-cols-2">
+            {teams.map((t) => (
+              <li key={t.id}>
+                <Button block icon={Building2} loading={busy === t.id} disabled={!!busy} onClick={() => enter(t)} className="justify-start!">
+                  {t.name}
+                </Button>
+              </li>
             ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <Button size="sm" icon={Plus} disabled={doc.items.length >= 80} onClick={() => setItems([...doc.items, emptyItem()])}>
-          줄 추가
-        </Button>
-        <dl className="num flex flex-wrap gap-x-4 gap-y-1 text-sm">
-          <div className="flex gap-1.5">
-            <dt className="text-muted">공급가액</dt>
-            <dd>{won(totals.supply)}</dd>
-          </div>
-          <div className="flex gap-1.5">
-            <dt className="text-muted">세액</dt>
-            <dd>{won(totals.tax)}</dd>
-          </div>
-          <div className="flex gap-1.5">
-            <dt className="font-semibold text-ink-2">합계</dt>
-            <dd className="font-bold text-ink">{won(totals.total)}원</dd>
-          </div>
-        </dl>
-      </div>
+          </ul>
+        </Panel>
+      )}
     </div>
   )
 }
 
-/** 팀 기본 회사 자료가 서버에 있으면 팀 코드를 한 번 받아 바로 쓰게 한다 */
-function TeamGate() {
-  const status = useKit((s) => s.teamStatus)
-  const joinTeam = useKit((s) => s.joinTeam)
-  const usingTeam = useKit((s) => Boolean(s.team) && !hasOwnData(s.local))
-  const [code, setCode] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  if (!status?.available) return null
-  if (status.authorized) {
-    return usingTeam ? (
-      <p className="flex items-center gap-1.5 text-sm text-brand-ink">
-        <ShieldCheck className="size-4" aria-hidden />팀 기본 회사 자료(인감·사업자등록증·통장 사본)를 쓰고 있습니다.
-      </p>
-    ) : null
+// ── 팀 공간 ───────────────────────────────────────────────
+type View = 'write' | 'docs' | 'customers' | 'items' | 'settings'
+
+const hasContent = (d: QuoteDoc) => Boolean(d.customer.trim() || d.title.trim() || d.items.some((i) => i.name.trim() || i.qty || i.unitPrice))
+
+function TeamApp({ team }: { team: TeamInfo }) {
+  const admin = useTeam((s) => s.admin)
+  const docs = useTeam((s) => s.docs)
+  const logout = useTeam((s) => s.logout)
+  const [view, setView] = useState<View>('write')
+  const [section, setSection] = useState<SettingsSection>('company')
+  const [filter, setFilter] = useState<BoardFilter>({})
+  const [draft, setDraftState] = usePersistentState<Draft>(draftKey(team.id), freshDraft())
+  const setDraft = (fn: (d: Draft) => Draft) => setDraftState((d) => fn(d))
+
+  /** 작성 중인 내용을 덮어써도 되는지 */
+  const canReplace = () => {
+    const dirty = draft.savedJson !== JSON.stringify(draft.doc)
+    if (!dirty || !hasContent(draft.doc)) return true
+    return confirm('작성 중인 문서에 저장하지 않은 내용이 있습니다. 그래도 다른 문서를 열까요?')
   }
-  const submit = async (e: FormEvent) => {
-    e.preventDefault()
-    if (!code.trim()) return
-    setBusy(true)
-    setError('')
-    try {
-      await joinTeam(code.trim())
-      setCode('')
-      toast.success('팀 회사 자료를 불러왔습니다. 이 브라우저에서는 다음부터 바로 씁니다.')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '확인하지 못했습니다.')
-    } finally {
-      setBusy(false)
-    }
+  const openDoc = (doc: QuoteDoc, id: string) => {
+    if (!canReplace()) return
+    setDraft(() => ({ doc, savedId: id, savedJson: JSON.stringify(doc) }))
+    setView('write')
   }
-  return (
-    <Callout tone="info" title="팀 코드를 넣으면 회사 인감·사업자등록증·통장 사본이 바로 들어갑니다">
-      {status.codeSet ? (
-        <form onSubmit={submit} className="mt-2 flex flex-wrap items-start gap-2">
-          <TextInput type="password" autoComplete="off" aria-label="팀 코드" placeholder="팀 코드" value={code} onChange={(e) => setCode(e.target.value)} className="w-48!" aria-invalid={Boolean(error) || undefined} />
-          <Button type="submit" variant="primary" icon={KeyRound} loading={busy}>
-            확인
-          </Button>
-          {error && <p className="basis-full text-sm text-danger">{error}</p>}
-          <p className="basis-full text-xs text-muted">이 브라우저에서 한 번만 넣으면 됩니다. 코드는 관리자에게 물어보세요.</p>
-        </form>
-      ) : (
-        <p>관리자가 아직 팀 코드를 정하지 않았습니다. 관리자 화면의 ‘회사 자료’에서 정할 수 있습니다.</p>
-      )}
-    </Callout>
-  )
-}
-
-export default function QuoteTool() {
-  const kit = useKit((s) => s.kit)
-  const loaded = useKit((s) => s.loaded)
-  const loadKit = useKit((s) => s.load)
-  const [doc, setDoc] = usePersistentState<QuoteDoc>('onbijjang:quote:draft', newDoc('quote'))
-  const [kitOpen, setKitOpen] = useState<false | 'company' | 'contacts'>(false)
-  const [pageIndex, setPageIndex] = useState(0)
-  const [busy, setBusy] = useState<string | null>(null)
-  const [history, setHistory] = useState<HistoryEntry[]>([])
-  const patch = (p: Partial<QuoteDoc>) => setDoc((d) => ({ ...d, ...p }))
-
-  useEffect(() => {
-    void loadKit()
-    get(HISTORY_KEY)
-      .then((h) => setHistory(Array.isArray(h) ? (h as HistoryEntry[]) : []))
-      .catch(() => {})
-  }, [loadKit])
-
-  // 날짜는 열 때마다 오늘로(이미 작성 중이던 문서도). 번호가 자동 번호인데 날짜가 바뀌었으면 새로 매긴다.
-  // 번호 매기기는 부작용이 있어 상태 갱신 함수 밖에서 한 번만 한다.
-  const numbered = useRef(false)
-  useEffect(() => {
-    if (numbered.current) return
-    numbered.current = true
+  const copyDoc = (doc: QuoteDoc) => {
+    if (!canReplace()) return
     const today = todayIso()
-    const docNo = !doc.docNo || (isAutoNo(doc.docNo) && doc.date !== today) ? nextDocNo(doc.type, today) : doc.docNo
-    setDoc((d) => ({ ...d, date: today, docNo }))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    const docNo = proposeDocNo(doc.type, today, (docs ?? []).map((d) => d.docNo))
+    setDraft(() => ({ doc: { ...doc, date: today, docNo, items: doc.items.map((i) => ({ ...i, id: uid() })) }, savedId: null, savedJson: null }))
+    setView('write')
+    toast.success('복사했습니다. 고친 뒤 저장하면 새 문서로 남습니다.')
+  }
+  const showDocs = (f: BoardFilter) => {
+    setFilter(f)
+    setView('docs')
+  }
 
-  const [fontsReady, setFontsReady] = useState(false)
-  useEffect(() => {
-    document.fonts.ready.then(() => setFontsReady(true))
-  }, [])
-  const pages: Page[] = useMemo(() => buildPages({ doc, kit, measure: canvasMeasure }), [doc, kit, fontsReady])
-  useEffect(() => setPageIndex((i) => Math.min(i, pages.length - 1)), [pages.length])
-
-  const contact = kit.contacts.find((c) => c.id === doc.contactId) ?? kit.contacts[0]
-  const totals = calcTotals(doc)
-  const filledCount = totals.lines.filter((l) => l.filled).length
-  const base = fileBase(doc)
-  const companyReady = Boolean(kit.company.name)
-  const teamStatus = useKit((s) => s.teamStatus)
-
-  const remember = async () => {
-    const entry: HistoryEntry = { id: uid(), savedAt: new Date().toISOString(), doc }
-    const next = [entry, ...history.filter((h) => !(h.doc.docNo === doc.docNo && h.doc.type === doc.type))].slice(0, 40)
-    setHistory(next)
-    await set(HISTORY_KEY, next).catch(() => {})
-  }
-  const guard = () => {
-    if (!filledCount) {
-      toast.info('품목을 한 줄 이상 입력해 주세요.')
-      return false
-    }
-    if (!doc.customer.trim()) toast.warn('고객사명이 비어 있습니다. 그대로 저장합니다.')
-    return true
-  }
-  const job = async (label: string, fn: () => Promise<void>) => {
-    if (!guard()) return
-    setBusy(label)
-    try {
-      await fn()
-      await remember()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '저장하지 못했습니다.')
-    } finally {
-      setBusy(null)
-    }
-  }
-  const makePdf = async () => {
-    const { pagesToPdf } = await import('./render')
-    const bytes = await pagesToPdf(pages, { title: `${DOC_NAME[doc.type]} ${doc.customer}`.trim(), author: kit.company.name || '온비짱' })
-    return new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'application/pdf' })
-  }
-  const makeXlsx = async () => (await import('./excel')).buildWorkbook(doc, kit)
-
-  const savePdf = () => job('pdf', async () => downloadBlob(await makePdf(), `${base}.pdf`))
-  const saveXlsx = () => job('xlsx', async () => downloadBlob(await makeXlsx(), `${base}.xlsx`))
-  const saveImages = (format: 'image/png' | 'image/jpeg') =>
-    job('img', async () => {
-      const { pagesToImages } = await import('./render')
-      const blobs = await pagesToImages(pages, format, 200)
-      const ext = format === 'image/png' ? 'png' : 'jpg'
-      if (blobs.length === 1) downloadBlob(blobs[0], `${base}.${ext}`)
-      else await downloadZip(blobs.map((b, i) => ({ name: `${base}_${i + 1}.${ext}`, data: b })), `${base}_이미지`)
-    })
-  const saveAll = () =>
-    job('all', async () => {
-      const [pdf, xlsx] = await Promise.all([makePdf(), makeXlsx()])
-      await downloadZip(
-        [
-          { name: `${base}.pdf`, data: pdf },
-          { name: `${base}.xlsx`, data: xlsx },
-        ],
-        base,
-      )
-    })
-  const printPdf = () =>
-    job('print', async () => {
-      const url = URL.createObjectURL(await makePdf())
-      const w = window.open(url, '_blank')
-      if (!w) toast.info('새 창이 막혔습니다. PDF 를 내려받아 인쇄해 주세요.')
-      setTimeout(() => URL.revokeObjectURL(url), 60_000)
-    })
-
-  const switchType = (type: DocType) => {
-    if (type === doc.type) return
-    const docNo = isAutoNo(doc.docNo) || !doc.docNo ? nextDocNo(type, doc.date) : doc.docNo
-    setDoc((d) => ({ ...d, type, docNo }))
-    setPageIndex(0)
-  }
-  const reset = () => {
-    const fresh = newDoc(doc.type)
-    setDoc({ ...fresh, docNo: nextDocNo(doc.type, fresh.date), contactId: doc.contactId, showContact: doc.showContact, sealId: doc.sealId })
-    setPageIndex(0)
-  }
-  const reopen = (h: HistoryEntry, asCopy: boolean) => {
-    const today = todayIso()
-    setDoc(asCopy ? { ...h.doc, date: today, docNo: nextDocNo(h.doc.type, today), items: h.doc.items.map((i) => ({ ...i, id: uid() })) } : h.doc)
-    setPageIndex(0)
-  }
-  const recentCustomers = useMemo(() => [...new Set(history.map((h) => h.doc.customer).filter(Boolean))].slice(0, 20), [history])
-
-  const statement = doc.type === 'statement'
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <Segmented
-          label="문서 종류"
-          value={doc.type}
-          onValue={switchType}
-          options={[
-            { value: 'quote', label: '견적서', icon: FileText },
-            { value: 'statement', label: '거래명세표', icon: FileSpreadsheet },
-          ]}
-        />
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <Popover
-            align="end"
-            className="w-80"
-            trigger={({ ref, ...props }) => (
-              <span ref={ref} className="inline-flex">
-                <Button icon={History} {...props}>
-                  최근 문서
-                </Button>
-              </span>
-            )}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-line bg-surface px-4 py-2.5 shadow-1">
+        <span className="flex items-center gap-2 font-bold text-ink">
+          <span className="flex size-8 items-center justify-center rounded-full bg-brand-soft text-brand-ink">
+            <UsersRound className="size-4" aria-hidden />
+          </span>
+          {team.name}
+        </span>
+        {admin && <Badge tone="mark">관리자로 보는 중</Badge>}
+        <span className="num text-sm text-muted">문서 {docs?.length ?? '…'}건</span>
+        <div className="ml-auto flex items-center gap-1">
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={KeyRound}
+            onClick={() => {
+              setSection('code')
+              setView('settings')
+            }}
           >
-            {(close) =>
-              history.length ? (
-                <div className="flex max-h-80 flex-col">
-                  {history.map((h) => (
-                    <div key={h.id} className="flex items-center gap-1 rounded-sm px-1 hover:bg-sunken">
-                      <button
-                        type="button"
-                        className="min-w-0 flex-1 px-1.5 py-2 text-left"
-                        onClick={() => {
-                          reopen(h, false)
-                          close()
-                        }}
-                      >
-                        <span className="block truncate text-sm font-semibold">
-                          {DOC_NAME[h.doc.type]} · {h.doc.customer || '고객사 없음'}
-                        </span>
-                        <span className="num block text-2xs text-muted">
-                          {h.doc.docNo} · {won(calcTotals(h.doc).total)}원
-                        </span>
-                      </button>
-                      <IconButton
-                        icon={Copy}
-                        label="복사해서 새로 쓰기"
-                        size="sm"
-                        onClick={() => {
-                          reopen(h, true)
-                          close()
-                        }}
-                      />
-                    </div>
-                  ))}
-                  <MenuItem
-                    icon={Trash2}
-                    danger
-                    onClick={async () => {
-                      setHistory([])
-                      await del(HISTORY_KEY).catch(() => {})
-                      close()
-                    }}
-                  >
-                    목록 비우기
-                  </MenuItem>
-                </div>
-              ) : (
-                <p className="px-2.5 py-3 text-sm text-muted">아직 저장한 문서가 없습니다. 내려받은 문서가 여기에 쌓입니다.</p>
-              )
-            }
-          </Popover>
-          <Button icon={RotateCcw} onClick={reset}>
-            새로 작성
+            팀 코드
           </Button>
-          <Button icon={Settings2} onClick={() => setKitOpen('company')}>
-            회사 자료
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={LogOut}
+            onClick={() => {
+              if (hasContent(draft.doc) && draft.savedJson !== JSON.stringify(draft.doc) && !confirm('저장하지 않은 작성 중 문서는 나가면 지워집니다. 나갈까요?')) return
+              void logout()
+            }}
+          >
+            나가기
           </Button>
         </div>
       </div>
 
-      <TeamGate />
+      <Tabs
+        label="팀 문서 공간"
+        value={view}
+        onValue={setView}
+        tabs={[
+          { value: 'write', label: draft.savedId ? '문서 작성 · 고치는 중' : '문서 작성', icon: FilePenLine },
+          { value: 'docs', label: '문서함', icon: Inbox },
+          { value: 'customers', label: '거래처', icon: Store },
+          { value: 'items', label: '품목', icon: Package },
+          { value: 'settings', label: '팀 설정', icon: Settings2 },
+        ]}
+      />
 
-      {loaded && !companyReady && !(teamStatus?.available && !teamStatus.authorized) && (
-        <Callout tone="warn" title="먼저 우리 회사 자료를 넣어 주세요">
-          상호·사업자번호·주소와 직인, 사업자등록증, 통장 사본을 한 번 넣어 두면 문서마다 자동으로 들어갑니다. 받은 ‘회사 자료 파일’이 있으면 불러오기만 하면 됩니다.
-          <div className="mt-2">
-            <Button size="sm" variant="primary" icon={Building2} onClick={() => setKitOpen('company')}>
-              회사 자료 넣기
-            </Button>
-          </div>
-        </Callout>
+      {view === 'write' && (
+        <Editor
+          draft={draft}
+          setDraft={setDraft}
+          onOpenSettings={(s) => {
+            setSection(s)
+            setView('settings')
+          }}
+        />
       )}
-
-      <div className="grid items-start gap-5 2xl:grid-cols-[minmax(0,1.1fr)_minmax(420px,0.9fr)] xl:grid-cols-[minmax(0,1fr)_400px]">
-        <div className="flex min-w-0 flex-col gap-4">
-          <Panel>
-            <Section title={statement ? '공급받는자' : '받는 곳'}>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Field label="고객사명" hint={statement ? undefined : '문서에 “OOO 귀중”으로 들어갑니다.'}>
-                  {(id) => (
-                    <>
-                      <TextInput id={id} list="quote-customers" value={doc.customer} maxLength={60} onChange={(e) => patch({ customer: e.target.value })} placeholder="예: (주)한빛상사" />
-                      <datalist id="quote-customers">
-                        {recentCustomers.map((c) => (
-                          <option key={c} value={c} />
-                        ))}
-                      </datalist>
-                    </>
-                  )}
-                </Field>
-                <Field label={statement ? '품명 (선택)' : '품명·건명'}>{(id) => <TextInput id={id} value={doc.title} maxLength={60} onChange={(e) => patch({ title: e.target.value })} placeholder="예: 사무용 의자" />}</Field>
-                {statement && (
-                  <>
-                    <Field label="등록번호 (선택)">{(id) => <TextInput id={id} value={doc.customerBizNo} maxLength={20} onChange={(e) => patch({ customerBizNo: e.target.value })} placeholder="000-00-00000" />}</Field>
-                    <Field label="대표자 (선택)">{(id) => <TextInput id={id} value={doc.customerCeo} maxLength={20} onChange={(e) => patch({ customerCeo: e.target.value })} />}</Field>
-                    <Field label="주소 (선택)" className="sm:col-span-2">
-                      {(id) => <TextInput id={id} value={doc.customerAddress} maxLength={100} onChange={(e) => patch({ customerAddress: e.target.value })} />}
-                    </Field>
-                  </>
-                )}
-              </div>
-            </Section>
-            <Section title="날짜·번호">
-              <div className="grid gap-3 sm:grid-cols-3">
-                <Field label="작성일" hint="열 때마다 오늘 날짜로 들어갑니다.">
-                  {(id) => (
-                    <div className="flex gap-1.5">
-                      <TextInput id={id} type="date" value={doc.date} onChange={(e) => e.target.value && patch({ date: e.target.value })} />
-                      <IconButton icon={CalendarDays} label="오늘로" variant="secondary" onClick={() => patch({ date: todayIso() })} />
-                    </div>
-                  )}
-                </Field>
-                <Field label={statement ? '명세표 번호' : '견적 번호'}>{(id) => <TextInput id={id} value={doc.docNo} maxLength={30} onChange={(e) => patch({ docNo: e.target.value })} />}</Field>
-                {!statement ? (
-                  <Field label="유효기간">{(id) => <NumberInput id={id} value={doc.validDays} unit="일" min={0} max={365} onValue={(v) => patch({ validDays: Math.max(0, Math.min(365, v ?? 0)) })} />}</Field>
-                ) : (
-                  <Switch className="sm:pt-6" checked={doc.twoCopies} onChange={(twoCopies) => patch({ twoCopies })} label="한 장에 2부" hint="공급받는자·공급자 보관용" />
-                )}
-              </div>
-            </Section>
-            <Section title={statement ? '품목' : '비용항목'} action={<Segmented<VatMode> label="단가 부가세" size="sm" value={doc.vatMode} onValue={(vatMode) => patch({ vatMode })} options={[{ value: 'included', label: 'VAT 포함' }, { value: 'excluded', label: 'VAT 별도' }, { value: 'exempt', label: '면세' }]} />}>
-              <ItemsEditor doc={doc} setItems={(items) => patch({ items })} />
-            </Section>
-            <Section title="기타사항">
-              <Field label="기타사항" hint="여러 줄로 적을 수 있습니다. 납기·결제 조건 등을 적으세요.">
-                {(id) => <Textarea id={id} value={doc.notes} maxLength={1000} onChange={(e) => patch({ notes: e.target.value })} className="min-h-20!" />}
-              </Field>
-              {!statement && <Field label="안내 문구">{(id) => <Textarea id={id} value={doc.footnote} maxLength={300} onChange={(e) => patch({ footnote: e.target.value })} className="min-h-14!" />}</Field>}
-            </Section>
-          </Panel>
-
-          <Panel>
-            <Section title="담당자" action={<Button size="sm" variant="ghost" icon={UserRound} onClick={() => setKitOpen('contacts')}>담당자 관리</Button>}>
-              <Switch checked={doc.showContact} onChange={(showContact) => patch({ showContact })} label="담당자 연락처 넣기" hint={contact ? contactLine(contact) : '등록된 담당자가 없습니다. 담당자 관리에서 추가하세요.'} disabled={!kit.contacts.length} />
-              {kit.contacts.length > 1 && doc.showContact && (
-                <Select aria-label="담당자 고르기" value={contact?.id ?? ''} onValue={(contactId) => patch({ contactId })} options={kit.contacts.map((c) => ({ value: c.id, label: [c.name, c.title].filter(Boolean).join(' ') || '이름 없음' }))} />
-              )}
-            </Section>
-            <Section title="도장·첨부">
-              <Switch checked={doc.showSeal && kit.seals.length > 0} onChange={(showSeal) => patch({ showSeal })} label="직인 찍기" hint={kit.seals.length ? undefined : '회사 자료에서 직인을 먼저 넣어 주세요.'} disabled={!kit.seals.length} />
-              {doc.showSeal && kit.seals.length > 1 && (
-                <div className="flex flex-wrap gap-2">
-                  {kit.seals.map((s) => {
-                    const on = (doc.sealId ?? kit.seals[0].id) === s.id
-                    return (
-                      <button
-                        key={s.id}
-                        type="button"
-                        aria-pressed={on}
-                        title={s.name}
-                        onClick={() => patch({ sealId: s.id })}
-                        className={clsx('checker flex size-14 items-center justify-center rounded-md border-2 transition-colors', on ? 'border-brand' : 'border-line hover:border-line-strong')}
-                      >
-                        <img src={s.dataUrl} alt={s.name} className="max-h-[90%] max-w-[90%]" />
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
-              <Switch checked={doc.attachRegistration && !!kit.registration} onChange={(attachRegistration) => patch({ attachRegistration })} label="사업자등록증 붙이기" hint={kit.registration ? `${kit.registration.pages.length}쪽이 뒤에 붙습니다.` : '회사 자료에서 먼저 올려 주세요.'} disabled={!kit.registration} />
-              <Switch checked={doc.attachBankbook && !!kit.bankbook} onChange={(attachBankbook) => patch({ attachBankbook })} label="통장 사본 붙이기" hint={kit.bankbook ? (kit.bank.account ? '입금 계좌 한 줄도 함께 들어갑니다.' : '뒤에 한 쪽으로 붙습니다.') : '회사 자료에서 먼저 올려 주세요.'} disabled={!kit.bankbook} />
-            </Section>
-          </Panel>
-        </div>
-
-        <div className="flex min-w-0 flex-col gap-3 xl:sticky xl:top-20">
-          <Panel className="p-3">
-            <div className="mb-2 flex flex-wrap items-center gap-2">
-              <span className="text-sm font-semibold text-ink-2">저장</span>
-              <Badge>{pages.length}쪽</Badge>
-              <div className="ml-auto flex flex-wrap gap-1.5">
-                <Button size="sm" variant="primary" icon={Download} loading={busy === 'pdf'} disabled={!!busy} onClick={savePdf}>
-                  PDF
-                </Button>
-                <Button size="sm" icon={FileSpreadsheet} loading={busy === 'xlsx'} disabled={!!busy} onClick={saveXlsx}>
-                  엑셀
-                </Button>
-                <Popover
-                  align="end"
-                  trigger={({ ref, ...props }) => (
-                    <span ref={ref} className="inline-flex">
-                      <Button size="sm" icon={ImageIcon} loading={busy === 'img'} disabled={!!busy} {...props}>
-                        이미지
-                      </Button>
-                    </span>
-                  )}
-                >
-                  {(close) => (
-                    <>
-                      <MenuItem
-                        onClick={() => {
-                          close()
-                          saveImages('image/png')
-                        }}
-                      >
-                        PNG (선명하게)
-                      </MenuItem>
-                      <MenuItem
-                        onClick={() => {
-                          close()
-                          saveImages('image/jpeg')
-                        }}
-                      >
-                        JPG (가볍게)
-                      </MenuItem>
-                    </>
-                  )}
-                </Popover>
-                <Button size="sm" icon={Download} loading={busy === 'all'} disabled={!!busy} onClick={saveAll}>
-                  PDF+엑셀
-                </Button>
-                <IconButton icon={Printer} label="인쇄용 PDF 열기" variant="secondary" size="sm" disabled={!!busy} onClick={printPdf} />
-              </div>
-            </div>
-            <div className="mat flex justify-center rounded-md p-3 sm:p-5">
-              <div className="w-full max-w-[640px]">{pages[pageIndex] && <PagePreview page={pages[pageIndex]} label={`${DOC_NAME[doc.type]} 미리보기 ${pageIndex + 1}쪽`} />}</div>
-            </div>
-            {pages.length > 1 && (
-              <div className="mt-2 flex flex-wrap justify-center gap-1">
-                {pages.map((p, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => setPageIndex(i)}
-                    aria-current={i === pageIndex}
-                    className={clsx('h-8 min-w-8 rounded-sm border px-2 text-sm font-semibold', i === pageIndex ? 'border-brand bg-brand-soft text-brand-ink' : 'border-line-strong bg-surface text-ink-2 hover:bg-sunken')}
-                  >
-                    {p.attachment ? (p.attachment.kind === 'registration' ? '등록증' : '통장') : i + 1}
-                  </button>
-                ))}
-              </div>
-            )}
-          </Panel>
-          <p className="text-xs leading-relaxed text-muted">엑셀은 금액 칸이 수식이라 엑셀에서 수량·단가를 고치면 다시 계산됩니다. 직인·첨부 자료는 이 브라우저에만 있고 서버로 보내지 않습니다.</p>
-        </div>
-      </div>
-
-      <KitDialog open={!!kitOpen} initialTab={kitOpen || 'company'} key={String(kitOpen)} onClose={() => setKitOpen(false)} />
+      {view === 'docs' && <DocsBoard filter={filter} setFilter={setFilter} onOpen={openDoc} onCopy={copyDoc} />}
+      {view === 'customers' && <CustomersBoard onShow={(customer) => showDocs({ customer })} />}
+      {view === 'items' && <ItemsBoard onShow={(item) => showDocs({ item })} />}
+      {view === 'settings' && <TeamSettings section={section} setSection={setSection} />}
     </div>
   )
 }

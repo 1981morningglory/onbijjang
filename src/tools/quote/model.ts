@@ -46,6 +46,8 @@ export interface QuoteDoc {
   attachBankbook: boolean
   /** 거래명세표를 한 장에 2부(공급받는자·공급자 보관용)로 */
   twoCopies: boolean
+  /** 작성자(문서함에 저장할 때 고른 담당자) */
+  author?: string
 }
 
 export interface Company {
@@ -260,4 +262,18 @@ export const DOC_NAME: Record<DocType, string> = { quote: '견적서', statement
 export function fileBase(doc: QuoteDoc): string {
   const who = doc.customer.trim().replace(/[\\/:*?"<>|]/g, '').slice(0, 30)
   return [DOC_NAME[doc.type], who, doc.date.replace(/-/g, '')].filter(Boolean).join('_')
+}
+
+export const isAutoNo = (no: string) => /^[QT]-\d{8}-\d{2,}$/.test(no)
+
+/** 팀 문서함에 있는 번호를 보고 그날의 다음 번호를 고른다: Q-20261002-03 */
+export function proposeDocNo(type: DocType, iso: string, existing: string[]): string {
+  const prefix = `${type === 'quote' ? 'Q' : 'T'}-${iso.replace(/-/g, '')}-`
+  let max = 0
+  for (const no of existing) {
+    if (!no.startsWith(prefix)) continue
+    const n = Number(no.slice(prefix.length))
+    if (Number.isFinite(n) && n > max) max = n
+  }
+  return makeDocNo(type, iso, max + 1)
 }

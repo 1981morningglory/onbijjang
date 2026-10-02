@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { amountInWords, calcLine, calcTotals, contactLine, emptyItem, fileBase, koreanAmount, makeDocNo, newDoc } from './model'
+import { amountInWords, calcLine, calcTotals, contactLine, emptyItem, fileBase, isAutoNo, koreanAmount, makeDocNo, newDoc, proposeDocNo } from './model'
 
 const item = (qty: number, unitPrice: number) => ({ ...emptyItem(), name: '의자', qty, unitPrice })
 
@@ -61,6 +61,13 @@ describe('표기 도우미', () => {
     expect(contactLine({ id: 'a', name: '홍길동', title: '과장', phone: '031-000-0000', email: '', extras: [{ label: '휴대폰', value: '010-1111-2222' }, { label: '메모', value: ' ' }] })).toBe(
       '홍길동 과장 · 직통 031-000-0000 · 휴대폰 010-1111-2222',
     )
+  })
+  it('팀 문서함 번호를 보고 그날 다음 번호를 고른다', () => {
+    expect(proposeDocNo('quote', '2026-10-02', [])).toBe('Q-20261002-01')
+    expect(proposeDocNo('quote', '2026-10-02', ['Q-20261002-01', 'Q-20261002-07', 'T-20261002-09', 'Q-20261001-12'])).toBe('Q-20261002-08')
+    expect(proposeDocNo('statement', '2026-10-02', ['T-20261002-09'])).toBe('T-20261002-10')
+    expect(isAutoNo('Q-20261002-08')).toBe(true)
+    expect(isAutoNo('견적-001')).toBe(false)
   })
   it('파일 이름은 금지 문자를 뺀다', () => {
     expect(fileBase({ ...newDoc('quote'), customer: 'A/B:상사', date: '2026-10-02' })).toBe('견적서_AB상사_20261002')

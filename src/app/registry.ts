@@ -149,9 +149,9 @@ export const TOOLS: ToolDef[] = [
   },
   {
     id: 'quote', group: 'doc', title: '견적서·거래명세표',
-    summary: '고객사·품목만 넣으면 직인·첨부까지 갖춘 견적서와 거래명세표를 PDF·엑셀로',
-    keywords: ['견적', '견적서', '거래명세서', '명세표', '명세서', '인보이스', '직인', '사업자등록증', '통장사본', '엑셀'],
-    icon: ReceiptText, art: 'quote', local: true, wide: true,
+    summary: '팀 코드로 들어가 견적서·거래명세표를 만들고, 팀 문서함에서 날짜·거래처·품목별로 찾아 PDF·엑셀로',
+    keywords: ['견적', '견적서', '거래명세서', '명세표', '명세서', '인보이스', '직인', '사업자등록증', '통장사본', '엑셀', '팀', '문서함', '거래처'],
+    icon: ReceiptText, art: 'quote', local: false, wide: true,
     component: lazy(() => import('@/tools/quote')),
   },
   {

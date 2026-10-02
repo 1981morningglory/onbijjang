@@ -1,6 +1,7 @@
 import clsx from 'clsx'
 import { ArrowDown, ArrowUp, KeyRound, LogOut, Plus, Save, Trash2, Upload } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useNavigate } from 'react-router'
 import { api, ApiError } from '@/lib/api'
 import { readAsDataURL } from '@/lib/files'
 import { Badge, Button, Callout, ColorField, Field, IconButton, NumberInput, Panel, PositionGrid, Segmented, Slider, Spinner, Switch, Tabs, TextInput, Textarea, toast } from '@/ui'
@@ -270,144 +271,254 @@ function PresetEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: (c: Si
   )
 }
 
-interface KitStatus {
-  available: boolean
-  updatedAt: string | null
-  codeSet: boolean
-  needsCode: boolean
+interface AdminTeam {
+  id: string
+  name: string
+  createdAt: string
+  codeChangedAt: string | null
+  docs: number
+  lastDocAt: string | null
+  ownKit: boolean
 }
 
-/** 팀 기본 회사 자료(인감·사업자등록증·통장 사본)와 팀 코드 */
-function CompanyKitEditor() {
-  const [status, setStatus] = useState<KitStatus | null>(null)
-  const [summary, setSummary] = useState<{ name: string; seals: string[]; registration: number; bankbook: number; contacts: number } | null>(null)
-  const [busy, setBusy] = useState<string | null>(null)
-  const [code, setCode] = useState('')
-  const fileInput = useRef<HTMLInputElement>(null)
+const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString('ko-KR', { dateStyle: 'medium', timeStyle: 'short' }) : '')
 
-  const refresh = async () => {
-    const st = await api<KitStatus>('/company-kit/status')
-    setStatus(st)
-    if (st.available) {
-      const res = await api<{ kit: { company?: { name?: string }; seals?: Array<{ dataUrl: string }>; registration?: { pages?: string[] } | null; bankbook?: { pages?: string[] } | null; contacts?: unknown[] } }>('/company-kit')
-      const k = res.kit
-      setSummary({ name: k.company?.name ?? '', seals: (k.seals ?? []).map((x) => x.dataUrl), registration: k.registration?.pages?.length ?? 0, bankbook: k.bankbook?.pages?.length ?? 0, contacts: k.contacts?.length ?? 0 })
-    } else setSummary(null)
+async function attempt(fn: () => Promise<void>) {
+  try {
+    await fn()
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : '처리하지 못했습니다.')
   }
-  useEffect(() => {
-    refresh().catch(() => {})
-  }, [])
+}
 
-  const run = async (label: string, fn: () => Promise<void>) => {
+/** 팀 만들기·팀 코드 정하기 + 모든 팀이 함께 쓰는 회사 공통 자료 */
+function TeamsEditor() {
+  const navigate = useNavigate()
+  const [teams, setTeams] = useState<AdminTeam[] | null>(null)
+  const [name, setName] = useState('')
+  const [code, setCode] = useState('')
+  const [busy, setBusy] = useState<string | null>(null)
+  const [editing, setEditing] = useState<{ id: string; field: 'name' | 'code'; value: string } | null>(null)
+
+  const refresh = async () => setTeams((await api<{ teams: AdminTeam[] }>('/admin/teams')).teams)
+  useEffect(() => {
+    void attempt(refresh)
+  }, [])
+  const run = (label: string, fn: () => Promise<void>) => {
     setBusy(label)
-    try {
-      await fn()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '처리하지 못했습니다.')
-    } finally {
-      setBusy(null)
-    }
+    void attempt(fn).finally(() => setBusy(null))
+  }
+
+  const create = (e: FormEvent) => {
+    e.preventDefault()
+    run('create', async () => {
+      await api('/admin/teams', { method: 'POST', body: { name: name.trim(), code: code.trim() } })
+      toast.success(`${name.trim()} 팀을 만들었습니다. 팀 코드를 팀에 알려 주세요.`)
+      setName('')
+      setCode('')
+      await refresh()
+    })
+  }
+  const saveEdit = () => {
+    if (!editing) return
+    const { id, field, value } = editing
+    run(`edit:${id}`, async () => {
+      await api(`/admin/teams/${id}`, { method: 'PATCH', body: { [field]: value.trim() } })
+      toast.success(field === 'code' ? '팀 코드를 바꿨습니다. 그 팀 사람들은 새 코드로 다시 들어와야 합니다.' : '팀 이름을 바꿨습니다.')
+      setEditing(null)
+      await refresh()
+    })
+  }
+  const enter = (t: AdminTeam) =>
+    run(`enter:${t.id}`, async () => {
+      const { useTeam } = await import('@/tools/quote/team')
+      await useTeam.getState().adminEnter(t.id)
+      navigate('/tools/quote')
+    })
+
+  return (
+    <div className="flex flex-col gap-5">
+      <Panel className="flex flex-col gap-4 p-5">
+        <div>
+          <h3 className="text-base">팀</h3>
+          <p className="text-sm text-muted">
+            팀마다 견적서·거래명세표 문서함, 담당자, (원하면) 회사 자료가 따로 저장됩니다. 팀 코드를 알아야 그 팀 공간에 들어갈 수 있고, 팀은 팀 설정에서 코드를 직접 바꿀 수 있습니다.
+          </p>
+        </div>
+        <form onSubmit={create} className="flex flex-wrap items-end gap-2">
+          <Field label="팀 이름" className="min-w-44 flex-1">
+            {(id) => <TextInput id={id} value={name} maxLength={40} onChange={(e) => setName(e.target.value)} placeholder="예: 영업1팀" />}
+          </Field>
+          <Field label="처음 팀 코드" hint="4자 이상. 팀마다 다르게." className="min-w-44 flex-1">
+            {(id) => <TextInput id={id} value={code} maxLength={40} autoComplete="off" onChange={(e) => setCode(e.target.value)} />}
+          </Field>
+          <Button type="submit" variant="primary" icon={Plus} loading={busy === 'create'} disabled={!name.trim() || code.trim().length < 4} className="mb-[22px]">
+            팀 추가
+          </Button>
+        </form>
+
+        {teams === null ? (
+          <Spinner />
+        ) : teams.length === 0 ? (
+          <p className="rounded-md border border-dashed border-line-strong p-4 text-sm text-muted">아직 팀이 없습니다. 위에서 첫 팀을 만들어 주세요.</p>
+        ) : (
+          <ul className="flex flex-col divide-y divide-line rounded-md border border-line">
+            {teams.map((t) => {
+              const edit = editing?.id === t.id ? editing : null
+              return (
+                <li key={t.id} className="flex flex-col gap-2 p-3">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <p className="font-semibold text-ink">{t.name}</p>
+                    <span className="num text-sm text-muted">문서 {t.docs}건</span>
+                    {t.lastDocAt && <span className="text-xs text-faint">최근 {when(t.lastDocAt)}</span>}
+                    {t.ownKit && <Badge tone="accent">팀 전용 회사 자료</Badge>}
+                    {t.codeChangedAt && <span className="text-xs text-faint">코드 바꿈 {when(t.codeChangedAt)}</span>}
+                    <div className="ml-auto flex flex-wrap gap-1">
+                      <Button size="sm" variant="primary" loading={busy === `enter:${t.id}`} onClick={() => enter(t)}>
+                        들어가기
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setEditing({ id: t.id, field: 'name', value: t.name })}>
+                        이름 바꾸기
+                      </Button>
+                      <Button size="sm" variant="ghost" icon={KeyRound} onClick={() => setEditing({ id: t.id, field: 'code', value: '' })}>
+                        코드 다시 정하기
+                      </Button>
+                      <IconButton
+                        icon={Trash2}
+                        label={`${t.name} 삭제`}
+                        size="sm"
+                        onClick={() =>
+                          run(`del:${t.id}`, async () => {
+                            if (!confirm(`${t.name} 팀을 지울까요? 이 팀의 문서 ${t.docs}건과 담당자·회사 자료가 모두 사라지고 되돌릴 수 없습니다.`)) return
+                            if (t.docs > 0 && prompt(`확인을 위해 팀 이름 “${t.name}”을 그대로 적어 주세요.`)?.trim() !== t.name) return toast.info('지우지 않았습니다.')
+                            await api(`/admin/teams/${t.id}`, { method: 'DELETE' })
+                            toast.success('팀을 지웠습니다.')
+                            await refresh()
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+                  {edit && (
+                    <form
+                      className="flex flex-wrap items-center gap-2"
+                      onSubmit={(e) => {
+                        e.preventDefault()
+                        saveEdit()
+                      }}
+                    >
+                      <TextInput
+                        aria-label={edit.field === 'name' ? '새 팀 이름' : '새 팀 코드'}
+                        autoFocus
+                        autoComplete="off"
+                        value={edit.value}
+                        maxLength={40}
+                        placeholder={edit.field === 'name' ? '새 팀 이름' : '새 팀 코드 (4자 이상)'}
+                        onChange={(e) => setEditing({ ...edit, value: e.target.value })}
+                        className="max-w-72"
+                      />
+                      <Button type="submit" size="sm" variant="primary" loading={busy === `edit:${t.id}`} disabled={edit.field === 'code' ? edit.value.trim().length < 4 : !edit.value.trim()}>
+                        저장
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>
+                        취소
+                      </Button>
+                      {edit.field === 'code' && <span className="text-xs text-muted">팀이 코드를 잊었을 때 쓰세요. 그 팀 사람들은 새 코드로 다시 들어와야 합니다.</span>}
+                    </form>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </Panel>
+      <CommonKitEditor />
+    </div>
+  )
+}
+
+/** 모든 팀 문서에 기본으로 들어가는 회사 공통 자료(팀이 따로 저장하면 그 팀은 팀 자료를 쓴다) */
+function CommonKitEditor() {
+  const [state, setState] = useState<{ kit: { company?: { name?: string }; seals?: Array<{ dataUrl: string }>; registration?: { pages?: string[] } | null; bankbook?: { pages?: string[] } | null } | null; updatedAt: string | null } | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const fileInput = useRef<HTMLInputElement>(null)
+  const refresh = async () => setState(await api('/admin/company-kit'))
+  useEffect(() => {
+    void attempt(refresh)
+  }, [])
+  const run = (label: string, fn: () => Promise<void>) => {
+    setBusy(label)
+    void attempt(fn).finally(() => setBusy(null))
   }
   const upload = (file: File) =>
     run('upload', async () => {
       const { kitFromFile } = await import('@/tools/quote/kit')
       const kit = await kitFromFile(file)
-      await api('/admin/company-kit', { method: 'PUT', body: { kit } })
+      await api('/admin/company-kit', { method: 'PUT', body: { kit: { ...kit, contacts: [] } } })
       await refresh()
-      toast.success(`${kit.company.name || '회사'} 자료를 팀 기본으로 올렸습니다.`)
+      toast.success(`${kit.company.name || '회사'} 자료를 회사 공통 자료로 올렸습니다.`)
     })
+  const k = state?.kit
 
   return (
-    <div className="grid gap-5 xl:grid-cols-2">
-      <Panel className="flex flex-col gap-4 p-5">
-        <div>
-          <h3 className="text-base">팀 기본 회사 자료</h3>
-          <p className="text-sm text-muted">견적서·거래명세표에 자동으로 들어가는 상호·직인·사업자등록증·통장 사본입니다. 이 서버에만 저장되고 GitHub 에는 올라가지 않습니다.</p>
-        </div>
-        {status?.available && summary ? (
-          <div className="flex items-center gap-3 rounded-md border border-line bg-paper p-3">
-            <div className="flex -space-x-3">
-              {summary.seals.slice(0, 3).map((src, i) => (
-                <img key={i} src={src} alt="" className="checker size-12 rounded-full border border-line object-contain" />
-              ))}
-            </div>
-            <div className="min-w-0 flex-1 text-sm">
-              <p className="font-semibold text-ink">{summary.name || '이름 없음'}</p>
-              <p className="text-muted">
-                직인 {summary.seals.length}개 · 사업자등록증 {summary.registration}쪽 · 통장 사본 {summary.bankbook}쪽 · 담당자 {summary.contacts}명
-              </p>
-              {status.updatedAt && <p className="text-xs text-faint">{new Date(status.updatedAt).toLocaleString('ko-KR')} 올림</p>}
-            </div>
+    <Panel className="flex flex-col gap-4 p-5">
+      <div>
+        <h3 className="text-base">회사 공통 자료</h3>
+        <p className="text-sm text-muted">모든 팀의 견적서·거래명세표에 기본으로 들어가는 상호·직인·사업자등록증·통장 사본입니다. 이 서버에만 저장되고 GitHub 에는 올라가지 않으며, 팀 코드로 들어온 사람만 볼 수 있습니다.</p>
+      </div>
+      {k ? (
+        <div className="flex items-center gap-3 rounded-md border border-line bg-paper p-3">
+          <div className="flex -space-x-3">
+            {(k.seals ?? []).slice(0, 3).map((s, i) => (
+              <img key={i} src={s.dataUrl} alt="" className="checker size-12 rounded-full border border-line object-contain" />
+            ))}
           </div>
-        ) : (
-          <p className="rounded-md border border-dashed border-line-strong p-4 text-sm text-muted">아직 올린 자료가 없습니다.</p>
+          <div className="min-w-0 flex-1 text-sm">
+            <p className="font-semibold text-ink">{k.company?.name || '이름 없음'}</p>
+            <p className="text-muted">
+              직인 {k.seals?.length ?? 0}개 · 사업자등록증 {k.registration?.pages?.length ?? 0}쪽 · 통장 사본 {k.bankbook?.pages?.length ?? 0}쪽
+            </p>
+            {state?.updatedAt && <p className="text-xs text-faint">{when(state.updatedAt)} 올림</p>}
+          </div>
+        </div>
+      ) : (
+        <p className="rounded-md border border-dashed border-line-strong p-4 text-sm text-muted">{state ? '아직 올린 자료가 없습니다.' : '불러오는 중…'}</p>
+      )}
+      <input
+        ref={fileInput}
+        type="file"
+        accept=".json,application/json"
+        hidden
+        onChange={(e) => {
+          const f = e.target.files?.[0]
+          e.target.value = ''
+          if (f) upload(f)
+        }}
+      />
+      <div className="flex flex-wrap gap-2">
+        <Button variant="primary" icon={Upload} loading={busy === 'upload'} onClick={() => fileInput.current?.click()}>
+          {k ? '회사 자료 파일로 바꾸기' : '회사 자료 파일 올리기'}
+        </Button>
+        {k && (
+          <Button
+            variant="danger"
+            icon={Trash2}
+            loading={busy === 'delete'}
+            onClick={() =>
+              run('delete', async () => {
+                if (!confirm('회사 공통 자료를 지울까요? 팀 전용 자료가 없는 팀은 직인·첨부가 빠집니다.')) return
+                await api('/admin/company-kit', { method: 'DELETE' })
+                await refresh()
+                toast.success('지웠습니다.')
+              })
+            }
+          >
+            지우기
+          </Button>
         )}
-        <input
-          ref={fileInput}
-          type="file"
-          accept=".json,application/json"
-          hidden
-          onChange={(e) => {
-            const f = e.target.files?.[0]
-            e.target.value = ''
-            if (f) upload(f)
-          }}
-        />
-        <div className="flex flex-wrap gap-2">
-          <Button variant="primary" icon={Upload} loading={busy === 'upload'} onClick={() => fileInput.current?.click()}>
-            {status?.available ? '회사 자료 파일로 바꾸기' : '회사 자료 파일 올리기'}
-          </Button>
-          {status?.available && (
-            <Button
-              variant="danger"
-              icon={Trash2}
-              loading={busy === 'delete'}
-              onClick={() =>
-                run('delete', async () => {
-                  if (!confirm('팀 기본 회사 자료를 지울까요? 팀원 화면에서도 사라집니다.')) return
-                  await api('/admin/company-kit', { method: 'DELETE' })
-                  await refresh()
-                  toast.success('지웠습니다.')
-                })
-              }
-            >
-              지우기
-            </Button>
-          )}
-        </div>
-        <p className="text-xs text-muted">회사 자료 파일은 견적서·거래명세표 → 회사 자료 → ‘파일로 주고받기’에서 만들 수 있습니다.</p>
-      </Panel>
-
-      <Panel className="flex flex-col gap-4 p-5">
-        <div>
-          <h3 className="text-base">팀 코드</h3>
-          <p className="text-sm text-muted">사이트는 누구나 열 수 있으므로, 회사 자료는 이 코드를 한 번 넣은 브라우저에만 보입니다. 바꾸면 모든 팀원이 새 코드를 다시 넣어야 합니다.</p>
-        </div>
-        <p className="text-sm">
-          지금 상태: <b className={status?.codeSet ? 'text-brand-ink' : 'text-warn'}>{status?.codeSet ? '정해져 있음' : '아직 없음'}</b>
-          {status && !status.needsCode && <span className="text-muted"> · 사내망 모드라 코드 없이 보입니다</span>}
-        </p>
-        <form
-          className="flex flex-wrap items-end gap-2"
-          onSubmit={(e) => {
-            e.preventDefault()
-            run('code', async () => {
-              await api('/admin/team-code', { method: 'PUT', body: { code } })
-              setCode('')
-              await refresh()
-              toast.success('팀 코드를 정했습니다. 팀원에게 알려 주세요.')
-            })
-          }}
-        >
-          <Field label={status?.codeSet ? '새 팀 코드' : '팀 코드'} hint="4자 이상. 관리자 비밀번호와 다르게 정하세요." className="min-w-56 flex-1">
-            {(id) => <TextInput id={id} type="password" autoComplete="new-password" value={code} onChange={(e) => setCode(e.target.value)} />}
-          </Field>
-          <Button type="submit" icon={KeyRound} loading={busy === 'code'} disabled={code.trim().length < 4}>
-            {status?.codeSet ? '바꾸기' : '정하기'}
-          </Button>
-        </form>
-      </Panel>
-    </div>
+      </div>
+      <p className="text-xs text-muted">회사 자료 파일은 견적서·거래명세표 → 팀 설정 → 회사 자료 → ‘파일로 주고받기’에서 만들 수 있습니다.</p>
+    </Panel>
   )
 }
 
@@ -530,13 +641,13 @@ export function Admin() {
         tabs={[
           { value: 'menu', label: '메뉴 노출' },
           { value: 'presets', label: '공지·팀 프리셋' },
-          { value: 'company', label: '회사 자료' },
+          { value: 'company', label: '팀·회사 자료' },
           { value: 'account', label: '계정' },
         ]}
       />
       {tab === 'menu' && <MenuEditor draft={draft} setDraft={setDraft} />}
       {tab === 'presets' && <PresetEditor draft={draft} setDraft={setDraft} />}
-      {tab === 'company' && <CompanyKitEditor />}
+      {tab === 'company' && <TeamsEditor />}
       {tab === 'account' && <AccountEditor onLogout={logout} />}
 
       {(tab === 'menu' || tab === 'presets') && (
