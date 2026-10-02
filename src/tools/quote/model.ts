@@ -6,6 +6,8 @@
 export type DocType = 'quote' | 'statement'
 /** 단가에 부가세가 포함됐는지: 포함 · 별도 · 면세(세액 없음) */
 export type VatMode = 'included' | 'excluded' | 'exempt'
+/** 거래명세표 양식: 기본(장부형, 한 장에 2부) · 출고(품번·BOX수·내품수량, 인수증) */
+export type StatementStyle = 'ledger' | 'shipment'
 
 export interface LineItem {
   id: string
@@ -16,6 +18,12 @@ export interface LineItem {
   qty: number | null
   unitPrice: number | null
   note: string
+  /** 출고 양식: 품번 */
+  itemNo?: string
+  /** 출고 양식: BOX 수(소수 가능) */
+  boxes?: number | null
+  /** 출고 양식: 한 BOX 의 내품 수량. BOX수와 함께 있으면 출고수량 = BOX수 × 내품수량 */
+  perBox?: number | null
 }
 
 export interface QuoteDoc {
@@ -28,6 +36,11 @@ export interface QuoteDoc {
   customerBizNo: string
   customerAddress: string
   customerCeo: string
+  /** 출고 양식의 공급받는자 업태·종목 */
+  customerBizType?: string
+  customerBizItem?: string
+  /** 거래명세표 양식. 없으면 기본(장부형) — 예전에 저장한 문서 */
+  statementStyle?: StatementStyle
   /** 품명·건명 */
   title: string
   items: LineItem[]
@@ -60,6 +73,8 @@ export interface Company {
   tel: string
   fax: string
   email: string
+  /** 문서 아래쪽에 넣는 한 줄 문구(예: 믿음이 있는 사회 - 모닝글로리) */
+  slogan: string
 }
 
 export interface Contact {
@@ -87,22 +102,24 @@ export interface Attachment {
   pages: string[]
 }
 
-/** 회사 자료: 이 브라우저에만 저장하고, 파일로 내보내 팀에 나눈다(서버에 올리지 않는다). */
+/** 회사 자료: 서버의 팀 공간(회사 공통 자료·팀 자료)에 두고, 파일로도 주고받는다. */
 export interface CompanyKit {
   version: 1
   company: Company
   seals: Seal[]
   registration: Attachment | null
   bankbook: Attachment | null
+  /** 회사 로고(투명 PNG data URL). 출고 양식 거래명세표 아래쪽에 넣는다 */
+  logo: string | null
   /** 통장 정보(입금 계좌 안내 문구에 씀) */
   bank: { bankName: string; account: string; holder: string }
   contacts: Contact[]
 }
 
-export const EMPTY_COMPANY: Company = { name: '', ceo: '', bizNo: '', address: '', bizType: '', bizItem: '', tel: '', fax: '', email: '' }
+export const EMPTY_COMPANY: Company = { name: '', ceo: '', bizNo: '', address: '', bizType: '', bizItem: '', tel: '', fax: '', email: '', slogan: '' }
 
 export function emptyKit(): CompanyKit {
-  return { version: 1, company: { ...EMPTY_COMPANY }, seals: [], registration: null, bankbook: null, bank: { bankName: '', account: '', holder: '' }, contacts: [] }
+  return { version: 1, company: { ...EMPTY_COMPANY }, seals: [], registration: null, bankbook: null, logo: null, bank: { bankName: '', account: '', holder: '' }, contacts: [] }
 }
 
 export const uid = () => Math.random().toString(36).slice(2, 10)
@@ -137,8 +154,14 @@ export function newDoc(type: DocType = 'quote'): QuoteDoc {
     attachRegistration: false,
     attachBankbook: false,
     twoCopies: true,
+    statementStyle: 'shipment',
+    customerBizType: '',
+    customerBizItem: '',
   }
 }
+
+export const styleOf = (doc: Pick<QuoteDoc, 'statementStyle'>): StatementStyle => doc.statementStyle ?? 'ledger'
+export const STYLE_NAME: Record<StatementStyle, string> = { ledger: '기본 양식', shipment: '출고 양식' }
 
 // ── 계산 ──────────────────────────────────────────────────
 export interface LineCalc {
@@ -156,6 +179,8 @@ export interface Totals {
   tax: number
   total: number
   qty: number
+  /** BOX 수 합계(출고 양식) */
+  boxes: number
 }
 
 const n = (v: number | null | undefined) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
@@ -167,7 +192,7 @@ const n = (v: number | null | undefined) => (typeof v === 'number' && Number.isF
  * - 면세: 공급가액 = 합계 = 수량×단가, 세액 0
  */
 export function calcLine(item: LineItem, vat: VatMode): LineCalc {
-  const filled = Boolean(item.name.trim() || item.spec.trim() || item.note.trim() || item.qty || item.unitPrice)
+  const filled = Boolean(item.name.trim() || item.spec.trim() || item.note.trim() || item.itemNo?.trim() || item.qty || item.unitPrice || item.boxes)
   const amount = Math.round(n(item.qty) * n(item.unitPrice))
   if (vat === 'included') {
     const supply = Math.round(amount / 1.1)
@@ -188,6 +213,7 @@ export function calcTotals(doc: Pick<QuoteDoc, 'items' | 'vatMode'>): Totals {
     tax: lines.reduce((s, l) => s + l.tax, 0),
     total: lines.reduce((s, l) => s + l.total, 0),
     qty: lines.reduce((s, l) => s + n(l.item.qty), 0),
+    boxes: Math.round(lines.reduce((s, l) => s + n(l.item.boxes), 0) * 100) / 100,
   }
 }
 
@@ -276,4 +302,10 @@ export function proposeDocNo(type: DocType, iso: string, existing: string[]): st
     if (Number.isFinite(n) && n > max) max = n
   }
   return makeDocNo(type, iso, max + 1)
+}
+
+/** BOX수·내품수량이 둘 다 있으면 출고수량을 계산한다 */
+export function shipQty(boxes: number | null | undefined, perBox: number | null | undefined): number | null {
+  if (typeof boxes !== 'number' || typeof perBox !== 'number' || !Number.isFinite(boxes) || !Number.isFinite(perBox)) return null
+  return Math.round(boxes * perBox * 1000) / 1000
 }

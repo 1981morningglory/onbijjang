@@ -57,6 +57,7 @@ function kitProblem(kit) {
   const isData = (v) => typeof v === 'string' && /^data:(image\/(png|jpeg|webp)|application\/pdf);base64,/.test(v)
   if (kit.seals !== undefined && !Array.isArray(kit.seals)) return '직인 형식이 올바르지 않습니다.'
   for (const s of kit.seals ?? []) if (!isData(s?.dataUrl)) return '직인 이미지 형식이 올바르지 않습니다.'
+  if (kit.logo != null && !isData(kit.logo)) return '로고 이미지 형식이 올바르지 않습니다.'
   for (const key of ['registration', 'bankbook']) {
     const a = kit[key]
     if (a == null) continue

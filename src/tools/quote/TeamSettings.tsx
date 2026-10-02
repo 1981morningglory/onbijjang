@@ -19,6 +19,7 @@ const COMPANY_FIELDS: Array<[keyof Company, string, string?]> = [
   ['tel', '전화'],
   ['fax', '팩스'],
   ['email', '대표 이메일'],
+  ['slogan', '문서 아래 문구', '예: 믿음이 있는 사회 - 모닝글로리'],
 ]
 
 function FilePick({ accept, onFile, children, icon = Upload }: { accept: string; onFile: (f: File) => void; children: string; icon?: typeof Upload }) {
@@ -267,10 +268,45 @@ function CompanySection() {
         {tab === 'info' && (
           <div className="grid gap-3 sm:grid-cols-2">
             {COMPANY_FIELDS.map(([key, label, ph]) => (
-              <Field key={key} label={label} className={key === 'address' ? 'sm:col-span-2' : undefined}>
+              <Field key={key} label={label} className={key === 'address' || key === 'slogan' ? 'sm:col-span-2' : undefined} hint={key === 'slogan' ? '거래명세표(출고 양식) 맨 아래 왼쪽에 들어갑니다.' : undefined}>
                 {(id) => <TextInput id={id} value={kit.company[key]} placeholder={ph} maxLength={120} onChange={(e) => setCompany({ [key]: e.target.value })} />}
               </Field>
             ))}
+            <div className="flex flex-col gap-2 rounded-lg border border-line bg-paper p-3 sm:col-span-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-semibold">회사 로고</p>
+                <span className="text-xs text-muted">거래명세표(출고 양식) 맨 아래 오른쪽에 들어갑니다. 배경이 투명한 PNG 가 가장 깔끔합니다.</span>
+              </div>
+              {kit.logo ? (
+                <div className="checker flex h-20 items-center justify-center rounded-md border border-line p-2">
+                  <img src={kit.logo} alt="회사 로고" className="max-h-full max-w-full" />
+                </div>
+              ) : (
+                <p className="py-3 text-center text-sm text-muted">아직 없습니다. 없으면 상호를 글자로 넣습니다.</p>
+              )}
+              <div className="flex flex-wrap items-center gap-2">
+                <FilePick
+                  accept="image/png,image/webp,image/jpeg"
+                  icon={FileUp}
+                  onFile={(f) =>
+                    run('logo', async () => {
+                      if (f.size > 5 * 1024 * 1024) throw new Error('5MB 이하 이미지를 올려 주세요.')
+                      const { readAsDataURL } = await import('@/lib/files')
+                      const logo = await readAsDataURL(f)
+                      update((k) => ({ ...k, logo }))
+                    })
+                  }
+                >
+                  {kit.logo ? '로고 바꾸기' : '로고 올리기'}
+                </FilePick>
+                {kit.logo && (
+                  <Button size="sm" variant="ghost" icon={Trash2} onClick={() => update((k) => ({ ...k, logo: null }))}>
+                    지우기
+                  </Button>
+                )}
+                {busy === 'logo' && <Spinner />}
+              </div>
+            </div>
           </div>
         )}
 

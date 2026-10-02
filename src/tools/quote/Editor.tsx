@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { downloadBlob, downloadZip } from '@/lib/files'
 import { Badge, Button, Callout, Field, IconButton, MenuItem, NumberInput, Panel, Popover, Section, Segmented, Select, Switch, Textarea, TextInput, toast } from '@/ui'
 import { buildPages, canvasMeasure, type Page } from './layout'
-import { calcTotals, contactLine, DOC_NAME, emptyItem, fileBase, isAutoNo, newDoc, proposeDocNo, todayIso, won, type DocType, type LineItem, type QuoteDoc, type VatMode } from './model'
+import { calcTotals, contactLine, DOC_NAME, emptyItem, fileBase, isAutoNo, newDoc, proposeDocNo, shipQty, styleOf, STYLE_NAME, todayIso, won, type DocType, type LineItem, type QuoteDoc, type StatementStyle, type VatMode } from './model'
 import { PagePreview } from './Preview'
 import { useTeam } from './team'
 
@@ -20,6 +20,124 @@ function moneyInput(value: number | null, onValue: (v: number | null) => void, l
       }}
       className="num h-9 w-full min-w-0 rounded-sm border border-line-strong bg-surface px-2 text-right text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
     />
+  )
+}
+
+function numberInput(value: number | null | undefined, onValue: (v: number | null) => void, label: string) {
+  return (
+    <input
+      aria-label={label}
+      inputMode="decimal"
+      value={value == null ? '' : String(value)}
+      onChange={(e) => {
+        const t = e.target.value.replace(/[^\d.]/g, '')
+        onValue(t === '' || t === '.' ? null : Number(t))
+      }}
+      className="num h-9 w-full min-w-0 rounded-sm border border-line-strong bg-surface px-2 text-right text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
+    />
+  )
+}
+
+/** 출고 양식 품목: 품번 · 품명 · 규격 · BOX수 · 내품수량 · 출고수량 · 단가 · 금액 */
+function ShipmentItems({ doc, setItems }: { doc: QuoteDoc; setItems: (items: LineItem[]) => void }) {
+  const totals = calcTotals(doc)
+  const setItem = (id: string, patch: Partial<LineItem>) =>
+    setItems(
+      doc.items.map((i) => {
+        if (i.id !== id) return i
+        const next = { ...i, ...patch }
+        // BOX수·내품수량을 고치면 출고수량을 다시 계산한다
+        if ('boxes' in patch || 'perBox' in patch) {
+          const q = shipQty(next.boxes, next.perBox)
+          if (q != null) next.qty = q
+        }
+        return next
+      }),
+    )
+  const move = (idx: number, dir: -1 | 1) => {
+    const j = idx + dir
+    if (j < 0 || j >= doc.items.length) return
+    const next = [...doc.items]
+    ;[next[idx], next[j]] = [next[j], next[idx]]
+    setItems(next)
+  }
+  const cls = 'h-9! px-2! text-sm!'
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[920px] border-separate border-spacing-x-1 border-spacing-y-1 text-sm">
+          <thead>
+            <tr className="text-left text-xs text-muted">
+              <th className="w-6 font-semibold">#</th>
+              <th className="w-28 font-semibold">품번</th>
+              <th className="min-w-44 font-semibold">품명</th>
+              <th className="w-32 font-semibold">규격</th>
+              <th className="w-16 text-right font-semibold">BOX수</th>
+              <th className="w-18 text-right font-semibold">내품수량</th>
+              <th className="w-20 text-right font-semibold">출고수량</th>
+              <th className="w-24 text-right font-semibold">단가</th>
+              <th className="w-28 text-right font-semibold">금액</th>
+              <th className="w-20" />
+            </tr>
+          </thead>
+          <tbody>
+            {doc.items.map((it, idx) => (
+              <tr key={it.id}>
+                <td className="num text-center text-xs text-faint">{idx + 1}</td>
+                <td>
+                  <TextInput aria-label={`${idx + 1}번 품번`} value={it.itemNo ?? ''} maxLength={30} onChange={(e) => setItem(it.id, { itemNo: e.target.value })} className={cls} />
+                </td>
+                <td>
+                  <TextInput aria-label={`${idx + 1}번 품명`} value={it.name} maxLength={80} onChange={(e) => setItem(it.id, { name: e.target.value })} className={cls} />
+                </td>
+                <td>
+                  <TextInput aria-label={`${idx + 1}번 규격`} value={it.spec} maxLength={30} placeholder="바코드 등" onChange={(e) => setItem(it.id, { spec: e.target.value })} className={cls} />
+                </td>
+                <td>{numberInput(it.boxes, (boxes) => setItem(it.id, { boxes }), `${idx + 1}번 BOX수`)}</td>
+                <td>{numberInput(it.perBox, (perBox) => setItem(it.id, { perBox }), `${idx + 1}번 내품수량`)}</td>
+                <td>{numberInput(it.qty, (qty) => setItem(it.id, { qty }), `${idx + 1}번 출고수량`)}</td>
+                <td>{moneyInput(it.unitPrice, (unitPrice) => setItem(it.id, { unitPrice }), `${idx + 1}번 단가`)}</td>
+                <td className="num whitespace-nowrap px-1 text-right font-semibold text-ink">{totals.lines[idx].filled ? won(totals.lines[idx].total) : ''}</td>
+                <td>
+                  <div className="flex">
+                    <IconButton icon={ArrowUp} label="위로" size="sm" disabled={idx === 0} onClick={() => move(idx, -1)} />
+                    <IconButton icon={ArrowDown} label="아래로" size="sm" disabled={idx === doc.items.length - 1} onClick={() => move(idx, 1)} />
+                    <IconButton icon={Trash2} label={`${idx + 1}번 줄 지우기`} size="sm" disabled={doc.items.length <= 1} onClick={() => setItems(doc.items.filter((x) => x.id !== it.id))} />
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-muted">BOX수와 내품수량을 넣으면 출고수량(BOX수 × 내품수량)이 저절로 계산됩니다. 출고수량만 직접 넣어도 됩니다.</p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Button size="sm" icon={Plus} disabled={doc.items.length >= 80} onClick={() => setItems([...doc.items, emptyItem()])}>
+          줄 추가
+        </Button>
+        <dl className="num flex flex-wrap gap-x-4 gap-y-1 text-sm">
+          <div className="flex gap-1.5">
+            <dt className="text-muted">출고수량</dt>
+            <dd>
+              {new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 }).format(totals.qty)}
+              {totals.boxes ? ` (BOX ${totals.boxes})` : ''}
+            </dd>
+          </div>
+          <div className="flex gap-1.5">
+            <dt className="text-muted">공급가액</dt>
+            <dd>{won(totals.supply)}</dd>
+          </div>
+          <div className="flex gap-1.5">
+            <dt className="text-muted">세액</dt>
+            <dd>{won(totals.tax)}</dd>
+          </div>
+          <div className="flex gap-1.5">
+            <dt className="font-semibold text-ink-2">합계</dt>
+            <dd className="font-bold text-ink">{won(totals.total)}원</dd>
+          </div>
+        </dl>
+      </div>
+    </div>
   )
 }
 
@@ -242,12 +360,14 @@ export function Editor({ draft, setDraft, onOpenSettings }: { draft: Draft; setD
   const reset = () => {
     if (dirty && draft.savedId && !confirm('저장하지 않은 수정이 있습니다. 새로 작성할까요?')) return
     const fresh = newDoc(doc.type)
-    setDraft(() => ({ doc: { ...fresh, docNo: nextNo(doc.type, fresh.date), contactId: doc.contactId, showContact: doc.showContact, sealId: doc.sealId }, savedId: null, savedJson: null }))
+    setDraft(() => ({ doc: { ...fresh, docNo: nextNo(doc.type, fresh.date), contactId: doc.contactId, showContact: doc.showContact, sealId: doc.sealId, statementStyle: style }, savedId: null, savedJson: null }))
     setPageIndex(0)
   }
   const recentCustomers = useMemo(() => [...new Set((docs ?? []).map((d) => d.customer).filter(Boolean))].slice(0, 40), [docs])
 
   const statement = doc.type === 'statement'
+  const style = styleOf(doc)
+  const shipment = statement && style === 'shipment'
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -260,6 +380,17 @@ export function Editor({ draft, setDraft, onOpenSettings }: { draft: Draft; setD
             { value: 'statement', label: '거래명세표', icon: FileSpreadsheet },
           ]}
         />
+        {statement && (
+          <Segmented<StatementStyle>
+            label="거래명세표 양식"
+            value={style}
+            onValue={(statementStyle) => patch({ statementStyle })}
+            options={[
+              { value: 'shipment', label: STYLE_NAME.shipment },
+              { value: 'ledger', label: STYLE_NAME.ledger },
+            ]}
+          />
+        )}
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {draft.savedId ? (
             <Badge tone={dirty ? 'warn' : 'brand'}>{dirty ? '고친 내용 저장 전' : `문서함에 저장됨 · ${doc.docNo}`}</Badge>
@@ -303,21 +434,27 @@ export function Editor({ draft, setDraft, onOpenSettings }: { draft: Draft; setD
                     </>
                   )}
                 </Field>
-                <Field label={statement ? '품명 (선택)' : '품명·건명'}>{(id) => <TextInput id={id} value={doc.title} maxLength={60} onChange={(e) => patch({ title: e.target.value })} placeholder="예: 사무용 의자" />}</Field>
+                {!shipment && <Field label={statement ? '품명 (선택)' : '품명·건명'}>{(id) => <TextInput id={id} value={doc.title} maxLength={60} onChange={(e) => patch({ title: e.target.value })} placeholder="예: 사무용 의자" />}</Field>}
                 {statement && (
                   <>
                     <Field label="등록번호 (선택)">{(id) => <TextInput id={id} value={doc.customerBizNo} maxLength={20} onChange={(e) => patch({ customerBizNo: e.target.value })} placeholder="000-00-00000" />}</Field>
-                    <Field label="대표자 (선택)">{(id) => <TextInput id={id} value={doc.customerCeo} maxLength={20} onChange={(e) => patch({ customerCeo: e.target.value })} />}</Field>
+                    <Field label={shipment ? '성명 (선택)' : '대표자 (선택)'}>{(id) => <TextInput id={id} value={doc.customerCeo} maxLength={20} onChange={(e) => patch({ customerCeo: e.target.value })} />}</Field>
                     <Field label="주소 (선택)" className="sm:col-span-2">
                       {(id) => <TextInput id={id} value={doc.customerAddress} maxLength={100} onChange={(e) => patch({ customerAddress: e.target.value })} />}
                     </Field>
+                    {shipment && (
+                      <>
+                        <Field label="업태 (선택)">{(id) => <TextInput id={id} value={doc.customerBizType ?? ''} maxLength={40} onChange={(e) => patch({ customerBizType: e.target.value })} placeholder="예: 도소매" />}</Field>
+                        <Field label="종목 (선택)">{(id) => <TextInput id={id} value={doc.customerBizItem ?? ''} maxLength={40} onChange={(e) => patch({ customerBizItem: e.target.value })} placeholder="예: 판촉물" />}</Field>
+                      </>
+                    )}
                   </>
                 )}
               </div>
             </Section>
             <Section title="날짜·번호">
               <div className="grid gap-3 sm:grid-cols-3">
-                <Field label="작성일" hint="열 때마다 오늘 날짜로 들어갑니다.">
+                <Field label={shipment ? '출고일' : '작성일'} hint="열 때마다 오늘 날짜로 들어갑니다.">
                   {(id) => (
                     <div className="flex gap-1.5">
                       <TextInput id={id} type="date" value={doc.date} onChange={(e) => e.target.value && patch({ date: e.target.value })} />
@@ -328,13 +465,15 @@ export function Editor({ draft, setDraft, onOpenSettings }: { draft: Draft; setD
                 <Field label={statement ? '명세표 번호' : '견적 번호'}>{(id) => <TextInput id={id} value={doc.docNo} maxLength={30} onChange={(e) => patch({ docNo: e.target.value })} />}</Field>
                 {!statement ? (
                   <Field label="유효기간">{(id) => <NumberInput id={id} value={doc.validDays} unit="일" min={0} max={365} onValue={(v) => patch({ validDays: Math.max(0, Math.min(365, v ?? 0)) })} />}</Field>
+                ) : shipment ? (
+                  <p className="text-xs leading-relaxed text-muted sm:pt-6">출고 양식은 한 장에 한 부, 아래에 인수증이 붙습니다.</p>
                 ) : (
                   <Switch className="sm:pt-6" checked={doc.twoCopies} onChange={(twoCopies) => patch({ twoCopies })} label="한 장에 2부" hint="공급받는자·공급자 보관용" />
                 )}
               </div>
             </Section>
             <Section title={statement ? '품목' : '비용항목'} action={<Segmented<VatMode> label="단가 부가세" size="sm" value={doc.vatMode} onValue={(vatMode) => patch({ vatMode })} options={[{ value: 'included', label: 'VAT 포함' }, { value: 'excluded', label: 'VAT 별도' }, { value: 'exempt', label: '면세' }]} />}>
-              <ItemsEditor doc={doc} setItems={(items) => patch({ items })} />
+              {shipment ? <ShipmentItems doc={doc} setItems={(items) => patch({ items })} /> : <ItemsEditor doc={doc} setItems={(items) => patch({ items })} />}
             </Section>
             <Section title="기타사항">
               <Field label="기타사항" hint="여러 줄로 적을 수 있습니다. 납기·결제 조건 등을 적으세요.">

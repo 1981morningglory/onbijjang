@@ -31,6 +31,7 @@ export function normalizeKit(raw: unknown): CompanyKit {
     seals: Array.isArray(r.seals) ? r.seals.filter((s) => s && isImg(s.dataUrl)).map((s) => ({ id: str(s.id) || Math.random().toString(36).slice(2), name: str(s.name) || '직인', dataUrl: s.dataUrl })) : [],
     registration: att(r.registration),
     bankbook: att(r.bankbook),
+    logo: isImg(r.logo) ? r.logo : null,
     bank: { bankName: str(r.bank?.bankName), account: str(r.bank?.account), holder: str(r.bank?.holder) },
     contacts: Array.isArray(r.contacts)
       ? r.contacts.map((c) => ({

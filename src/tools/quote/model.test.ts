@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { amountInWords, calcLine, calcTotals, contactLine, emptyItem, fileBase, isAutoNo, koreanAmount, makeDocNo, newDoc, proposeDocNo } from './model'
+import { amountInWords, calcLine, calcTotals, contactLine, emptyItem, fileBase, isAutoNo, koreanAmount, makeDocNo, newDoc, proposeDocNo, shipQty, styleOf, type QuoteDoc } from './model'
 
 const item = (qty: number, unitPrice: number) => ({ ...emptyItem(), name: '의자', qty, unitPrice })
 
@@ -71,5 +71,28 @@ describe('표기 도우미', () => {
   })
   it('파일 이름은 금지 문자를 뺀다', () => {
     expect(fileBase({ ...newDoc('quote'), customer: 'A/B:상사', date: '2026-10-02' })).toBe('견적서_AB상사_20261002')
+  })
+})
+
+describe('거래명세표 출고 양식', () => {
+  it('출고수량 = BOX수 × 내품수량, 둘 중 하나라도 없으면 계산하지 않는다', () => {
+    expect(shipQty(6, 10)).toBe(60)
+    expect(shipQty(2.5, 12)).toBe(30)
+    expect(shipQty(null, 10)).toBeNull()
+    expect(shipQty(4, undefined)).toBeNull()
+  })
+  it('견본 명세서와 같은 합계(공급가액 1,000,000 · 세액 100,000 · 합계 1,100,000 · BOX 10)', () => {
+    const it1 = { ...emptyItem(), itemNo: '77000-87414', name: '캠퍼스 메이트 백팩(블랙)', boxes: 6, perBox: 10, qty: 60, unitPrice: 11_000 }
+    const it2 = { ...emptyItem(), itemNo: '77000-87415', name: '캠퍼스 메이트 백팩(라이트 그레이)', boxes: 4, perBox: 10, qty: 40, unitPrice: 11_000 }
+    const t = calcTotals({ items: [it1, it2, emptyItem()], vatMode: 'included' })
+    expect([t.supply, t.tax, t.total, t.qty, t.boxes]).toEqual([1_000_000, 100_000, 1_100_000, 100, 10])
+  })
+  it('품번만 넣은 줄도 채워진 줄로 본다', () => {
+    expect(calcTotals({ items: [{ ...emptyItem(), itemNo: 'A-1' }], vatMode: 'included' }).lines[0].filled).toBe(true)
+  })
+  it('새 문서는 출고 양식, 예전에 저장한 문서(양식 없음)는 기본 양식', () => {
+    expect(styleOf(newDoc('statement'))).toBe('shipment')
+    const { statementStyle: _s, ...old } = newDoc('statement')
+    expect(styleOf(old as QuoteDoc)).toBe('ledger')
   })
 })

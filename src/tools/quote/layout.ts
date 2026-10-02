@@ -9,6 +9,7 @@ import {
   contactLine,
   dateKo,
   DOC_TITLE,
+  styleOf,
   won,
   type CompanyKit,
   type LineCalc,
@@ -363,6 +364,7 @@ function quotePages(doc: QuoteDoc, kit: CompanyKit, measure: Measure): Page[] {
  * 끄면 한 장에 크게 한 부를 찍는다. 품목이 많으면 다음 장으로 넘어간다.
  */
 function statementPages(doc: QuoteDoc, kit: CompanyKit, measure: Measure): Page[] {
+  if (styleOf(doc) === 'shipment') return shipmentPages(doc, kit, measure)
   const totals = calcTotals(doc)
   const filled = totals.lines.filter((l) => l.filled)
   const perCopy = doc.twoCopies ? 8 : 22
@@ -419,13 +421,13 @@ function statementCopy(
     ['상호', c.name, '성명', c.ceo],
     ['주소', c.address],
     ['업태', c.bizType, '종목', c.bizItem],
-  ], seal?.dataUrl)
+  ], seal?.dataUrl, LEDGER_PARTY)
   partyBox(p, L + halfW + 3, y, halfW, boxH, '공급받는자', [
     ['등록번호', doc.customerBizNo],
     ['상호', doc.customer, '성명', doc.customerCeo],
     ['주소', doc.customerAddress],
     ['', doc.title ? `품명: ${doc.title}` : ''],
-  ])
+  ], undefined, LEDGER_PARTY)
   y += boxH + 3
 
   // 합계 띠
@@ -515,8 +517,17 @@ function statementCopy(
   p.text('(인)', R - 3, y + 5.8, { size: 7.5, align: 'right', color: '#8a97b8' })
 }
 
-function partyBox(p: Pen, x: number, y: number, w: number, h: number, label: string, rows: Array<[string, string, string?, string?]>, sealSrc?: string) {
-  const C = LEDGER
+interface PartyTheme {
+  line: string
+  text: string
+  shade: string
+  shadeStrong: string
+  stamp: string
+}
+const LEDGER_PARTY: PartyTheme = { line: LEDGER.line, text: LEDGER.text, shade: LEDGER.shade, shadeStrong: LEDGER.shadeStrong, stamp: '#8a97b8' }
+const QUOTE_PARTY: PartyTheme = { line: QUOTE.line, text: QUOTE.accent, shade: QUOTE.shade, shadeStrong: QUOTE.shadeStrong, stamp: '#8d9690' }
+
+function partyBox(p: Pen, x: number, y: number, w: number, h: number, label: string, rows: Array<[string, string, string?, string?]>, sealSrc: string | undefined, C: PartyTheme) {
   const tagW = 6.5
   p.rect(x, y, tagW, h, { fill: C.shadeStrong, stroke: C.line, lw: 0.3 })
   const chars = [...label]
@@ -549,13 +560,210 @@ function partyBox(p: Pen, x: number, y: number, w: number, h: number, label: str
         const s = Math.min(13, rowH * 1.9)
         p.image(sealSrc, sx + sw - s - 0.4, ry + rowH / 2 - s / 2, s, s, 0.92)
       } else if (isName && label === '공급받는자' && r[1]) {
-        p.text('(인)', sx + sw - 1.5, ry + rowH / 2 + 1.2, { size: 6.8, align: 'right', color: '#8a97b8' })
+        p.text('(인)', sx + sw - 1.5, ry + rowH / 2 + 1.2, { size: 6.8, align: 'right', color: C.stamp })
       }
     } else {
       const vw = bw - (r[0] ? labW : 0)
       p.rect(vx, ry, vw, rowH, { stroke: C.line, lw: 0.2 })
       p.fit(r[1], vx, ry, vw, rowH, { size: i === 0 ? 9 : 7.8, weight: i === 0 ? 'bold' : 'regular' })
     }
+  })
+}
+
+// ── 거래명세표: 출고 양식 ─────────────────────────────────
+/**
+ * 회사에서 쓰던 출고용 거래명세서 모양(품번·BOX수·내품수량·출고수량, 아래 인수증)을
+ * 견적서와 같은 선·색·제목 꾸밈과 회사 자료(공급자 정보·직인·로고)로 그린다.
+ */
+const SHIP_ROWS = 18
+const qtyFmt = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 })
+const numText = (v: number | null | undefined) => (typeof v === 'number' && Number.isFinite(v) ? qtyFmt.format(v) : '')
+
+function shipmentPages(doc: QuoteDoc, kit: CompanyKit, measure: Measure): Page[] {
+  const totals = calcTotals(doc)
+  const filled = totals.lines.filter((l) => l.filled)
+  const groups = chunk(filled, SHIP_ROWS)
+  const c = kit.company
+  const seal = doc.showSeal ? kit.seals.find((s) => s.id === doc.sealId) ?? kit.seals[0] : undefined
+  const contact = doc.showContact ? kit.contacts.find((k) => k.id === doc.contactId) ?? kit.contacts[0] : undefined
+  const L = 15
+  const R = PAGE_W - 15
+  const W = R - L
+  const amountLabel = doc.vatMode === 'exempt' ? '금액' : '금액\n(VAT 포함)'
+  const priceLabel = doc.vatMode === 'excluded' ? '단가\n(VAT 별도)' : '단가'
+
+  const colsDef = [
+    { key: 'seq', label: 'SEQ.', w: 9 },
+    { key: 'itemNo', label: '품  번', w: 20 },
+    { key: 'name', label: '품  명', w: 44 },
+    { key: 'spec', label: '규격', w: 24 },
+    { key: 'boxes', label: 'BOX수', w: 12 },
+    { key: 'perBox', label: '내품수량', w: 14 },
+    { key: 'qty', label: '출고수량', w: 15 },
+    { key: 'price', label: priceLabel, w: 18 },
+    { key: 'total', label: amountLabel, w: 0 },
+  ]
+  colsDef[colsDef.length - 1].w = W - colsDef.reduce((s, k) => s + k.w, 0)
+  let cx = L
+  const cols = colsDef.map((k) => {
+    const r = { ...k, x: cx }
+    cx += k.w
+    return r
+  })
+  const col = (key: string) => cols.find((k) => k.key === key)!
+
+  return groups.map((rows, gi) => {
+    const p = new Pen(measure)
+    const last = gi === groups.length - 1
+    // 바깥 이중 테두리(견적서와 같게)
+    p.rect(10, 10, PAGE_W - 20, PAGE_H - 20, { stroke: QUOTE.line, lw: 0.7 })
+    p.rect(11.2, 11.2, PAGE_W - 22.4, PAGE_H - 22.4, { stroke: QUOTE.line, lw: 0.2 })
+
+    let y = 18
+    p.text(DOC_TITLE.statement, PAGE_W / 2, y + 9, { size: 24, weight: 'bold', align: 'center', spacing: 1.6, color: QUOTE.line })
+    y += 14
+    p.line(PAGE_W / 2 - 40, y, PAGE_W / 2 + 40, y, QUOTE.accent, 0.6)
+    p.line(PAGE_W / 2 - 40, y + 1, PAGE_W / 2 + 40, y + 1, QUOTE.accent, 0.2)
+    y += 8
+    const pageInfo = groups.length > 1 ? `   (${gi + 1} / ${groups.length})` : ''
+    p.text(`No.  ${doc.docNo}${pageInfo}`, L + 1, y, { size: 9 })
+    p.text(`출고일   ${dateKo(doc.date)}`, R - 1, y, { size: 9, align: 'right' })
+    y += 3
+
+    // 공급자 | 공급받는자
+    const boxH = 32
+    const halfW = (W - 3) / 2
+    partyBox(p, L, y, halfW, boxH, '공급자', [
+      ['등록번호', c.bizNo],
+      ['상호', c.name, '성명', c.ceo],
+      ['주소', c.address],
+      ['업태', c.bizType, '종목', c.bizItem],
+    ], seal?.dataUrl, QUOTE_PARTY)
+    partyBox(p, L + halfW + 3, y, halfW, boxH, '공급받는자', [
+      ['등록번호', doc.customerBizNo],
+      ['상호', doc.customer, '성명', doc.customerCeo],
+      ['주소', doc.customerAddress],
+      ['업태', doc.customerBizType ?? '', '종목', doc.customerBizItem ?? ''],
+    ], undefined, QUOTE_PARTY)
+    y += boxH + 4
+
+    // 품목 표
+    const headH = 8
+    cols.forEach((k) => {
+      p.rect(k.x, y, k.w, headH, { fill: QUOTE.shade, stroke: QUOTE.line, lw: 0.25 })
+      const parts = k.label.split('\n')
+      parts.forEach((ln, i) => p.text(ln, k.x + k.w / 2, y + headH / 2 + (i - (parts.length - 1) / 2) * 3.2 + 1.2, { size: i ? 6 : 7.8, weight: i ? 'regular' : 'bold', align: 'center', color: i ? MUTED : INK }))
+    })
+    p.line(L, y, R, y, QUOTE.line, 0.5)
+    y += headH
+    const rowH = 7
+    for (let i = 0; i < SHIP_ROWS; i++) {
+      const row = rows[i]
+      cols.forEach((k) => p.rect(k.x, y, k.w, rowH, { stroke: QUOTE.line, lw: 0.15 }))
+      if (row) {
+        const it = row.item
+        const cell = (key: string, text: string, align: 'left' | 'right' | 'center' = 'right', weight: Weight = 'regular') => {
+          const k = col(key)
+          p.fit(text, k.x, y, k.w, rowH, { size: 8.2, align, weight, pad: 1.2, minSize: 5.5 })
+        }
+        cell('seq', String(gi * SHIP_ROWS + i + 1), 'center')
+        cell('itemNo', it.itemNo ?? '', 'center')
+        cell('name', it.name, 'left')
+        cell('spec', it.spec, 'center')
+        cell('boxes', numText(it.boxes))
+        cell('perBox', numText(it.perBox))
+        cell('qty', numText(it.qty))
+        cell('price', it.unitPrice == null ? '' : won(it.unitPrice))
+        cell('total', won(row.total), 'right', 'bold')
+      }
+      y += rowH
+    }
+    p.line(L, y, R, y, QUOTE.line, 0.5)
+    y += 4
+
+    // 비고 | 공급가액계·부가가치세·합계
+    const sumRowH = 7
+    const sumH = sumRowH * 3
+    const tagW = 9
+    const valW = 30
+    const labW = 30
+    const noteW = W - tagW - labW - valW
+    p.rect(L, y, tagW, sumH, { fill: QUOTE.shadeStrong, stroke: QUOTE.line, lw: 0.3 })
+    ;['비', '고'].forEach((ch, i) => p.text(ch, L + tagW / 2, y + sumH / 2 - 2.5 + i * 6 + 1.4, { size: 8.5, weight: 'bold', align: 'center', color: QUOTE.accent }))
+    p.rect(L + tagW, y, noteW, sumH, { stroke: QUOTE.line, lw: 0.3 })
+    const noteLines: string[] = []
+    if (!last) noteLines.push('다음 장에 이어집니다.')
+    if (doc.notes.trim()) noteLines.push(...doc.notes.trim().split(/\r?\n/))
+    if (kit.bank.account && doc.attachBankbook) noteLines.push(`입금 계좌: ${[kit.bank.bankName, kit.bank.account, kit.bank.holder && `예금주 ${kit.bank.holder}`].filter(Boolean).join(' ')}`)
+    if (contact) noteLines.push(`담당자: ${contactLine(contact)}`)
+    noteLines
+      .flatMap((ln) => wrap(ln, noteW - 4, (s2) => p.width(s2, 7.6)))
+      .slice(0, 5)
+      .forEach((ln, i) => p.text(ln, L + tagW + 2, y + 4.4 + i * 3.7, { size: 7.6 }))
+    const sums: Array<[string, string]> = [
+      ['공 급 가 액 계', last ? won(totals.supply) : ''],
+      ['부 가 가 치 세', last ? won(totals.tax) : ''],
+      ['합          계', last ? won(totals.total) : ''],
+    ]
+    sums.forEach(([lab, v], i) => {
+      const ry = y + i * sumRowH
+      const lx = R - valW - labW
+      p.rect(lx, ry, labW, sumRowH, { fill: i === 2 ? QUOTE.shadeStrong : QUOTE.shade, stroke: QUOTE.line, lw: 0.25 })
+      p.fit(lab, lx, ry, labW, sumRowH, { size: 8, weight: 'bold', align: 'center', color: i === 2 ? QUOTE.accent : INK, pad: 0.5 })
+      p.rect(R - valW, ry, valW, sumRowH, { stroke: QUOTE.line, lw: 0.25 })
+      p.fit(v, R - valW, ry, valW, sumRowH, { size: i === 2 ? 9.5 : 8.6, weight: i === 2 ? 'bold' : 'regular', align: 'right', pad: 1.6 })
+    })
+    p.rect(L, y, W, sumH, { stroke: QUOTE.line, lw: 0.5 })
+    y += sumH
+
+    // 인수증(마지막 장)
+    if (last) {
+      y += 5
+      p.line(L - 2, y, R + 2, y, '#8d9690', 0.25, [2, 1.2])
+      p.text('자르는 선', R + 2, y - 1, { size: 5.5, align: 'right', color: '#8d9690' })
+      y += 7.5
+      p.text('인   수   증', PAGE_W / 2, y, { size: 11, weight: 'bold', align: 'center', spacing: 1, color: QUOTE.line })
+      y += 3
+      const rh = 7.5
+      const rc = [16, 50, 26, 36, 22]
+      const restW = W - rc.reduce((s2, v) => s2 + v, 0)
+      const xs = rc.reduce<number[]>((acc, w) => [...acc, acc[acc.length - 1] + w], [L])
+      const rowsR: Array<[string, string, string, string]> = [
+        ['인 수 자', '거래명세표번호', doc.docNo, ''],
+        ['인 계 자', '거래처', doc.customer, won(totals.total)],
+      ]
+      rowsR.forEach(([who, lab, val, money], i) => {
+        const ry = y + i * rh
+        p.rect(xs[0], ry, rc[0], rh, { fill: QUOTE.shade, stroke: QUOTE.line, lw: 0.25 })
+        p.fit(who, xs[0], ry, rc[0], rh, { size: 8, weight: 'bold', align: 'center', pad: 0.5 })
+        p.rect(xs[1], ry, rc[1], rh, { stroke: QUOTE.line, lw: 0.25 })
+        p.text('(서명)', xs[1] + rc[1] - 1.6, ry + rh / 2 + 1.2, { size: 7, align: 'right', color: MUTED })
+        p.rect(xs[2], ry, rc[2], rh, { fill: QUOTE.shade, stroke: QUOTE.line, lw: 0.25 })
+        p.fit(lab, xs[2], ry, rc[2], rh, { size: 7.6, weight: 'bold', align: 'center', pad: 0.5 })
+        p.rect(xs[3], ry, rc[3], rh, { stroke: QUOTE.line, lw: 0.25 })
+        p.fit(val, xs[3], ry, rc[3], rh, { size: 8, pad: 1.2, minSize: 5.5 })
+        p.rect(xs[4], ry, rc[4], rh, { fill: QUOTE.shade, stroke: QUOTE.line, lw: 0.25 })
+        p.fit(i === 0 ? '총수량(박스)' : '총금액', xs[4], ry, rc[4], rh, { size: 7.6, weight: 'bold', align: 'center', pad: 0.5 })
+        p.rect(xs[5], ry, restW, rh, { stroke: QUOTE.line, lw: 0.25 })
+        if (i === 0) {
+          // 출고수량 | BOX 수
+          const mid = xs[5] + restW * 0.58
+          p.line(mid, ry + 1, mid, ry + rh - 1, '#8d9690', 0.2, [0.8, 0.6])
+          p.fit(numText(totals.qty), xs[5], ry, mid - xs[5], rh, { size: 8.4, weight: 'bold', align: 'right', pad: 1.4 })
+          p.fit(totals.boxes ? numText(totals.boxes) : '', mid, ry, xs[5] + restW - mid, rh, { size: 7.4, align: 'right', pad: 1.2, color: MUTED })
+        } else {
+          p.fit(money, xs[5], ry, restW, rh, { size: 8.6, weight: 'bold', align: 'right', pad: 1.4 })
+        }
+      })
+      p.rect(L, y, W, rh * 2, { stroke: QUOTE.line, lw: 0.5 })
+    }
+
+    // 바닥: 문구 · 로고
+    const footY = PAGE_H - 17
+    if (c.slogan.trim()) p.text(c.slogan.trim(), L + 1, footY, { size: 7.5, color: MUTED })
+    if (kit.logo) p.image(kit.logo, R - 27, footY - 5.6, 27, 7.2)
+    else if (c.name) p.text(c.name, R, footY, { size: 11, weight: 'bold', align: 'right', color: QUOTE.line })
+    return { ops: p.ops }
   })
 }
 
