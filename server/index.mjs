@@ -110,7 +110,8 @@ app.use((_req, res, next) => {
 })
 app.use(express.json({ limit: '25mb' }))
 
-app.get('/api/health', (_req, res) => res.json({ ok: true }))
+// volume: 데이터가 배포 뒤에도 남는 저장소(Railway 볼륨·DATA_DIR)에 있는지
+app.get('/api/health', (_req, res) => res.json({ ok: true, volume: Boolean(process.env.DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH) }))
 app.get('/api/site', (_req, res) => res.json({ trusted: TRUSTED }))
 
 // ── 사이트 설정 ───────────────────────────────────────────

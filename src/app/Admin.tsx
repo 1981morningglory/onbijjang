@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { ArrowDown, ArrowUp, KeyRound, LogOut, Plus, Save, Trash2, Upload } from 'lucide-react'
+import { ArrowDown, ArrowUp, KeyRound, LogOut, Plus, RotateCcw, Save, Trash2, Upload } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router'
 import { api, ApiError } from '@/lib/api'
@@ -439,7 +439,7 @@ function TeamsEditor() {
 
 /** 모든 팀 문서에 기본으로 들어가는 회사 공통 자료(팀이 따로 저장하면 그 팀은 팀 자료를 쓴다) */
 function CommonKitEditor() {
-  const [state, setState] = useState<{ kit: { company?: { name?: string }; seals?: Array<{ dataUrl: string }>; registration?: { pages?: string[] } | null; bankbook?: { pages?: string[] } | null } | null; updatedAt: string | null } | null>(null)
+  const [state, setState] = useState<{ kit: { company?: { name?: string }; seals?: Array<{ dataUrl: string }>; registration?: { pages?: string[] } | null; bankbook?: { pages?: string[] } | null } | null; updatedAt: string | null; previous?: { name: string; seals: number; updatedAt: string | null } | null } | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const refresh = async () => setState(await api('/admin/company-kit'))
@@ -499,6 +499,23 @@ function CommonKitEditor() {
         <Button variant="primary" icon={Upload} loading={busy === 'upload'} onClick={() => fileInput.current?.click()}>
           {k ? '회사 자료 파일로 바꾸기' : '회사 자료 파일 올리기'}
         </Button>
+        {state?.previous && (
+          <Button
+            icon={RotateCcw}
+            loading={busy === 'restore'}
+            onClick={() =>
+              run('restore', async () => {
+                const p = state.previous!
+                if (!confirm(`직전 자료(${p.name || '이름 없음'} · 직인 ${p.seals}개 · ${when(p.updatedAt)})로 되돌릴까요? 지금 자료는 직전 자료로 남습니다.`)) return
+                await api('/admin/company-kit/restore', { method: 'POST' })
+                await refresh()
+                toast.success('직전 자료로 되돌렸습니다.')
+              })
+            }
+          >
+            직전 자료로 되돌리기
+          </Button>
+        )}
         {k && (
           <Button
             variant="danger"
@@ -506,7 +523,7 @@ function CommonKitEditor() {
             loading={busy === 'delete'}
             onClick={() =>
               run('delete', async () => {
-                if (!confirm('회사 공통 자료를 지울까요? 팀 전용 자료가 없는 팀은 직인·첨부가 빠집니다.')) return
+                if (!confirm('회사 공통 자료를 지울까요? 팀 전용 자료가 없는 팀은 직인·첨부가 빠집니다. (지운 자료는 ‘직전 자료로 되돌리기’로 살릴 수 있습니다.)')) return
                 await api('/admin/company-kit', { method: 'DELETE' })
                 await refresh()
                 toast.success('지웠습니다.')
@@ -517,7 +534,10 @@ function CommonKitEditor() {
           </Button>
         )}
       </div>
-      <p className="text-xs text-muted">회사 자료 파일은 견적서·거래명세표 → 팀 설정 → 회사 자료 → ‘파일로 주고받기’에서 만들 수 있습니다.</p>
+      <p className="text-xs text-muted">
+        회사 자료 파일은 견적서·거래명세표 → 팀 설정 → 회사 자료 → ‘파일로 주고받기’에서 만들 수 있습니다. 바꾸거나 지우면 직전 자료 한 벌을 남겨 두어 되돌릴 수 있습니다.
+        {state?.previous && ` (직전 자료: ${state.previous.name || '이름 없음'} · 직인 ${state.previous.seals}개 · ${when(state.previous.updatedAt)})`}
+      </p>
     </Panel>
   )
 }

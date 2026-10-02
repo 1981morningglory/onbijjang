@@ -123,6 +123,8 @@ function summarize(doc, id, prev) {
 export default async function quoteRoutes(app, { requireAdmin, isAdmin, DATA_DIR }) {
   const TEAMS_FILE = path.join(DATA_DIR, 'teams.json')
   const COMPANY_KIT = path.join(DATA_DIR, 'company-kit.json')
+  // 회사 공통 자료를 바꾸거나 지울 때 직전 것을 한 벌 남겨 되돌릴 수 있게 한다(직인을 잃지 않도록)
+  const COMPANY_KIT_PREV = path.join(DATA_DIR, 'company-kit.prev.json')
   const SECRET_FILE = path.join(DATA_DIR, 'secret.json')
   const teamDir = (id) => path.join(DATA_DIR, 'teams', id)
 
@@ -407,20 +409,47 @@ export default async function quoteRoutes(app, { requireAdmin, isAdmin, DATA_DIR
     res.json({ ok: true })
   })
 
+  const kitBrief = (saved) => (saved?.kit ? { name: saved.kit.company?.name ?? '', seals: saved.kit.seals?.length ?? 0, updatedAt: saved.updatedAt ?? null } : null)
+  /** 지금 자료를 직전 자료로 옮겨 둔다 */
+  const keepPrevious = async () => {
+    const current = await readJson(COMPANY_KIT, null)
+    if (current?.kit) await writeJson(COMPANY_KIT_PREV, current)
+  }
+
   app.get('/api/admin/company-kit', requireAdmin, async (_req, res) => {
     const saved = await readJson(COMPANY_KIT, null)
-    res.json(saved ?? { kit: null, updatedAt: null })
+    res.json({ ...(saved ?? { kit: null, updatedAt: null }), previous: kitBrief(await readJson(COMPANY_KIT_PREV, null)) })
   })
   app.put('/api/admin/company-kit', requireAdmin, async (req, res) => {
     const problem = kitProblem(req.body?.kit)
     if (problem) return res.status(400).json({ error: problem })
     const { format: _f, ...kit } = req.body.kit
     const updatedAt = new Date().toISOString()
-    await writeJson(COMPANY_KIT, { kit, updatedAt })
+    await serial('company-kit', async () => {
+      await keepPrevious()
+      await writeJson(COMPANY_KIT, { kit, updatedAt })
+    })
     res.json({ updatedAt })
   })
   app.delete('/api/admin/company-kit', requireAdmin, async (_req, res) => {
-    await fsp.rm(COMPANY_KIT, { force: true })
+    await serial('company-kit', async () => {
+      await keepPrevious()
+      await fsp.rm(COMPANY_KIT, { force: true })
+    })
     res.json({ ok: true })
+  })
+  /** 직전 자료로 되돌리기(지금 자료와 맞바꾼다) */
+  app.post('/api/admin/company-kit/restore', requireAdmin, async (_req, res) => {
+    const result = await serial('company-kit', async () => {
+      const prev = await readJson(COMPANY_KIT_PREV, null)
+      if (!prev?.kit) return null
+      const current = await readJson(COMPANY_KIT, null)
+      await writeJson(COMPANY_KIT, prev)
+      if (current?.kit) await writeJson(COMPANY_KIT_PREV, current)
+      else await fsp.rm(COMPANY_KIT_PREV, { force: true })
+      return prev
+    })
+    if (!result) return res.status(404).json({ error: '되돌릴 직전 자료가 없습니다.' })
+    res.json({ updatedAt: result.updatedAt })
   })
 }
