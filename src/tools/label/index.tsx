@@ -315,10 +315,11 @@ export default function LabelTool() {
     if (!printing) return
     const done = () => setPrinting(false)
     window.addEventListener('afterprint', done)
-    // 인쇄용 배치가 화면에 붙은 다음 프레임에 인쇄 창을 연다.
-    const raf = requestAnimationFrame(() => requestAnimationFrame(() => window.print()))
+    // 인쇄용 배치가 문서에 붙은 뒤(이 효과는 커밋 다음에 돈다) 인쇄 창을 연다.
+    // requestAnimationFrame 은 탭이 가려져 있으면 멈추므로 setTimeout 을 쓴다.
+    const timer = window.setTimeout(() => window.print(), 60)
     return () => {
-      cancelAnimationFrame(raf)
+      window.clearTimeout(timer)
       window.removeEventListener('afterprint', done)
     }
   }, [printing])

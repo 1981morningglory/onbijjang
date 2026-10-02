@@ -100,7 +100,7 @@ export default function MosaicTool() {
   const bitmapRef = useRef<ImageBitmap | null>(null)
   const scaleRef = useRef(1)
   const lastCommit = useRef<{ key: string; at: number } | null>(null)
-  const runner = useAbortable()
+  const { start: startRun, abort: abortRun } = useAbortable()
   const busy = task !== null
 
   const k = active && active.width ? fitWithin(active.width, active.height, PREVIEW_EDGE).scale : 1
@@ -136,7 +136,7 @@ export default function MosaicTool() {
   const findFaces = useCallback(
     async (targets: Item[], quiet = false) => {
       if (!targets.length) return
-      const signal = runner.start()
+      const signal = startRun()
       setFaceError(null)
       setTask({ kind: 'face', label: '얼굴 찾기 준비 중', value: null })
       let total = 0
@@ -181,7 +181,7 @@ export default function MosaicTool() {
         setTask(null)
       }
     },
-    [commit, runner],
+    [commit, startRun],
   )
   const activeIdRef = useRef(activeId)
   activeIdRef.current = activeId
@@ -415,7 +415,7 @@ export default function MosaicTool() {
   const findText = async (targets: Item[]) => {
     if (!targets.length || !anyPattern) return
     setTextError(null)
-    const signal = runner.start()
+    const signal = startRun()
     let total = 0
     try {
       for (let n = 0; n < targets.length; n++) {
@@ -465,7 +465,7 @@ export default function MosaicTool() {
   }
 
   const cancel = () => {
-    runner.abort()
+    abortRun()
     if (task?.kind === 'text') void cancelOcr()
     setTask(null)
   }
@@ -496,7 +496,7 @@ export default function MosaicTool() {
     }
   }
   const saveZip = async () => {
-    const signal = runner.start()
+    const signal = startRun()
     warnPending()
     try {
       const entries = []

@@ -139,8 +139,9 @@ describe('확장 프로그램 스크립트', () => {
       const src = code(rel)
       expect(src, rel).not.toMatch(/\bfetch\s*\(/)
       expect(src, rel).not.toMatch(/XMLHttpRequest|WebSocket|EventSource|sendBeacon|importScripts|RTCPeerConnection/)
-      // 설정 기본값과 SVG 이름공간 말고는 웹 주소가 없어야 한다.
-      const urls = (src.match(/https?:\/\/[^\s'"`)]+/g) ?? []).filter((u) => !u.startsWith('http://localhost:5173') && !u.startsWith('http://www.w3.org/2000/svg'))
+      // 온비짱 주소(배포·개발)와 SVG 이름공간 말고는 웹 주소가 없어야 한다.
+      const allowed = ['https://onbijjang-production.up.railway.app', 'http://localhost:5173', 'http://www.w3.org/2000/svg']
+      const urls = (src.match(/https?:\/\/[^\s'"`)]+/g) ?? []).filter((u) => !allowed.some((a) => u.startsWith(a)))
       expect(urls, rel).toEqual([])
     }
   })
@@ -191,7 +192,7 @@ describe('확장 프로그램 스크립트', () => {
         const target = path.join(EXT, path.dirname(rel), m[2])
         expect(existsSync(target), `${rel} → ${m[2]}`).toBe(true)
         const exported = [...readFileSync(target, 'utf8').matchAll(/export\s+(?:async\s+)?(?:const|function|class)\s+([A-Za-z0-9_$]+)/g)].map((x) => x[1])
-        for (const name of m[1].split(',').map((s) => s.trim()).filter(Boolean)) expect(exported, `${rel}: ${name} from ${m[2]}`).toContain(name)
+        for (const name of m[1].split(',').map((s) => s.trim().split(/\s+as\s+/)[0]).filter(Boolean)) expect(exported, `${rel}: ${name} from ${m[2]}`).toContain(name)
       }
     }
   })
@@ -219,8 +220,22 @@ describe('사이트와의 약속', () => {
     expect(registry).toContain("id: 'capture'")
     expect(HANDOVER.TOOL_PATH).toBe('/tools/capture')
   })
-  it('기본 온비짱 주소는 개발 서버 주소', () => {
-    expect(read('lib/settings.js')).toContain("origin: 'http://localhost:5173'")
+  it('기본 온비짱 주소는 배포 사이트(HTTPS)이고, 개발 주소도 고를 수 있다', async () => {
+    const s = await import('../../../extension/capture/lib/settings.js')
+    expect(s.DEFAULT_SETTINGS.origin).toBe('https://onbijjang-production.up.railway.app')
+    expect(s.PRODUCTION_ORIGIN).toBe(s.DEFAULT_SETTINGS.origin)
+    expect(s.DEV_ORIGIN).toBe('http://localhost:5173')
+    const { normalizeOrigin } = await import('../../../extension/capture/lib/plan.js')
+    // 두 주소 모두 정리해도 그대로이고, 요청할 권한이 manifest 의 선택 권한 안에 든다.
+    for (const origin of [s.PRODUCTION_ORIGIN, s.DEV_ORIGIN]) {
+      const r = normalizeOrigin(origin)
+      expect(r).toMatchObject({ ok: true, origin })
+      if (r.ok) expect(manifest.optional_host_permissions).toContain(r.pattern.startsWith('https:') ? 'https://*/*' : 'http://*/*')
+    }
+    expect(normalizeOrigin(s.PRODUCTION_ORIGIN)).toMatchObject({ pattern: 'https://onbijjang-production.up.railway.app/*' })
+    const html = read('options.html')
+    expect(html).toContain('id="use-production"')
+    expect(html).toContain('id="use-dev"')
   })
   it('디자인 토큰이 사이트와 같다', () => {
     const site = readFileSync(path.join(ROOT, 'src/styles/app.css'), 'utf8')

@@ -209,7 +209,6 @@ export function Editor({ fabric }: { fabric: Fabric }) {
       },
     })
     ctl.current = c
-    ;(window as unknown as Record<string, unknown>).__tctl = c // DEBUG-TEMP
     setReady((n) => n + 1)
     return () => {
       ctl.current = null

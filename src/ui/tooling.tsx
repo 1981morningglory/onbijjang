@@ -11,6 +11,13 @@ import { deleteLibraryItem, listLibrary, loadLibraryItem, saveLibraryItem, type 
 import { Button, Field, IconButton, Segmented, Slider, Switch, TextInput } from './controls'
 import { EmptyState, MenuItem, Popover, Spinner, toast } from './surfaces'
 
+/** 낱말 끝 받침에 맞춰 조사를 붙인다: josa('서명', '이', '가') → '서명이', josa('직인', …) → '직인이', josa('템플릿', …) → '템플릿이' */
+export function josa(word: string, withBatchim: string, withoutBatchim: string): string {
+  const code = word.charCodeAt(word.length - 1) - 0xac00
+  const hasBatchim = code >= 0 && code <= 11171 ? code % 28 !== 0 : false
+  return word + (hasBatchim ? withBatchim : withoutBatchim)
+}
+
 // ── 도구 화면 배치 ────────────────────────────────────────
 /**
  * 도구의 기본 배치: 왼쪽 넓은 작업 영역 + 오른쪽 설정 패널(360px).
@@ -364,7 +371,7 @@ export function LibraryMenu<T>({ kind, noun, getData, onLoad, size = 'md' }: Lib
     setBusy(true)
     try {
       const payload = await getData()
-      if (!payload) return toast.info(`저장할 ${noun}이(가) 아직 없습니다.`)
+      if (!payload) return toast.info(`저장할 ${josa(noun, '이', '가')} 아직 없습니다.`)
       const entry = await saveLibraryItem(kind, name.trim(), payload.data, payload.thumb)
       setItems((prev) => [entry, ...(prev ?? [])])
       setName('')
@@ -429,7 +436,7 @@ export function LibraryMenu<T>({ kind, noun, getData, onLoad, size = 'md' }: Lib
                 <Spinner /> 불러오는 중
               </div>
             ) : items.length === 0 ? (
-              <EmptyState title={`저장된 ${noun}이(가) 없습니다`} className="py-6!">
+              <EmptyState title={`저장된 ${josa(noun, '이', '가')} 없습니다`} className="py-6!">
                 위에서 이름을 붙여 저장하면 다음에 바로 불러올 수 있습니다.
               </EmptyState>
             ) : (

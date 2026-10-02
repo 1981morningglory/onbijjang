@@ -42,7 +42,7 @@ function lib(): Promise<Transformers> {
     libPromise = import('@huggingface/transformers').then((t) => {
       // wasm 실행 파일은 CDN 이 아니라 사이트에 함께 들어 있는 것을 쓴다.
       const wasm = t.env.backends.onnx.wasm
-      if (wasm) wasm.wasmPaths = { mjs: new URL(ortFactoryUrl, scope.location.href).href, wasm: new URL(ortWasmUrl, scope.location.href).href }
+      if (wasm) wasm.wasmPaths = { mjs: new URL(ortFactoryUrl, import.meta.url).href, wasm: new URL(ortWasmUrl, import.meta.url).href }
       t.env.allowLocalModels = false
       return t
     })

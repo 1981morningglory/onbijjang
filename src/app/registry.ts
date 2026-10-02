@@ -30,6 +30,8 @@ export interface ToolDef {
   local: boolean
   /** 이 도구가 다른 도구에서 넘겨받을 수 있는 파일 종류 */
   accepts?: Array<'image' | 'video' | 'pdf'>
+  /** true 면 페이지 최대 폭 제한 없이 화면 전체 폭을 쓴다(편집기형 도구) */
+  wide?: boolean
   component: LazyExoticComponent<ComponentType>
 }
 
@@ -54,7 +56,7 @@ export const TOOLS: ToolDef[] = [
     id: 'template', group: 'image', title: '템플릿 캔버스',
     summary: '사진·글자·도형을 자유롭게 배치해 이미지·PDF·GIF·영상으로',
     keywords: ['카드뉴스', '상세페이지', '썸네일', '배너', '디자인', '합치기', '콜라주'],
-    icon: LayoutTemplate, art: 'template', local: true, accepts: ['image'],
+    icon: LayoutTemplate, art: 'template', local: true, accepts: ['image'], wide: true,
     component: lazy(() => import('@/tools/template')),
   },
   {
@@ -156,7 +158,7 @@ export const TOOLS: ToolDef[] = [
   // ── 마켓 수수료 ─────────────────────────────────────────
   {
     id: 'fee-compare', group: 'fees', title: '마켓 수수료 비교',
-    summary: '한 상품을 다섯 마켓에 동시에 넣어 어디가 가장 남는지',
+    summary: '한 상품을 여섯 마켓에 동시에 넣어 어디가 가장 남는지',
     keywords: ['마진', '비교', '역산', '판매가', '일괄', '엑셀'],
     icon: Scale, art: 'fee-compare', local: false,
     component: lazy(() => import('@/tools/fees/compare')),

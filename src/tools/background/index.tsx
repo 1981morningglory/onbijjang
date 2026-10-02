@@ -119,7 +119,7 @@ export default function BackgroundTool() {
   const worker = useRef<Worker | null>(null)
   const pending = useRef(new Map<number, { resolve: (r: SegmentResponse) => void; onProgress?: (percent: number) => void }>())
   const seq = useRef(0)
-  const runner = useAbortable()
+  const { start: startRun, abort: abortRun } = useAbortable()
   const bgInput = useRef<HTMLInputElement>(null)
   const busy = task !== null
 
@@ -202,7 +202,7 @@ export default function BackgroundTool() {
   const process = useCallback(
     async (targets: Item[], how: Method) => {
       if (!targets.length) return
-      const signal = runner.start()
+      const signal = startRun()
       setAutoError(null)
       const ids = new Set(targets.map((t) => t.id))
       setItems((prev) => prev.map((p) => (ids.has(p.id) ? { ...p, status: 'pending', error: undefined } : p)))
@@ -251,7 +251,7 @@ export default function BackgroundTool() {
         setTask(null)
       }
     },
-    [callWorker, runner, segment, setDownloaded],
+    [callWorker, startRun, segment, setDownloaded],
   )
 
   // ── 파일 받기 ───────────────────────────────────────────
@@ -498,8 +498,11 @@ export default function BackgroundTool() {
       return
     }
     const cur = itemsRef.current.find((i) => i.id === activeIdRef.current)
-    if (latest.current.method === 'color' && cur && cur.width > 0 && !busyRef.current) void process([cur], 'color')
-  }, [colorKeySignature, process])
+    if (latest.current.method === 'color' && cur && cur.width > 0 && !busyRef.current) void processRef.current([cur], 'color')
+    // 설정 값이 바뀔 때만 다시 적용한다(process 가 바뀌는 것은 신호가 아니다).
+  }, [colorKeySignature])
+  const processRef = useRef(process)
+  processRef.current = process
   const activeIdRef = useRef(activeId)
   activeIdRef.current = activeId
   const busyRef = useRef(busy)
@@ -545,7 +548,7 @@ export default function BackgroundTool() {
     }
   }
   const saveZip = async () => {
-    const signal = runner.start()
+    const signal = startRun()
     try {
       const entries = []
       for (let i = 0; i < doneItems.length; i++) {
@@ -563,7 +566,7 @@ export default function BackgroundTool() {
     }
   }
   const cancel = () => {
-    runner.abort()
+    abortRun()
     setTask(null)
   }
   const removeItem = (id: string) => {

@@ -206,4 +206,9 @@ describe('isOwnMessage', () => {
     expect(isOwnMessage({ source: win as unknown as MessageEventSource, origin: 'https://evil.example' }, win)).toBe(false)
     expect(isOwnMessage({ source: null, origin: 'http://localhost:5173' }, win)).toBe(false)
   })
+  it('배포 사이트(HTTPS)에서도 같은 규칙이다', () => {
+    const site = { location: { origin: 'https://onbijjang-production.up.railway.app' } } as unknown as Window
+    expect(isOwnMessage({ source: site as unknown as MessageEventSource, origin: 'https://onbijjang-production.up.railway.app' }, site)).toBe(true)
+    expect(isOwnMessage({ source: site as unknown as MessageEventSource, origin: 'http://onbijjang-production.up.railway.app' }, site)).toBe(false)
+  })
 })

@@ -1,6 +1,7 @@
 import { AppWindow, Copy, Download, RefreshCw, ScrollText, ShieldCheck, SquareDashedMousePointer, type LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import manifest from '../../../extension/capture/manifest.json'
+import { DEV_ORIGIN, PRODUCTION_ORIGIN } from '../../../extension/capture/lib/settings.js'
 import { usePersistentState } from '@/lib/hooks'
 import { Badge, Button, Callout, Panel, Segmented, toast } from '@/ui'
 
@@ -8,7 +9,6 @@ type Browser = 'chrome' | 'edge'
 
 const ZIP_NAME = 'onbijjang-capture.zip'
 const ZIP_URL = `${import.meta.env.BASE_URL}downloads/${ZIP_NAME}`
-const DEFAULT_ORIGIN = 'http://localhost:5173'
 
 /** 브라우저마다 다른 이름들 */
 const WORDS: Record<Browser, { name: string; address: string; devMode: string; load: string; reload: string }> = {
@@ -83,7 +83,6 @@ export function InstallGuide({ onOpenEditor }: { onOpenEditor: () => void }) {
   const [browser, setBrowser] = usePersistentState<Browser>('onbijjang:capture:browser', 'chrome')
   const words = WORDS[browser]
   const origin = window.location.origin
-  const sameAsDefault = origin === DEFAULT_ORIGIN
 
   return (
     <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -137,8 +136,12 @@ export function InstallGuide({ onOpenEditor }: { onOpenEditor: () => void }) {
             <p>주소창 오른쪽의 퍼즐 조각 아이콘을 누르고, 온비짱 캡처 옆의 핀을 눌러 고정합니다.</p>
           </Step>
           <Step title="온비짱 주소 맞추기">
-            {sameAsDefault ? (
-              <p>지금 쓰는 온비짱 주소가 확장 프로그램의 기본값과 같아 바꿀 것이 없습니다.</p>
+            {origin === PRODUCTION_ORIGIN ? (
+              <p>확장 프로그램은 처음부터 이 사이트로 연결되어 있어 바꿀 것이 없습니다.</p>
+            ) : origin === DEV_ORIGIN ? (
+              <p>
+                지금은 개발용 주소입니다. 확장 아이콘을 누르고 "옵션"을 열어 "개발용(내 컴퓨터)"를 누르면 "온비짱에서 편집"이 이 화면으로 열립니다. 팀원은 기본값(팀 온비짱 사이트)을 그대로 쓰면 됩니다.
+              </p>
             ) : (
               <>
                 <p>확장 아이콘을 누르고 "옵션"을 열어 온비짱 주소를 아래 값으로 바꾼 뒤 저장합니다. 그래야 "온비짱에서 편집"이 이 사이트로 열립니다.</p>

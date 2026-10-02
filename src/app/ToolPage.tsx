@@ -116,7 +116,7 @@ export function ToolPage() {
   }
   const Tool = tool.component
   return (
-    <div className="mx-auto flex max-w-[1400px] flex-col gap-5 px-4 pb-16 pt-6 sm:px-6">
+    <div className={clsx('mx-auto flex flex-col gap-5 px-4 pb-16 pt-6 sm:px-6', !tool.wide && 'max-w-[1400px]')}>
       <ToolHeader tool={tool} />
       <ToolErrorBoundary toolId={tool.id}>
         <Suspense fallback={<ToolSkeleton />}>
