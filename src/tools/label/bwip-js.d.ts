@@ -9,6 +9,8 @@ declare module 'bwip-js' {
     scale?: number
     includetext?: boolean
     padding?: number
+    /** true 면 글자를 UTF-8 로 바꾸지 않고 문자 코드 그대로 바이트로 쓴다 */
+    binarytext?: boolean
   }
   export function toSVG(opts: ToSvgOptions): string
   const bwipjs: { toSVG: typeof toSVG }

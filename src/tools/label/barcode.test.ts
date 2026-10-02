@@ -110,6 +110,20 @@ describe('bwip-js 로 그리기', () => {
     expect(ean.ok && ean.geometry.w).toBe(95)
   })
 
+  it('한글은 UTF-8 바이트로 담긴다(문자 코드 아래 8비트만 쓰면 깨진다)', () => {
+    const text = '안녕하세요 온비짱'
+    const utf8 = Array.from(new TextEncoder().encode(text), (b) => String.fromCharCode(b)).join('')
+    const low8 = Array.from(text, (c) => String.fromCharCode(c.charCodeAt(0) & 255)).join('')
+    const shape = (t: string) => svgToGeometry(bwipjs.toSVG({ bcid: 'qrcode', text: t, binarytext: true, scale: 1, includetext: false, padding: 0 })).d
+    for (const id of ['qrcode', 'datamatrix', 'azteccode', 'pdf417'] as const) {
+      const r = makeBarcode(id, text)
+      expect(r.ok, id).toBe(true)
+    }
+    const qr = makeBarcode('qrcode', text)
+    expect(qr.ok && qr.geometry.d).toBe(shape(utf8))
+    expect(qr.ok && qr.geometry.d).not.toBe(shape(low8))
+  })
+
   it('선으로 온 막대를 사각형으로 바꾼다', () => {
     const g = svgToGeometry('<svg viewBox="0 0 10 20" xmlns="http://www.w3.org/2000/svg">\n<path stroke="#000000" stroke-width="2" d="M1 20L1 0M5 20L5 0" />\n<path d="M7 0L9 0L9 2L7 2Z" fill-rule="evenodd" />\n</svg>')
     expect(g).toEqual({ w: 9, h: 20, d: 'M0 0L2 0L2 20L0 20ZM4 0L6 0L6 20L4 20ZM7 0L9 0L9 2L7 2Z' })

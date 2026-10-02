@@ -1,7 +1,7 @@
 /** 옵션 화면: 온비짱 주소, 대기 시간, 주소·시각 한 줄, 임시 보관 비우기 */
 import { hydrateIcons } from './lib/icons.js'
 import { normalizeOrigin } from './lib/plan.js'
-import { DEFAULT_SETTINGS, loadSettings, saveSettings } from './lib/settings.js'
+import { DEV_ORIGIN, PRODUCTION_ORIGIN, loadSettings, resetOrigin, saveOrigin as storeOrigin, saveSettings } from './lib/settings.js'
 import { deleteAll, listCaptures, sweep } from './lib/store.js'
 
 const $ = (id) => document.getElementById(id)
@@ -37,7 +37,8 @@ async function saveOrigin(value) {
   }
   setOriginError('')
   const before = await loadSettings()
-  await saveSettings({ origin: parsed.origin })
+  if (parsed.origin === PRODUCTION_ORIGIN) await resetOrigin()
+  else await storeOrigin(parsed.origin)
   originInput.value = parsed.origin
   // 주소가 바뀌면 예전 주소에 받아 둔 접근 권한은 돌려준다.
   const old = normalizeOrigin(before.origin)
@@ -67,7 +68,8 @@ originInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') saveOrigin(originInput.value)
 })
 originInput.addEventListener('input', () => setOriginError(''))
-$('reset-origin').addEventListener('click', () => saveOrigin(DEFAULT_SETTINGS.origin))
+$('use-production').addEventListener('click', () => saveOrigin(PRODUCTION_ORIGIN))
+$('use-dev').addEventListener('click', () => saveOrigin(DEV_ORIGIN))
 
 for (const radio of document.querySelectorAll('input[name="wait"]')) {
   radio.addEventListener('change', async () => {

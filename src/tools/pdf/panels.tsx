@@ -8,7 +8,7 @@ import { actionBuild, actionCompress, actionExtractSheets, actionImages, actionO
 import type { PaperSize } from './geometry'
 import { OFFICE_BROWSER_EXT, OFFICE_SERVER_EXT } from './intake'
 import { ocrDownloadBytes, type OcrLang } from './ocr'
-import { fetchConvertStatus, printContent, readDocx, readXlsx, type ConvertStatus } from './office'
+import { ADMIN_ONLY_MESSAGE, fetchConvertStatus, printContent, readDocx, readXlsx, type ConvertStatus } from './office'
 import { formatPageNumber, type NumberFormat } from './ranges'
 import type { Settings } from './settings'
 import { runJob, targetPages, useWorkspace, type TabId } from './store'
@@ -182,7 +182,9 @@ function OfficeSection({ settings, update }: PanelProps) {
     }
   }, [])
 
-  const server = status?.available === true
+  // 서버에 변환 프로그램이 없으면(Railway 배포 등) 서버 변환은 아예 보이지 않는다.
+  const server = status?.available === true && status.allowed
+  const adminOnly = status?.available === true && !status.allowed
   const ext = file ? extOf(file.name) : ''
   const browserOk = OFFICE_BROWSER_EXT.includes(ext)
   const serverOk = server && status.extensions.includes(ext)
@@ -249,6 +251,7 @@ function OfficeSection({ settings, update }: PanelProps) {
       {unsupported ? (
         <Callout tone="warn" title={`.${ext} 문서는 지금 바꿀 수 없습니다`}>
           이 기기에서는 .docx 와 .xlsx 만 바꿀 수 있습니다. Word·Excel 에서 ‘다른 이름으로 저장’으로 형식을 바꾼 뒤 다시 올려 주세요.
+          {adminOnly && ` ${ADMIN_ONLY_MESSAGE}`}
         </Callout>
       ) : useServer ? (
         <Callout tone="warn" title="이 기능은 파일을 온비짱 서버로 보냅니다">

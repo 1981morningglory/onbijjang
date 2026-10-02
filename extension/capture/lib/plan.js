@@ -228,11 +228,11 @@ export function normalizeOrigin(input) {
   try {
     u = new URL(text)
   } catch {
-    return { ok: false, reason: '주소 형식이 올바르지 않습니다. 예: http://localhost:5173' }
+    return { ok: false, reason: '주소 형식이 올바르지 않습니다. 예: https://onbijjang-production.up.railway.app' }
   }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return { ok: false, reason: 'http:// 또는 https:// 로 시작하는 주소만 쓸 수 있습니다.' }
   if (u.username || u.password) return { ok: false, reason: '아이디·비밀번호가 들어간 주소는 쓸 수 없습니다.' }
-  if (!u.hostname) return { ok: false, reason: '주소 형식이 올바르지 않습니다. 예: http://localhost:5173' }
+  if (!u.hostname) return { ok: false, reason: '주소 형식이 올바르지 않습니다. 예: https://onbijjang-production.up.railway.app' }
   // 권한 패턴에는 포트를 넣지 않는다(같은 호스트의 모든 포트에 해당).
   return { ok: true, origin: u.origin, pattern: `${u.protocol}//${u.hostname}/*` }
 }

@@ -15,6 +15,7 @@
       .line { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
       ul.plain { margin: 0; padding-left: 1.2em; color: var(--ink-2); font-size: var(--text-sm); }
       ul.plain li + li { margin-top: 4px; }
+      .quick { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     </style>
   </head>
   <body>
@@ -33,13 +34,17 @@
           <div class="field">
             <label for="origin">'온비짱에서 편집'을 누르면 열리는 사이트</label>
             <div class="row">
-              <input id="origin" class="input" type="text" spellcheck="false" autocomplete="off" placeholder="http://localhost:5173" />
+              <input id="origin" class="input" type="text" spellcheck="false" autocomplete="off" placeholder="https://onbijjang-production.up.railway.app" />
               <button id="save-origin" class="btn btn-primary" type="button"><i data-icon="save"></i>주소 저장</button>
             </div>
             <p id="origin-error" class="error" role="alert" hidden></p>
-            <p class="hint">팀에서 쓰는 온비짱 주소를 넣으세요. 처음 편집으로 보낼 때 이 주소에 접근해도 되는지 브라우저가 한 번 묻습니다.</p>
+            <p class="hint">처음 편집으로 보낼 때 이 주소에 접근해도 되는지 브라우저가 한 번 묻습니다.</p>
           </div>
-          <button id="reset-origin" class="btn btn-ghost btn-sm" type="button" style="align-self: flex-start">기본 주소로 되돌리기</button>
+          <div class="quick">
+            <span class="small muted">빠르게 고르기</span>
+            <button id="use-production" class="btn btn-sm" type="button">팀 온비짱 사이트</button>
+            <button id="use-dev" class="btn btn-ghost btn-sm" type="button">개발용(내 컴퓨터)</button>
+          </div>
         </section>
 
         <section class="section">

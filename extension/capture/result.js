@@ -394,9 +394,10 @@ $('footer').addEventListener('change', async (e) => {
   if (pieces.length) renderPreview()
 })
 $('open-options').addEventListener('click', () => chrome.runtime.openOptionsPage())
-chrome.storage.onChanged.addListener((changes, area) => {
+chrome.storage.onChanged.addListener(async (changes, area) => {
   if (area !== 'local' || !changes.settings) return
-  settings = { ...settings, ...changes.settings.newValue }
+  // 저장소에는 바꾼 항목만 있으므로 기본값과 합친 값을 다시 읽는다.
+  settings = await loadSettings()
   $('origin').textContent = settings.origin
   $('footer').checked = Boolean(settings.footer)
   if (pieces.length) renderPreview()

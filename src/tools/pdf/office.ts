@@ -447,15 +447,28 @@ export interface ConvertStatus {
   available: boolean
   maxBytes: number
   extensions: string[]
+  /** 지금 이 사람이 서버 변환을 쓸 수 있는지(공개 배포에서는 관리자 로그인이 필요하다) */
+  allowed: boolean
 }
+
+export const ADMIN_ONLY_MESSAGE = '관리자로 로그인한 경우에만 서버 변환을 쓸 수 있습니다.'
 
 /** 서버에 LibreOffice 가 있어 변환할 수 있는지. 서버가 없거나 기능이 없으면 available=false. */
 export async function fetchConvertStatus(): Promise<ConvertStatus> {
   try {
     const s = await api<Partial<ConvertStatus>>('/convert/status')
-    return { available: s.available === true, maxBytes: typeof s.maxBytes === 'number' ? s.maxBytes : 100 * 1024 * 1024, extensions: Array.isArray(s.extensions) ? s.extensions : [] }
+    const available = s.available === true
+    let allowed = false
+    if (available) {
+      const [site, admin] = await Promise.all([
+        api<{ trusted?: boolean }>('/site').catch(() => ({ trusted: false })),
+        api<{ loggedIn?: boolean }>('/admin/status').catch(() => ({ loggedIn: false })),
+      ])
+      allowed = site.trusted === true || admin.loggedIn === true
+    }
+    return { available, allowed, maxBytes: typeof s.maxBytes === 'number' ? s.maxBytes : 100 * 1024 * 1024, extensions: Array.isArray(s.extensions) ? s.extensions : [] }
   } catch {
-    return { available: false, maxBytes: 0, extensions: [] }
+    return { available: false, allowed: false, maxBytes: 0, extensions: [] }
   }
 }
 
@@ -469,8 +482,9 @@ export async function convertOnServer(file: File, signal?: AbortSignal): Promise
     res = await fetch('/api/convert/office-to-pdf', { method: 'POST', body: form, credentials: 'same-origin', signal })
   } catch (err) {
     if (signal?.aborted) throw err
-    throw new ApiError(0, '서버에 연결할 수 없습니다. 잠시 후 다시 시도하거나 ‘이 기기에서 변환’을 써 주세요.')
+    throw new ApiError(0, '서버에 연결할 수 없습니다. 잠시 후 다시 시도하거나 ‘이 기기에서’ 변환을 써 주세요.')
   }
+  if (res.status === 401) throw new ApiError(401, `${ADMIN_ONLY_MESSAGE} ‘이 기기에서’ 변환은 누구나 쓸 수 있습니다.`)
   if (!res.ok) {
     let message = `서버 변환에 실패했습니다 (${res.status}).`
     try {

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "온비짱 캡처",
   "short_name": "온비짱 캡처",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "웹페이지를 맨 위부터 끝까지 한 장으로 캡처하고 온비짱에서 바로 편집합니다.",
   "minimum_chrome_version": "116",
   "icons": {
