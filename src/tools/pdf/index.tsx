@@ -17,14 +17,14 @@ import { DEFAULT_SETTINGS, type Settings } from './settings'
 import { cancelJob, clearResults, useWorkspace, type Sheet, type TabId } from './store'
 
 const TABS: ReadonlyArray<{ value: TabId; label: string; icon: typeof Files }> = [
-  { value: 'organize', label: '정리·병합', icon: Files },
+  { value: 'organize', label: '정리·순서변경', icon: Files },
   { value: 'split', label: '분할', icon: Scissors },
   { value: 'create', label: 'PDF 만들기', icon: FilePlus2 },
   { value: 'image', label: '이미지로', icon: Images },
   { value: 'word', label: 'Word 로', icon: FileText },
   { value: 'excel', label: 'Excel 로', icon: Table },
   { value: 'ppt', label: 'PPT 로', icon: Presentation },
-  { value: 'compress', label: '압축', icon: Minimize2 },
+  { value: 'compress', label: '용량줄이기', icon: Minimize2 },
   { value: 'stamp', label: '번호·워터마크', icon: Hash },
   { value: 'protect', label: '암호', icon: KeyRound },
   { value: 'ocr', label: '글자 인식', icon: ScanText },

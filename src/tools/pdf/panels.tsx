@@ -60,12 +60,12 @@ function DpiField({ label = '해상도', value, onValue, min = 72, max = 300, hi
   )
 }
 
-// ── 정리·병합 ─────────────────────────────────────────────
+// ── 정리·순서변경 ─────────────────────────────────────────────
 function OrganizePanel({ settings }: PanelProps) {
   const sourceCount = useWorkspace((s) => s.sourceOrder.length)
   return (
     <>
-      <Section title="정리·병합" hint="왼쪽에서 순서를 바꾸고, 돌리고, 필요 없는 쪽을 뺀 뒤 한 파일로 저장합니다.">
+      <Section title="정리·순서변경" hint="왼쪽에서 순서를 바꾸고, 돌리고, 필요 없는 쪽을 뺀 뒤 한 파일로 저장합니다.">
         <ul className="prose-ob text-sm">
           <li>PDF 여러 개와 사진을 함께 올려 한 파일로 합칠 수 있습니다.</li>
           <li>돌려 놓은 쪽은 돌린 그대로 저장됩니다.</li>

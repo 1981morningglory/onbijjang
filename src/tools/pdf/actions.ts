@@ -195,7 +195,7 @@ export function actionCompress(s: Settings) {
       : bytes.length < before
         ? `${formatBytes(before)} → ${formatBytes(bytes.length)} (${Math.round((1 - bytes.length / before) * 100)}% 줄었습니다)`
         : `${formatBytes(before)} → ${formatBytes(bytes.length)}. 더 줄어들지 않았습니다. ${s.compressMode === 'raster' ? '해상도나 품질을 낮춰 보세요.' : '‘쪽을 그림으로’ 방식을 써 보세요.'}`
-    setResults('줄인 PDF', [pdfFile(bytes, outputName(baseNameOf(items), '압축', 'pdf'))], [sizeNote, note].filter(Boolean).join(' '))
+    setResults('줄인 PDF', [pdfFile(bytes, outputName(baseNameOf(items), '용량줄임', 'pdf'))], [sizeNote, note].filter(Boolean).join(' '))
     toast.success('용량을 줄인 PDF 를 만들었습니다.')
   })
 }

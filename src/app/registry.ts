@@ -143,7 +143,7 @@ export const TOOLS: ToolDef[] = [
   {
     id: 'pdf', group: 'doc', title: 'PDF 변환·관리',
     summary: '변환·병합·분할·압축·암호·페이지 번호·글자 인식까지 한곳에서',
-    keywords: ['word', 'excel', 'ppt', '병합', '분할', 'ocr', '압축', '암호', '한글'],
+    keywords: ['word', 'excel', 'ppt', '병합', '정리', '순서', '분할', 'ocr', '압축', '용량', '암호', '한글'],
     icon: Files, art: 'pdf', local: true, accepts: ['pdf', 'image'],
     component: lazy(() => import('@/tools/pdf')),
   },
