@@ -20,7 +20,7 @@ export default defineConfig({
     include: [
       'react', 'react-dom', 'react-dom/client', 'react-router', 'zustand', 'zustand/middleware', 'clsx', 'lucide-react',
       'jszip', 'idb-keyval', 'pdf-lib', 'pdfjs-dist', 'docx', 'pptxgenjs', 'mammoth', 'tesseract.js', 'fabric',
-      'qr-code-styling', 'bwip-js', 'gifenc', 'mp4-muxer', 'webm-muxer', 'xlsx', '@mediapipe/tasks-vision',
+      'qr-code-styling', 'bwip-js', '@pdf-lib/fontkit', 'gifenc', 'mp4-muxer', 'webm-muxer', 'xlsx', '@mediapipe/tasks-vision',
     ],
     exclude: ['@huggingface/transformers'],
   },

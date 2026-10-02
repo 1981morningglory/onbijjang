@@ -180,7 +180,7 @@ export function SheetSvg({ sheet, design, items, mode, cutLines, offsetX = 0, of
         })}
         {mode === 'print'
           ? cutLines && <path d={outline} fill="none" stroke="#8c8c8c" strokeWidth={0.1} />
-          : <path d={outline} fill="none" stroke={cutLines ? '#8c8c8c' : '#c4baa1'} strokeWidth={0.2} strokeDasharray={cutLines ? undefined : '1.2 1'} />}
+          : <path d={outline} fill="none" stroke={cutLines ? '#8c8c8c' : 'var(--color-line-strong)'} strokeWidth={0.2} strokeDasharray={cutLines ? undefined : '1.2 1'} />}
       </g>
       {children}
     </svg>

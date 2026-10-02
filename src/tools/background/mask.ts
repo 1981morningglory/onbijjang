@@ -207,7 +207,8 @@ export function guidedUpsample(coarse: Float32Array, cw: number, ch: number, gui
     // 모델이 확신하는 곳(거의 0 또는 1)은 그대로 두고 경계 부근만 다듬은 값을 쓴다.
     const pv = P[i]
     const edge = 1 - Math.min(1, Math.abs(pv - 0.5) * 2.2)
-    const v = pv * (1 - edge) + q * edge
+    // 거의 확실한 값은 끝까지 밀어 물건 안쪽이 살짝 비치거나 배경에 옅은 얼룩이 남지 않게 한다.
+    const v = (pv * (1 - edge) + q * edge - 0.03) / 0.94
     out[i] = v <= 0 ? 0 : v >= 1 ? 255 : Math.round(v * 255)
   }
   return out
