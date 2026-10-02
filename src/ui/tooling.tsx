@@ -212,7 +212,13 @@ export function PositionGrid({ value, onValue, label = '위치' }: { value: Pos9
 export function WatermarkControls({ value, onChange }: { value: WatermarkSettings; onChange: (next: WatermarkSettings) => void }) {
   const team = useTeamPresets().watermark
   const fileInput = useRef<HTMLInputElement>(null)
-  const set = (patch: Partial<WatermarkSettings>) => onChange({ ...value, ...patch })
+  // 같은 순간에 여러 항목이 바뀌어도 앞의 변경이 사라지지 않도록 가장 최근 값에 이어서 합친다.
+  const latest = useRef(value)
+  latest.current = value
+  const set = (patch: Partial<WatermarkSettings>) => {
+    latest.current = { ...latest.current, ...patch }
+    onChange(latest.current)
+  }
   const hasTeamPreset = Boolean(team.logoDataUrl || team.text.trim())
   return (
     <div className="flex flex-col gap-3">
