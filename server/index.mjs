@@ -250,8 +250,15 @@ app.use('/api', (_req, res) => res.status(404).json({ error: '없는 API입니�
 
 // ── 빌드된 화면 제공 (npm run build 이후) ────────────────
 if (fs.existsSync(path.join(DIST_DIR, 'index.html'))) {
+  // 파일 이름에 내용 해시가 붙은 assets/ 는 오래 보관해도 된다. 첫 화면(index.html)은 항상 새로 받게 한다.
+  app.use('/assets', express.static(path.join(DIST_DIR, 'assets'), { index: false, maxAge: '365d', immutable: true }))
+  // 없는 assets 파일은 첫 화면(HTML)으로 대신 답하지 않고 404 로 알린다.
+  app.use('/assets', (_req, res) => res.status(404).end())
   app.use(express.static(DIST_DIR, { index: false, maxAge: '1h' }))
-  app.get(/^(?!\/api\/).*/, (_req, res) => res.sendFile(path.join(DIST_DIR, 'index.html')))
+  app.get(/^(?!\/api\/).*/, (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache')
+    res.sendFile(path.join(DIST_DIR, 'index.html'))
+  })
 }
 
 app.use((err, _req, res, _next) => {

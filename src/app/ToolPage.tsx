@@ -12,6 +12,12 @@ class ToolErrorBoundary extends Component<{ children: ReactNode; toolId: string 
   static getDerivedStateFromError(error: Error) {
     return { error }
   }
+  componentDidCatch(error: Error) {
+    // 새 버전 배포 뒤 예전 파일을 찾다 실패한 경우 — 새로고침하면 해결되므로 자동으로 한 번 새로고침한다.
+    if (/dynamically imported module|Importing a module script failed|error loading dynamically/i.test(error.message)) {
+      ;(window as unknown as { __onbijjangReload?: () => boolean }).__onbijjangReload?.()
+    }
+  }
   componentDidUpdate(prev: { toolId: string }) {
     if (prev.toolId !== this.props.toolId && this.state.error) this.setState({ error: null })
   }
