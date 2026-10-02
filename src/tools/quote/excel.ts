@@ -241,7 +241,7 @@ async function attachSheets(wb: import('exceljs').Workbook, doc: QuoteDoc, kit: 
 /** 출고 양식 거래명세표(품번·BOX수·내품수량·출고수량 + 인수증). 견적서와 같은 초록 선·색을 쓴다. */
 async function shipmentSheet(wb: import('exceljs').Workbook, doc: QuoteDoc, kit: CompanyKit) {
   const theme = QUOTE_THEME
-  const ws = wb.addWorksheet(DOC_NAME.statement, {
+  const ws = wb.addWorksheet('거래명세서', {
     pageSetup: { paperSize: 9, orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0, horizontalCentered: true, margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } },
     views: [{ showGridLines: false }],
   })
@@ -259,7 +259,7 @@ async function shipmentSheet(wb: import('exceljs').Workbook, doc: QuoteDoc, kit:
 
   let r = 2
   ws.getRow(r).height = 38
-  put(ws, `B${r}:J${r}`, '거 래 명 세 표', { bold: true, size: 22, align: 'center', color: theme.line, border: { bottom: { style: 'double', color: { argb: theme.text } } } })
+  put(ws, `B${r}:J${r}`, '거 래 명 세 서', { bold: true, size: 22, align: 'center', color: theme.line, border: { bottom: { style: 'double', color: { argb: theme.text } } } })
   r += 2
   put(ws, `B${r}:E${r}`, `No.  ${doc.docNo}`, { size: 10 })
   put(ws, `G${r}:J${r}`, `출고일   ${dateKo(doc.date)}`, { size: 10, align: 'right' })

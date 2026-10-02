@@ -620,7 +620,7 @@ function shipmentPages(doc: QuoteDoc, kit: CompanyKit, measure: Measure): Page[]
     p.rect(11.2, 11.2, PAGE_W - 22.4, PAGE_H - 22.4, { stroke: QUOTE.line, lw: 0.2 })
 
     let y = 18
-    p.text(DOC_TITLE.statement, PAGE_W / 2, y + 9, { size: 24, weight: 'bold', align: 'center', spacing: 1.6, color: QUOTE.line })
+    p.text('거 래 명 세 서', PAGE_W / 2, y + 9, { size: 24, weight: 'bold', align: 'center', spacing: 1.6, color: QUOTE.line })
     y += 14
     p.line(PAGE_W / 2 - 40, y, PAGE_W / 2 + 40, y, QUOTE.accent, 0.6)
     p.line(PAGE_W / 2 - 40, y + 1, PAGE_W / 2 + 40, y + 1, QUOTE.accent, 0.2)
