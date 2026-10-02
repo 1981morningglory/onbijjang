@@ -2,7 +2,7 @@ import { lazy, type ComponentType, type LazyExoticComponent } from 'react'
 import {
   Blend, Calculator, Camera, Clapperboard, ClipboardCheck, Crop, Eraser, FileText, Files, Film, Gavel,
   Grid3x3, Image as ImageIcon, Images, LayoutTemplate, MonitorPlay, NotebookPen, Package, PenLine, QrCode,
-  Rocket, Scale, Scissors, ShoppingBag, ShoppingCart, Signature, Store, Tags, FilePenLine,
+  ReceiptText, Rocket, Scale, Scissors, ShoppingBag, ShoppingCart, Signature, Store, Tags, FilePenLine,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -146,6 +146,13 @@ export const TOOLS: ToolDef[] = [
     keywords: ['word', 'excel', 'ppt', '병합', '정리', '순서', '분할', 'ocr', '압축', '용량', '암호', '한글'],
     icon: Files, art: 'pdf', local: true, accepts: ['pdf', 'image'],
     component: lazy(() => import('@/tools/pdf')),
+  },
+  {
+    id: 'quote', group: 'doc', title: '견적서·거래명세표',
+    summary: '고객사·품목만 넣으면 직인·첨부까지 갖춘 견적서와 거래명세표를 PDF·엑셀로',
+    keywords: ['견적', '견적서', '거래명세서', '명세표', '명세서', '인보이스', '직인', '사업자등록증', '통장사본', '엑셀'],
+    icon: ReceiptText, art: 'quote', local: true, wide: true,
+    component: lazy(() => import('@/tools/quote')),
   },
   {
     id: 'label', group: 'doc', title: 'A4 라벨메이트',
