@@ -61,7 +61,7 @@ export function Callout({ tone = 'info', title, children, className }: { tone?: 
   )
 }
 
-export function Badge({ tone = 'neutral', children, className }: { tone?: 'neutral' | 'brand' | 'accent' | 'mark'; children: ReactNode; className?: string }) {
+export function Badge({ tone = 'neutral', children, className }: { tone?: 'neutral' | 'brand' | 'accent' | 'mark' | 'warn'; children: ReactNode; className?: string }) {
   return (
     <span
       className={clsx(
@@ -70,6 +70,7 @@ export function Badge({ tone = 'neutral', children, className }: { tone?: 'neutr
         tone === 'brand' && 'bg-brand-soft text-brand-ink',
         tone === 'accent' && 'bg-accent-soft text-accent',
         tone === 'mark' && 'bg-mark text-ink',
+        tone === 'warn' && 'bg-warn-soft text-warn',
         className,
       )}
     >
