@@ -240,7 +240,7 @@ if (fs.existsSync(routesDir)) {
   for (const file of fs.readdirSync(routesDir).filter((f) => f.endsWith('.mjs')).sort()) {
     const mod = await import(pathToFileURL(path.join(routesDir, file)).href)
     if (typeof mod.default === 'function') {
-      await mod.default(app, { requireAdmin, isAdmin, DATA_DIR, ROOT })
+      await mod.default(app, { requireAdmin, isAdmin, DATA_DIR, ROOT, TRUSTED })
       console.log(`[온비짱] 라우트 로드: ${file}`)
     }
   }

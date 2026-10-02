@@ -1,11 +1,11 @@
 import clsx from 'clsx'
-import { ArrowDown, ArrowUp, Building2, CalendarDays, Copy, Download, FileSpreadsheet, FileText, History, Image as ImageIcon, Plus, Printer, RotateCcw, Settings2, Trash2, UserRound } from 'lucide-react'
+import { ArrowDown, ArrowUp, Building2, CalendarDays, Copy, Download, FileSpreadsheet, FileText, History, Image as ImageIcon, KeyRound, Plus, ShieldCheck, Printer, RotateCcw, Settings2, Trash2, UserRound } from 'lucide-react'
 import { del, get, set } from 'idb-keyval'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { downloadBlob, downloadZip } from '@/lib/files'
 import { usePersistentState } from '@/lib/hooks'
 import { Badge, Button, Callout, Field, IconButton, MenuItem, NumberInput, Panel, Popover, Section, Segmented, Select, Switch, Textarea, TextInput, toast } from '@/ui'
-import { useKit } from './kit'
+import { hasOwnData, useKit } from './kit'
 import { KitDialog } from './KitDialog'
 import { buildPages, canvasMeasure, type Page } from './layout'
 import { calcTotals, contactLine, DOC_NAME, emptyItem, fileBase, makeDocNo, newDoc, todayIso, uid, won, type DocType, type LineItem, type QuoteDoc, type VatMode } from './model'
@@ -140,6 +140,55 @@ function ItemsEditor({ doc, setItems }: { doc: QuoteDoc; setItems: (items: LineI
   )
 }
 
+/** 팀 기본 회사 자료가 서버에 있으면 팀 코드를 한 번 받아 바로 쓰게 한다 */
+function TeamGate() {
+  const status = useKit((s) => s.teamStatus)
+  const joinTeam = useKit((s) => s.joinTeam)
+  const usingTeam = useKit((s) => Boolean(s.team) && !hasOwnData(s.local))
+  const [code, setCode] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  if (!status?.available) return null
+  if (status.authorized) {
+    return usingTeam ? (
+      <p className="flex items-center gap-1.5 text-sm text-brand-ink">
+        <ShieldCheck className="size-4" aria-hidden />팀 기본 회사 자료(인감·사업자등록증·통장 사본)를 쓰고 있습니다.
+      </p>
+    ) : null
+  }
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!code.trim()) return
+    setBusy(true)
+    setError('')
+    try {
+      await joinTeam(code.trim())
+      setCode('')
+      toast.success('팀 회사 자료를 불러왔습니다. 이 브라우저에서는 다음부터 바로 씁니다.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '확인하지 못했습니다.')
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Callout tone="info" title="팀 코드를 넣으면 회사 인감·사업자등록증·통장 사본이 바로 들어갑니다">
+      {status.codeSet ? (
+        <form onSubmit={submit} className="mt-2 flex flex-wrap items-start gap-2">
+          <TextInput type="password" autoComplete="off" aria-label="팀 코드" placeholder="팀 코드" value={code} onChange={(e) => setCode(e.target.value)} className="w-48!" aria-invalid={Boolean(error) || undefined} />
+          <Button type="submit" variant="primary" icon={KeyRound} loading={busy}>
+            확인
+          </Button>
+          {error && <p className="basis-full text-sm text-danger">{error}</p>}
+          <p className="basis-full text-xs text-muted">이 브라우저에서 한 번만 넣으면 됩니다. 코드는 관리자에게 물어보세요.</p>
+        </form>
+      ) : (
+        <p>관리자가 아직 팀 코드를 정하지 않았습니다. 관리자 화면의 ‘회사 자료’에서 정할 수 있습니다.</p>
+      )}
+    </Callout>
+  )
+}
+
 export default function QuoteTool() {
   const kit = useKit((s) => s.kit)
   const loaded = useKit((s) => s.loaded)
@@ -182,6 +231,7 @@ export default function QuoteTool() {
   const filledCount = totals.lines.filter((l) => l.filled).length
   const base = fileBase(doc)
   const companyReady = Boolean(kit.company.name)
+  const teamStatus = useKit((s) => s.teamStatus)
 
   const remember = async () => {
     const entry: HistoryEntry = { id: uid(), savedAt: new Date().toISOString(), doc }
@@ -345,7 +395,9 @@ export default function QuoteTool() {
         </div>
       </div>
 
-      {loaded && !companyReady && (
+      <TeamGate />
+
+      {loaded && !companyReady && !(teamStatus?.available && !teamStatus.authorized) && (
         <Callout tone="warn" title="먼저 우리 회사 자료를 넣어 주세요">
           상호·사업자번호·주소와 직인, 사업자등록증, 통장 사본을 한 번 넣어 두면 문서마다 자동으로 들어갑니다. 받은 ‘회사 자료 파일’이 있으면 불러오기만 하면 됩니다.
           <div className="mt-2">

@@ -2,7 +2,7 @@ import { Download, FileUp, Plus, Stamp, Trash2, Upload, UserPlus } from 'lucide-
 import { useRef, useState } from 'react'
 import { downloadBlob } from '@/lib/files'
 import { Badge, Button, Callout, Checkbox, Dialog, EmptyState, Field, IconButton, Spinner, Tabs, TextInput, toast } from '@/ui'
-import { cleanSeal, fileToAttachment, kitFromFile, kitToBlob, useKit } from './kit'
+import { cleanSeal, fileToAttachment, hasOwnData, kitFromFile, kitToBlob, useKit } from './kit'
 import { uid, type Company, type CompanyKit, type Contact } from './model'
 
 type Tab = 'company' | 'seal' | 'docs' | 'contacts' | 'share'
@@ -75,6 +75,10 @@ export function KitDialog({ open, onClose, initialTab = 'company' }: { open: boo
   const kit = useKit((s) => s.kit)
   const update = useKit((s) => s.update)
   const replace = useKit((s) => s.replace)
+  const team = useKit((s) => s.team)
+  const ownData = useKit((s) => hasOwnData(s.local))
+  const resetToTeam = useKit((s) => s.useTeamDefaults)
+  const teamContactIds = new Set(team?.contacts.map((c) => c.id) ?? [])
   const [tab, setTab] = useState<Tab>(initialTab)
   const [busy, setBusy] = useState<string | null>(null)
   const [recolor, setRecolor] = useState(true)
@@ -110,9 +114,24 @@ export function KitDialog({ open, onClose, initialTab = 'company' }: { open: boo
 
   return (
     <Dialog open={open} onClose={onClose} size="lg" title="회사 자료 설정" footer={<Button variant="primary" onClick={onClose}>닫기</Button>}>
-      <Callout tone="info" className="mb-4">
-        여기 넣은 자료(직인·통장 사본 포함)는 <b>이 브라우저에만</b> 저장됩니다. 온비짱 서버로 올라가지 않습니다. 팀원에게는 ‘파일로 주고받기’로 나눠 주세요.
-      </Callout>
+      {team && !ownData ? (
+        <Callout tone="success" className="mb-4" title="팀 기본 회사 자료를 쓰고 있습니다">
+          관리자가 올린 자료입니다. 여기서 고치면 이 브라우저에만 따로 저장되고, 팀 자료는 바뀌지 않습니다. 담당자는 팀 담당자에 내 담당자를 더해 쓸 수 있습니다.
+        </Callout>
+      ) : team ? (
+        <Callout tone="warn" className="mb-4" title="이 브라우저에서 고친 회사 자료를 쓰고 있습니다">
+          팀 기본 자료 대신 이 브라우저 자료가 문서에 들어갑니다.
+          <div className="mt-2">
+            <Button size="sm" onClick={resetToTeam}>
+              팀 기본 자료로 되돌리기
+            </Button>
+          </div>
+        </Callout>
+      ) : (
+        <Callout tone="info" className="mb-4">
+          여기 넣은 자료(직인·통장 사본 포함)는 <b>이 브라우저에만</b> 저장됩니다. 팀 모두가 쓰게 하려면 ‘파일로 주고받기’에서 파일로 내보낸 뒤 관리자 화면 ‘회사 자료’에 올리세요.
+        </Callout>
+      )}
       <Tabs
         label="회사 자료"
         value={tab}
@@ -209,7 +228,13 @@ export function KitDialog({ open, onClose, initialTab = 'company' }: { open: boo
       {tab === 'contacts' && (
         <div className="flex flex-col gap-3">
           {kit.contacts.length === 0 && <EmptyState icon={UserPlus} title="등록된 담당자가 없습니다">미리 넣어 두면 문서를 만들 때 한 번에 골라 넣을 수 있습니다.</EmptyState>}
-          {kit.contacts.map((c) => (
+          {kit.contacts.filter((c) => teamContactIds.has(c.id)).map((c) => (
+            <div key={c.id} className="flex items-center justify-between gap-2 rounded-lg border border-line bg-sunken px-3 py-2 text-sm">
+              <span className="min-w-0 truncate">{[c.name, c.title].filter(Boolean).join(' ')} · {c.phone || c.email}</span>
+              <Badge tone="brand">팀 담당자</Badge>
+            </div>
+          ))}
+          {kit.contacts.filter((c) => !teamContactIds.has(c.id)).map((c) => (
             <ContactEditor
               key={c.id}
               contact={c}

@@ -2,45 +2,135 @@
  * 회사 자료(공급자 정보·직인·사업자등록증·통장 사본·담당자)를 이 브라우저(IndexedDB)에 보관한다.
  * 직인·통장은 민감한 자료라 온비짱 서버나 공개 저장소에 올리지 않는다. 팀원에게는 '회사 자료 파일'로 나눈다.
  */
-import { get, set } from 'idb-keyval'
+import { del, get, set } from 'idb-keyval'
+import { api, ApiError } from '@/lib/api'
 import { create } from 'zustand'
 import { readAsDataURL } from '@/lib/files'
 import { canvasToBlob, ctx2d, fileToCanvas, makeCanvas, resizeCanvas } from '@/lib/image'
 import { emptyKit, EMPTY_COMPANY, type Attachment, type CompanyKit } from './model'
 
 const KEY = 'onbijjang:quote:kit'
+const TEAM_CACHE = 'onbijjang:quote:team-kit'
 
-interface KitState {
-  kit: CompanyKit
-  loaded: boolean
-  load: () => Promise<void>
-  update: (fn: (k: CompanyKit) => CompanyKit) => void
-  replace: (kit: CompanyKit) => void
+export interface TeamStatus {
+  /** 관리자가 팀 기본 자료를 올려 두었는지 */
+  available: boolean
+  updatedAt: string | null
+  /** 관리자가 팀 코드를 정했는지 */
+  codeSet: boolean
+  /** 이 사이트가 팀 코드를 요구하는지(사내망 모드면 false) */
+  needsCode: boolean
+  /** 이 브라우저가 팀 코드를 이미 넣었는지 */
+  authorized: boolean
 }
 
-export const useKit = create<KitState>((setState, getState) => ({
-  kit: emptyKit(),
-  loaded: false,
-  async load() {
-    if (getState().loaded) return
-    try {
-      const saved = (await get(KEY)) as CompanyKit | undefined
-      setState({ kit: saved ? normalizeKit(saved) : emptyKit(), loaded: true })
-    } catch {
+interface KitState {
+  /** 화면·문서에 쓰는 자료: 이 브라우저 자료가 있으면 그것, 없으면 팀 기본 자료. 담당자는 둘을 합친다. */
+  kit: CompanyKit
+  /** 이 브라우저에만 저장한 자료 */
+  local: CompanyKit
+  /** 팀 기본 자료(서버) */
+  team: CompanyKit | null
+  teamStatus: TeamStatus | null
+  loaded: boolean
+  load: () => Promise<void>
+  refreshTeam: () => Promise<void>
+  /** 팀 코드 넣기. 맞으면 팀 자료를 받아 온다. */
+  joinTeam: (code: string) => Promise<void>
+  update: (fn: (k: CompanyKit) => CompanyKit) => void
+  replace: (kit: CompanyKit) => void
+  /** 이 브라우저 자료를 지우고 팀 기본 자료로 돌아간다(담당자는 남긴다) */
+  useTeamDefaults: () => void
+}
+
+/** 이 브라우저 자료에 회사 정보·직인·첨부 중 하나라도 있으면 그것을 쓴다 */
+export const hasOwnData = (k: CompanyKit) => Boolean(k.company.name || k.seals.length || k.registration || k.bankbook)
+
+function effective(local: CompanyKit, team: CompanyKit | null): CompanyKit {
+  if (!team) return local
+  const base = hasOwnData(local) ? local : { ...team, contacts: [] }
+  const seen = new Set(local.contacts.map((c) => c.id))
+  return { ...base, contacts: [...team.contacts.filter((c) => !seen.has(c.id)), ...local.contacts] }
+}
+
+export const useKit = create<KitState>((setState, getState) => {
+  const commit = (local: CompanyKit, team = getState().team) => {
+    setState({ local, team, kit: effective(local, team) })
+  }
+  return {
+    kit: emptyKit(),
+    local: emptyKit(),
+    team: null,
+    teamStatus: null,
+    loaded: false,
+    async load() {
+      if (getState().loaded) return
+      try {
+        const [saved, cached] = await Promise.all([get(KEY) as Promise<CompanyKit | undefined>, get(TEAM_CACHE) as Promise<{ kit: CompanyKit; updatedAt: string } | undefined>])
+        commit(saved ? normalizeKit(saved) : emptyKit(), cached ? normalizeKit(cached.kit) : null)
+      } catch {
+        // 저장소를 못 열어도 빈 자료로 시작한다
+      }
       setState({ loaded: true })
-    }
-  },
-  update(fn) {
-    const next = fn(getState().kit)
-    setState({ kit: next })
-    void set(KEY, next).catch(() => {})
-  },
-  replace(kit) {
-    const next = normalizeKit(kit)
-    setState({ kit: next })
-    void set(KEY, next).catch(() => {})
-  },
-}))
+      void getState().refreshTeam()
+    },
+    async refreshTeam() {
+      let status: TeamStatus
+      try {
+        status = await api<TeamStatus>('/company-kit/status')
+      } catch {
+        return // 서버가 없으면 이 브라우저 자료만 쓴다
+      }
+      setState({ teamStatus: status })
+      if (!status.available) {
+        if (getState().team) {
+          await del(TEAM_CACHE).catch(() => {})
+          commit(getState().local, null)
+        }
+        return
+      }
+      if (!status.authorized) return
+      const cached = (await get(TEAM_CACHE).catch(() => undefined)) as { updatedAt: string } | undefined
+      if (cached?.updatedAt === status.updatedAt && getState().team) return
+      try {
+        const res = await api<{ kit: CompanyKit; updatedAt: string }>('/company-kit')
+        const team = normalizeKit(res.kit)
+        await set(TEAM_CACHE, { kit: team, updatedAt: res.updatedAt }).catch(() => {})
+        commit(getState().local, team)
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) setState({ teamStatus: { ...status, authorized: false } })
+      }
+    },
+    async joinTeam(code) {
+      await api('/team/login', { method: 'POST', body: { code } })
+      await getState().refreshTeam()
+    },
+    update(fn) {
+      const { local, team } = getState()
+      // 팀 자료를 쓰다가 고치기 시작하면, 팀 자료를 이 브라우저로 옮겨 와 그 위에서 고친다
+      const start = !hasOwnData(local) && team ? { ...team, contacts: local.contacts } : local
+      const next = fn(start)
+      // 담당자 목록에서 팀 담당자는 이 브라우저 자료에 넣지 않는다
+      const teamIds = new Set(team?.contacts.map((c) => c.id) ?? [])
+      const contacts = next.contacts.filter((c) => !teamIds.has(c.id))
+      // 담당자만 고쳤으면 회사 자료는 계속 팀 기본 자료를 따른다
+      const onlyContacts = !hasOwnData(local) && team && next.company === team.company && next.seals === team.seals && next.registration === team.registration && next.bankbook === team.bankbook && next.bank === team.bank
+      const cleaned = onlyContacts ? { ...emptyKit(), contacts } : { ...next, contacts }
+      commit(cleaned)
+      void set(KEY, cleaned).catch(() => {})
+    },
+    replace(kit) {
+      const next = normalizeKit(kit)
+      commit(next)
+      void set(KEY, next).catch(() => {})
+    },
+    useTeamDefaults() {
+      const next = { ...emptyKit(), contacts: getState().local.contacts }
+      commit(next)
+      void set(KEY, next).catch(() => {})
+    },
+  }
+})
 
 export function normalizeKit(raw: unknown): CompanyKit {
   const base = emptyKit()

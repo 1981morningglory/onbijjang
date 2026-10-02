@@ -270,6 +270,147 @@ function PresetEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: (c: Si
   )
 }
 
+interface KitStatus {
+  available: boolean
+  updatedAt: string | null
+  codeSet: boolean
+  needsCode: boolean
+}
+
+/** 팀 기본 회사 자료(인감·사업자등록증·통장 사본)와 팀 코드 */
+function CompanyKitEditor() {
+  const [status, setStatus] = useState<KitStatus | null>(null)
+  const [summary, setSummary] = useState<{ name: string; seals: string[]; registration: number; bankbook: number; contacts: number } | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [code, setCode] = useState('')
+  const fileInput = useRef<HTMLInputElement>(null)
+
+  const refresh = async () => {
+    const st = await api<KitStatus>('/company-kit/status')
+    setStatus(st)
+    if (st.available) {
+      const res = await api<{ kit: { company?: { name?: string }; seals?: Array<{ dataUrl: string }>; registration?: { pages?: string[] } | null; bankbook?: { pages?: string[] } | null; contacts?: unknown[] } }>('/company-kit')
+      const k = res.kit
+      setSummary({ name: k.company?.name ?? '', seals: (k.seals ?? []).map((x) => x.dataUrl), registration: k.registration?.pages?.length ?? 0, bankbook: k.bankbook?.pages?.length ?? 0, contacts: k.contacts?.length ?? 0 })
+    } else setSummary(null)
+  }
+  useEffect(() => {
+    refresh().catch(() => {})
+  }, [])
+
+  const run = async (label: string, fn: () => Promise<void>) => {
+    setBusy(label)
+    try {
+      await fn()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '처리하지 못했습니다.')
+    } finally {
+      setBusy(null)
+    }
+  }
+  const upload = (file: File) =>
+    run('upload', async () => {
+      const { kitFromFile } = await import('@/tools/quote/kit')
+      const kit = await kitFromFile(file)
+      await api('/admin/company-kit', { method: 'PUT', body: { kit } })
+      await refresh()
+      toast.success(`${kit.company.name || '회사'} 자료를 팀 기본으로 올렸습니다.`)
+    })
+
+  return (
+    <div className="grid gap-5 xl:grid-cols-2">
+      <Panel className="flex flex-col gap-4 p-5">
+        <div>
+          <h3 className="text-base">팀 기본 회사 자료</h3>
+          <p className="text-sm text-muted">견적서·거래명세표에 자동으로 들어가는 상호·직인·사업자등록증·통장 사본입니다. 이 서버에만 저장되고 GitHub 에는 올라가지 않습니다.</p>
+        </div>
+        {status?.available && summary ? (
+          <div className="flex items-center gap-3 rounded-md border border-line bg-paper p-3">
+            <div className="flex -space-x-3">
+              {summary.seals.slice(0, 3).map((src, i) => (
+                <img key={i} src={src} alt="" className="checker size-12 rounded-full border border-line object-contain" />
+              ))}
+            </div>
+            <div className="min-w-0 flex-1 text-sm">
+              <p className="font-semibold text-ink">{summary.name || '이름 없음'}</p>
+              <p className="text-muted">
+                직인 {summary.seals.length}개 · 사업자등록증 {summary.registration}쪽 · 통장 사본 {summary.bankbook}쪽 · 담당자 {summary.contacts}명
+              </p>
+              {status.updatedAt && <p className="text-xs text-faint">{new Date(status.updatedAt).toLocaleString('ko-KR')} 올림</p>}
+            </div>
+          </div>
+        ) : (
+          <p className="rounded-md border border-dashed border-line-strong p-4 text-sm text-muted">아직 올린 자료가 없습니다.</p>
+        )}
+        <input
+          ref={fileInput}
+          type="file"
+          accept=".json,application/json"
+          hidden
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            e.target.value = ''
+            if (f) upload(f)
+          }}
+        />
+        <div className="flex flex-wrap gap-2">
+          <Button variant="primary" icon={Upload} loading={busy === 'upload'} onClick={() => fileInput.current?.click()}>
+            {status?.available ? '회사 자료 파일로 바꾸기' : '회사 자료 파일 올리기'}
+          </Button>
+          {status?.available && (
+            <Button
+              variant="danger"
+              icon={Trash2}
+              loading={busy === 'delete'}
+              onClick={() =>
+                run('delete', async () => {
+                  if (!confirm('팀 기본 회사 자료를 지울까요? 팀원 화면에서도 사라집니다.')) return
+                  await api('/admin/company-kit', { method: 'DELETE' })
+                  await refresh()
+                  toast.success('지웠습니다.')
+                })
+              }
+            >
+              지우기
+            </Button>
+          )}
+        </div>
+        <p className="text-xs text-muted">회사 자료 파일은 견적서·거래명세표 → 회사 자료 → ‘파일로 주고받기’에서 만들 수 있습니다.</p>
+      </Panel>
+
+      <Panel className="flex flex-col gap-4 p-5">
+        <div>
+          <h3 className="text-base">팀 코드</h3>
+          <p className="text-sm text-muted">사이트는 누구나 열 수 있으므로, 회사 자료는 이 코드를 한 번 넣은 브라우저에만 보입니다. 바꾸면 모든 팀원이 새 코드를 다시 넣어야 합니다.</p>
+        </div>
+        <p className="text-sm">
+          지금 상태: <b className={status?.codeSet ? 'text-brand-ink' : 'text-warn'}>{status?.codeSet ? '정해져 있음' : '아직 없음'}</b>
+          {status && !status.needsCode && <span className="text-muted"> · 사내망 모드라 코드 없이 보입니다</span>}
+        </p>
+        <form
+          className="flex flex-wrap items-end gap-2"
+          onSubmit={(e) => {
+            e.preventDefault()
+            run('code', async () => {
+              await api('/admin/team-code', { method: 'PUT', body: { code } })
+              setCode('')
+              await refresh()
+              toast.success('팀 코드를 정했습니다. 팀원에게 알려 주세요.')
+            })
+          }}
+        >
+          <Field label={status?.codeSet ? '새 팀 코드' : '팀 코드'} hint="4자 이상. 관리자 비밀번호와 다르게 정하세요." className="min-w-56 flex-1">
+            {(id) => <TextInput id={id} type="password" autoComplete="new-password" value={code} onChange={(e) => setCode(e.target.value)} />}
+          </Field>
+          <Button type="submit" icon={KeyRound} loading={busy === 'code'} disabled={code.trim().length < 4}>
+            {status?.codeSet ? '바꾸기' : '정하기'}
+          </Button>
+        </form>
+      </Panel>
+    </div>
+  )
+}
+
 function AccountEditor({ onLogout }: { onLogout: () => void }) {
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
@@ -313,7 +454,7 @@ export function Admin() {
   const config = useSite((s) => s.config)
   const save = useSite((s) => s.save)
   const [draft, setDraft] = useState<SiteConfig>(config)
-  const [tab, setTab] = useState<'menu' | 'presets' | 'account'>('menu')
+  const [tab, setTab] = useState<'menu' | 'presets' | 'company' | 'account'>('menu')
   const [saving, setSaving] = useState(false)
   const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(config), [draft, config])
 
@@ -389,14 +530,16 @@ export function Admin() {
         tabs={[
           { value: 'menu', label: '메뉴 노출' },
           { value: 'presets', label: '공지·팀 프리셋' },
+          { value: 'company', label: '회사 자료' },
           { value: 'account', label: '계정' },
         ]}
       />
       {tab === 'menu' && <MenuEditor draft={draft} setDraft={setDraft} />}
       {tab === 'presets' && <PresetEditor draft={draft} setDraft={setDraft} />}
+      {tab === 'company' && <CompanyKitEditor />}
       {tab === 'account' && <AccountEditor onLogout={logout} />}
 
-      {tab !== 'account' && (
+      {(tab === 'menu' || tab === 'presets') && (
         <div className={clsx('fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface/95 px-4 py-3 backdrop-blur-sm transition-transform duration-200', dirty ? 'translate-y-0' : 'translate-y-full')}>
           <div className="mx-auto flex max-w-[1100px] items-center justify-end gap-3">
             <p className="mr-auto text-sm font-semibold text-ink-2">저장하지 않은 변경이 있습니다.</p>
