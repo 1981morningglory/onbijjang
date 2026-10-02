@@ -27,7 +27,7 @@ export default function QuoteTool() {
   if (phase === 'offline') {
     return (
       <Callout tone="warn" title="서버에 연결되지 않습니다">
-        견적서·거래명세표는 팀별 문서함을 서버에 보관하므로 온비짱 서버가 켜져 있어야 씁니다. 잠시 뒤 새로고침해 주세요.
+        견적서·거래명세서는 팀별 문서함을 서버에 보관하므로 온비짱 서버가 켜져 있어야 씁니다. 잠시 뒤 새로고침해 주세요.
         <div className="mt-2">
           <Button size="sm" icon={WifiOff} onClick={() => void load()}>
             다시 연결
@@ -76,7 +76,7 @@ function Gate() {
           </span>
           <div className="min-w-0">
             <h2 className="text-xl font-bold text-ink">팀 문서함 입장</h2>
-            <p className="text-sm text-ink-2">팀 코드를 넣으면 우리 팀의 견적서·거래명세표 공간으로 들어갑니다.</p>
+            <p className="text-sm text-ink-2">팀 코드를 넣으면 우리 팀의 견적서·거래명세서 공간으로 들어갑니다.</p>
           </div>
         </div>
         <form onSubmit={submit} className="flex flex-col gap-3 px-6 py-5">

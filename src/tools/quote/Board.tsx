@@ -134,7 +134,7 @@ export function DocsBoard({ filter, setFilter, onOpen, onCopy }: { filter: Board
             options={[
               { value: 'all', label: '전체' },
               { value: 'quote', label: '견적서' },
-              { value: 'statement', label: '거래명세표' },
+              { value: 'statement', label: '거래명세서' },
             ]}
           />
           <Select<Period> aria-label="기간" value={period} onValue={setPeriod} options={PERIODS} className="h-9! w-36!" />
@@ -308,7 +308,7 @@ export function CustomersBoard({ onShow }: { onShow: (customer: string) => void 
             <th className="px-3 py-2 font-semibold">거래처</th>
             <th className="px-3 py-2 font-semibold">등록번호</th>
             <th className="px-3 py-2 text-right font-semibold">견적서</th>
-            <th className="px-3 py-2 text-right font-semibold">거래명세표</th>
+            <th className="px-3 py-2 text-right font-semibold">거래명세서</th>
             <th className="px-3 py-2 text-right font-semibold">합계 금액</th>
             <th className="px-3 py-2 font-semibold">최근 거래</th>
             <th className="px-3 py-2" />

@@ -1,5 +1,5 @@
 /**
- * 견적서·거래명세표를 A4 위의 그리기 명령(mm 단위)으로 만든다.
+ * 견적서·거래명세서를 A4 위의 그리기 명령(mm 단위)으로 만든다.
  * 화면 미리보기(SVG)·이미지(캔버스)·PDF 가 모두 이 결과를 그대로 그리므로, 보이는 대로 저장된다.
  */
 import {
@@ -358,7 +358,7 @@ function quotePages(doc: QuoteDoc, kit: CompanyKit, measure: Measure): Page[] {
   })
 }
 
-// ── 거래명세표 ────────────────────────────────────────────
+// ── 거래명세서 ────────────────────────────────────────────
 /**
  * 장부 느낌의 파란 선 양식. 한 장에 2부(위: 공급받는자 보관용 · 아래: 공급자 보관용)를 기본으로 하고,
  * 끄면 한 장에 크게 한 부를 찍는다. 품목이 많으면 다음 장으로 넘어간다.
@@ -570,7 +570,7 @@ function partyBox(p: Pen, x: number, y: number, w: number, h: number, label: str
   })
 }
 
-// ── 거래명세표: 출고 양식 ─────────────────────────────────
+// ── 거래명세서: 출고 양식 ─────────────────────────────────
 /**
  * 회사에서 쓰던 출고용 거래명세서 모양(품번·BOX수·내품수량·출고수량, 아래 인수증)을
  * 견적서와 같은 선·색·제목 꾸밈과 회사 자료(공급자 정보·직인·로고)로 그린다.
@@ -729,7 +729,7 @@ function shipmentPages(doc: QuoteDoc, kit: CompanyKit, measure: Measure): Page[]
       const restW = W - rc.reduce((s2, v) => s2 + v, 0)
       const xs = rc.reduce<number[]>((acc, w) => [...acc, acc[acc.length - 1] + w], [L])
       const rowsR: Array<[string, string, string, string]> = [
-        ['인 수 자', '거래명세표번호', doc.docNo, ''],
+        ['인 수 자', '거래명세서번호', doc.docNo, ''],
         ['인 계 자', '거래처', doc.customer, won(totals.total)],
       ]
       rowsR.forEach(([who, lab, val, money], i) => {

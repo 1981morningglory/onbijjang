@@ -95,7 +95,7 @@ function mainSheet(wb: import('exceljs').Workbook, doc: QuoteDoc, kit: CompanyKi
 
   let r = 2
   ws.getRow(r).height = 36
-  put(ws, `B${r}:J${r}`, doc.type === 'quote' ? '견   적   서' : '거 래 명 세 표', { bold: true, size: 22, align: 'center', color: doc.type === 'quote' ? 'FF14201A' : 'FFFFFFFF', fill: doc.type === 'quote' ? undefined : theme.line })
+  put(ws, `B${r}:J${r}`, doc.type === 'quote' ? '견   적   서' : '거 래 명 세 서', { bold: true, size: 22, align: 'center', color: doc.type === 'quote' ? 'FF14201A' : 'FFFFFFFF', fill: doc.type === 'quote' ? undefined : theme.line })
   r += 2
 
   // 왼쪽: 날짜·받는 곳 / 오른쪽: 공급자
@@ -238,7 +238,7 @@ async function attachSheets(wb: import('exceljs').Workbook, doc: QuoteDoc, kit: 
   if (doc.attachBankbook) await attach('통장사본', kit.bankbook)
 }
 
-/** 출고 양식 거래명세표(품번·BOX수·내품수량·출고수량 + 인수증). 견적서와 같은 초록 선·색을 쓴다. */
+/** 출고 양식 거래명세서(품번·BOX수·내품수량·출고수량 + 인수증). 견적서와 같은 초록 선·색을 쓴다. */
 async function shipmentSheet(wb: import('exceljs').Workbook, doc: QuoteDoc, kit: CompanyKit) {
   const theme = QUOTE_THEME
   const ws = wb.addWorksheet('거래명세서', {
@@ -363,7 +363,7 @@ async function shipmentSheet(wb: import('exceljs').Workbook, doc: QuoteDoc, kit:
   put(ws, `B${r}:J${r}`, '인   수   증', { bold: true, size: 13, align: 'center', color: theme.line })
   r += 1
   const receipt: Array<[string, string, Cell['value'], string, Cell['value']]> = [
-    ['인 수 자', '거래명세표번호', doc.docNo, '총수량(박스)', `${new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 }).format(totals.qty)}${totals.boxes ? `  (BOX ${totals.boxes})` : ''}`],
+    ['인 수 자', '거래명세서번호', doc.docNo, '총수량(박스)', `${new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 }).format(totals.qty)}${totals.boxes ? `  (BOX ${totals.boxes})` : ''}`],
     ['인 계 자', '거래처', doc.customer, '총금액', { formula: `J${totalRow}`, result: totals.total }],
   ]
   receipt.forEach(([who, l1, v1, l2, v2], i) => {

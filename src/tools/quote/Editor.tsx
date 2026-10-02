@@ -377,12 +377,12 @@ export function Editor({ draft, setDraft, onOpenSettings }: { draft: Draft; setD
           onValue={switchType}
           options={[
             { value: 'quote', label: '견적서', icon: FileText },
-            { value: 'statement', label: '거래명세표', icon: FileSpreadsheet },
+            { value: 'statement', label: '거래명세서', icon: FileSpreadsheet },
           ]}
         />
         {statement && (
           <Segmented<StatementStyle>
-            label="거래명세표 양식"
+            label="거래명세서 양식"
             value={style}
             onValue={(statementStyle) => patch({ statementStyle })}
             options={[
@@ -462,7 +462,7 @@ export function Editor({ draft, setDraft, onOpenSettings }: { draft: Draft; setD
                     </div>
                   )}
                 </Field>
-                <Field label={statement ? '명세표 번호' : '견적 번호'}>{(id) => <TextInput id={id} value={doc.docNo} maxLength={30} onChange={(e) => patch({ docNo: e.target.value })} />}</Field>
+                <Field label={statement ? '명세서 번호' : '견적 번호'}>{(id) => <TextInput id={id} value={doc.docNo} maxLength={30} onChange={(e) => patch({ docNo: e.target.value })} />}</Field>
                 {!statement ? (
                   <Field label="유효기간">{(id) => <NumberInput id={id} value={doc.validDays} unit="일" min={0} max={365} onValue={(v) => patch({ validDays: Math.max(0, Math.min(365, v ?? 0)) })} />}</Field>
                 ) : shipment ? (

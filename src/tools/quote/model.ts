@@ -1,17 +1,17 @@
 /**
- * 견적서·거래명세표의 데이터와 계산. 화면·PDF·엑셀이 모두 이 결과를 쓴다.
+ * 견적서·거래명세서의 데이터와 계산. 화면·PDF·엑셀이 모두 이 결과를 쓴다.
  * 금액은 모두 원 단위 정수.
  */
 
 export type DocType = 'quote' | 'statement'
 /** 단가에 부가세가 포함됐는지: 포함 · 별도 · 면세(세액 없음) */
 export type VatMode = 'included' | 'excluded' | 'exempt'
-/** 거래명세표 양식: 기본(장부형, 한 장에 2부) · 출고(품번·BOX수·내품수량, 인수증) */
+/** 거래명세서 양식: 기본(장부형, 한 장에 2부) · 출고(품번·BOX수·내품수량, 인수증) */
 export type StatementStyle = 'ledger' | 'shipment'
 
 export interface LineItem {
   id: string
-  /** 월/일 — 거래명세표에서만 씀 (MM-DD) */
+  /** 월/일 — 거래명세서에서만 씀 (MM-DD) */
   day: string
   name: string
   spec: string
@@ -32,14 +32,14 @@ export interface QuoteDoc {
   date: string
   docNo: string
   customer: string
-  /** 거래명세표의 공급받는자 상세 */
+  /** 거래명세서의 공급받는자 상세 */
   customerBizNo: string
   customerAddress: string
   customerCeo: string
   /** 출고 양식의 공급받는자 업태·종목 */
   customerBizType?: string
   customerBizItem?: string
-  /** 거래명세표 양식. 없으면 기본(장부형) — 예전에 저장한 문서 */
+  /** 거래명세서 양식. 없으면 기본(장부형) — 예전에 저장한 문서 */
   statementStyle?: StatementStyle
   /** 품명·건명 */
   title: string
@@ -57,7 +57,7 @@ export interface QuoteDoc {
   sealId: string | null
   attachRegistration: boolean
   attachBankbook: boolean
-  /** 거래명세표를 한 장에 2부(공급받는자·공급자 보관용)로 */
+  /** 거래명세서를 한 장에 2부(공급받는자·공급자 보관용)로 */
   twoCopies: boolean
   /** 작성자(문서함에 저장할 때 고른 담당자) */
   author?: string
@@ -109,7 +109,7 @@ export interface CompanyKit {
   seals: Seal[]
   registration: Attachment | null
   bankbook: Attachment | null
-  /** 회사 로고(투명 PNG data URL). 출고 양식 거래명세표 아래쪽에 넣는다 */
+  /** 회사 로고(투명 PNG data URL). 출고 양식 거래명세서 아래쪽에 넣는다 */
   logo: string | null
   /** 통장 정보(입금 계좌 안내 문구에 씀) */
   bank: { bankName: string; account: string; holder: string }
@@ -281,8 +281,8 @@ export function contactLine(c: Contact | null | undefined): string {
   return parts.filter(Boolean).join(' · ')
 }
 
-export const DOC_TITLE: Record<DocType, string> = { quote: '견 적 서', statement: '거 래 명 세 표' }
-export const DOC_NAME: Record<DocType, string> = { quote: '견적서', statement: '거래명세표' }
+export const DOC_TITLE: Record<DocType, string> = { quote: '견 적 서', statement: '거 래 명 세 서' }
+export const DOC_NAME: Record<DocType, string> = { quote: '견적서', statement: '거래명세서' }
 
 /** 저장 파일 이름: 견적서_고객사_20261002 */
 export function fileBase(doc: QuoteDoc): string {

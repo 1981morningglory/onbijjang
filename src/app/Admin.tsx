@@ -342,7 +342,7 @@ function TeamsEditor() {
         <div>
           <h3 className="text-base">팀</h3>
           <p className="text-sm text-muted">
-            팀마다 견적서·거래명세표 문서함, 담당자, (원하면) 회사 자료가 따로 저장됩니다. 팀 코드를 알아야 그 팀 공간에 들어갈 수 있고, 팀은 팀 설정에서 코드를 직접 바꿀 수 있습니다.
+            팀마다 견적서·거래명세서 문서함, 담당자, (원하면) 회사 자료가 따로 저장됩니다. 팀 코드를 알아야 그 팀 공간에 들어갈 수 있고, 팀은 팀 설정에서 코드를 직접 바꿀 수 있습니다.
           </p>
         </div>
         <form onSubmit={create} className="flex flex-wrap items-end gap-2">
@@ -464,7 +464,7 @@ function CommonKitEditor() {
     <Panel className="flex flex-col gap-4 p-5">
       <div>
         <h3 className="text-base">회사 공통 자료</h3>
-        <p className="text-sm text-muted">모든 팀의 견적서·거래명세표에 기본으로 들어가는 상호·직인·사업자등록증·통장 사본입니다. 이 서버에만 저장되고 GitHub 에는 올라가지 않으며, 팀 코드로 들어온 사람만 볼 수 있습니다.</p>
+        <p className="text-sm text-muted">모든 팀의 견적서·거래명세서에 기본으로 들어가는 상호·직인·사업자등록증·통장 사본입니다. 이 서버에만 저장되고 GitHub 에는 올라가지 않으며, 팀 코드로 들어온 사람만 볼 수 있습니다.</p>
       </div>
       {k ? (
         <div className="flex items-center gap-3 rounded-md border border-line bg-paper p-3">
@@ -535,7 +535,7 @@ function CommonKitEditor() {
         )}
       </div>
       <p className="text-xs text-muted">
-        회사 자료 파일은 견적서·거래명세표 → 팀 설정 → 회사 자료 → ‘파일로 주고받기’에서 만들 수 있습니다. 바꾸거나 지우면 직전 자료 한 벌을 남겨 두어 되돌릴 수 있습니다.
+        회사 자료 파일은 견적서·거래명세서 → 팀 설정 → 회사 자료 → ‘파일로 주고받기’에서 만들 수 있습니다. 바꾸거나 지우면 직전 자료 한 벌을 남겨 두어 되돌릴 수 있습니다.
         {state?.previous && ` (직전 자료: ${state.previous.name || '이름 없음'} · 직인 ${state.previous.seals}개 · ${when(state.previous.updatedAt)})`}
       </p>
     </Panel>

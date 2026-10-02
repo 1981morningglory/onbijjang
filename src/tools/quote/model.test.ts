@@ -74,7 +74,7 @@ describe('표기 도우미', () => {
   })
 })
 
-describe('거래명세표 출고 양식', () => {
+describe('거래명세서 출고 양식', () => {
   it('출고수량 = BOX수 × 내품수량, 둘 중 하나라도 없으면 계산하지 않는다', () => {
     expect(shipQty(6, 10)).toBe(60)
     expect(shipQty(2.5, 12)).toBe(30)
