@@ -3,7 +3,7 @@ import { CornerDownLeft, Search } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { Kbd } from '@/ui'
-import { useVisibleGroups } from './config'
+import { groupOf, useSite, useVisibleGroups } from './config'
 import { GROUP_BY_ID, artUrl, toolPath } from './registry'
 import { searchTools } from './search'
 
@@ -14,6 +14,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   const [index, setIndex] = useState(0)
   const navigate = useNavigate()
   const groups = useVisibleGroups()
+  const config = useSite((s) => s.config)
   const all = useMemo(() => groups.flatMap((g) => g.tools), [groups])
   const results = useMemo(() => searchTools(all, query), [all, query])
 
@@ -91,7 +92,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
                     <span className="block truncate font-semibold text-ink">{t.title}</span>
                     <span className="block truncate text-sm text-muted">{t.summary}</span>
                   </span>
-                  <span className="hidden shrink-0 text-xs text-faint sm:block">{GROUP_BY_ID[t.group].title}</span>
+                  <span className="hidden shrink-0 text-xs text-faint sm:block">{GROUP_BY_ID[groupOf(config, t)].title}</span>
                   {i === index && <CornerDownLeft className="size-4 shrink-0 text-muted" aria-hidden />}
                 </button>
               ))

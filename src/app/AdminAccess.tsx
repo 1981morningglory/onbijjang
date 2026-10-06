@@ -3,7 +3,7 @@ import { ArrowDown, ArrowUp, Ban, Check, Eye, EyeOff, KeyRound, Link2, Plus, Sea
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { api } from '@/lib/api'
 import { Badge, Button, Callout, Dialog, EmptyState, Field, IconButton, Panel, Segmented, Select, Spinner, Switch, TextInput, toast } from '@/ui'
-import { canSee, useSite, type LinkApp, type SiteConfig } from './config'
+import { canSee, groupOf, useSite, type LinkApp, type SiteConfig } from './config'
 import { GROUPS, TOOLS, artUrl, type GroupId } from './registry'
 import { ACCOUNT_ROLES, ALL_ROLES, ROLE_LABEL, ROLE_OPTIONS, useViewerStore, type Access, type AccountRole, type PublicUser, type Role } from './viewer'
 
@@ -181,7 +181,7 @@ function AccessDialog({ user, onClose, onSaved }: { user: PublicUser | null; onC
   if (!user) return null
   const viewerFor = (a: Access) => ({ role: user.role as Role, access: a })
   const items: Array<{ key: string; title: string; group: GroupId; entry: SiteConfig['tools'][string]; art?: string }> = [
-    ...TOOLS.filter((t) => !config.tools[t.id]?.deleted).map((t) => ({ key: t.id, title: t.title, group: t.group, entry: config.tools[t.id], art: t.art })),
+    ...TOOLS.filter((t) => !config.tools[t.id]?.deleted).map((t) => ({ key: t.id, title: t.title, group: groupOf(config, t), entry: config.tools[t.id], art: t.art })),
     ...config.links.filter((l) => !l.deleted).map((l) => ({ key: `link-${l.id}`, title: l.title, group: l.group, entry: l })),
   ]
   const set = async (key: string, v: 'default' | 'allow' | 'deny') => {
@@ -491,7 +491,7 @@ export function NewAppsEditor({ draft, setDraft }: { draft: SiteConfig; setDraft
   const na = draft.newApps
   const setNa = (p: Partial<SiteConfig['newApps']>) => setDraft({ ...draft, newApps: { ...na, ...p } })
   const options = [
-    ...TOOLS.filter((t) => !draft.tools[t.id]?.deleted).map((t) => ({ key: t.id, title: t.title, art: t.art as string | undefined, group: t.group })),
+    ...TOOLS.filter((t) => !draft.tools[t.id]?.deleted).map((t) => ({ key: t.id, title: t.title, art: t.art as string | undefined, group: groupOf(draft, t) })),
     ...draft.links.filter((l) => !l.deleted).map((l) => ({ key: `link-${l.id}`, title: l.title, art: undefined, group: l.group })),
   ]
   const byKey = new Map(options.map((o) => [o.key, o]))

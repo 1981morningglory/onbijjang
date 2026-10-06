@@ -62,9 +62,14 @@ const FIRST_NEW_APPS = ['barcode']
 /** 신상앱 칸을 만든 날(2026-10-06)의 도구 목록. 이후 registry 에 생기는 도구는 '새로 들어온 앱'이다. */
 const LAUNCH_TOOLS = ['image', 'template', 'background', 'split', 'mosaic', 'cleanup', 'signature', 'qr', 'rename', 'capture', 'clips', 'gif', 'record', 'pdf', 'quote', 'label', 'barcode', 'fee-compare', 'smartstore', 'coupang', 'rocket-margin', 'rocket-policy', 'gmarket', 'auction', 'elevenst', 'blog']
 
+/** 도구 하나의 노출 설정 — group 이 있으면 원래 카테고리 대신 그 카테고리에 보인다 */
+export interface ToolEntry extends MenuEntry {
+  group?: GroupId
+}
+
 export interface SiteConfig {
   version: 1
-  tools: Record<string, MenuEntry>
+  tools: Record<string, ToolEntry>
   groups: Record<GroupId, { enabled: boolean }>
   /** 전체 도구 id 순서. 그룹 안에서의 순서로 쓰인다. */
   toolOrder: string[]
@@ -139,7 +144,10 @@ export function normalizeConfig(raw: unknown): SiteConfig {
   }
   for (const t of TOOLS) {
     const saved = r.tools?.[t.id]
-    if (saved) base.tools[t.id] = { enabled: saved.enabled !== false, badge: saved.badge === 'new' ? 'new' : null, roles: cleanRoles(saved.roles), deleted: saved.deleted === true }
+    if (saved) {
+      base.tools[t.id] = { enabled: saved.enabled !== false, badge: saved.badge === 'new' ? 'new' : null, roles: cleanRoles(saved.roles), deleted: saved.deleted === true }
+      if (saved.group && saved.group !== t.group && GROUPS.some((g) => g.id === saved.group)) base.tools[t.id].group = saved.group
+    }
   }
   for (const g of GROUPS) {
     const saved = r.groups?.[g.id]
@@ -243,8 +251,13 @@ export function hiddenByRole(entry: MenuEntry | undefined, id: string, viewer: V
   return Boolean(entry && entry.enabled && !entry.deleted && !canSee(entry, id, viewer))
 }
 
+/** 도구가 지금 놓인 카테고리(관리자가 옮겼으면 그 카테고리) */
+export function groupOf(config: Pick<SiteConfig, 'tools'>, tool: ToolDef): GroupId {
+  return config.tools[tool.id]?.group ?? tool.group
+}
+
 export function isToolVisible(config: SiteConfig, tool: ToolDef, viewer: Viewer) {
-  return config.groups[tool.group].enabled && canSee(config.tools[tool.id], tool.id, viewer)
+  return config.groups[groupOf(config, tool)].enabled && canSee(config.tools[tool.id], tool.id, viewer)
 }
 
 /** 이 사람에게 보이는 링크 앱(그룹별) */
@@ -262,7 +275,7 @@ export function useVisibleGroups() {
   return GROUPS.filter((g) => config.groups[g.id].enabled)
     .map((group) => ({
       group,
-      tools: TOOLS.filter((t) => t.group === group.id && isToolVisible(config, t, viewer)).sort(
+      tools: TOOLS.filter((t) => groupOf(config, t) === group.id && isToolVisible(config, t, viewer)).sort(
         (a, b) => (rank.get(a.id) ?? 999) - (rank.get(b.id) ?? 999),
       ),
     }))

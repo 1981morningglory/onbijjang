@@ -22,3 +22,14 @@ describe('신상앱', () => {
     expect(c.newApps.title).toBe('새 도구')
   })
 })
+
+describe('카테고리 옮기기', () => {
+  it('저장된 카테고리를 따르고, 잘못된 값은 원래 카테고리로', async () => {
+    const { groupOf } = await import('./config')
+    const { TOOL_BY_ID } = await import('./registry')
+    const c = normalizeConfig({ version: 1, tools: { barcode: { enabled: true, badge: null, roles: ['guest'], deleted: false, group: 'image' }, qr: { enabled: true, badge: null, roles: ['guest'], deleted: false, group: 'nope' } } })
+    expect(groupOf(c, TOOL_BY_ID.barcode)).toBe('image')
+    expect(groupOf(c, TOOL_BY_ID.qr)).toBe('image')
+    expect(c.tools.qr.group).toBeUndefined()
+  })
+})

@@ -3,7 +3,7 @@ import { ChevronRight, EyeOff, Lock, RotateCcw, ShieldCheck, Star } from 'lucide
 import { Component, Suspense, useEffect, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 import { Button, Callout, EmptyState } from '@/ui'
-import { hiddenByRole, isToolVisible, useSite } from './config'
+import { groupOf, hiddenByRole, isToolVisible, useSite } from './config'
 import { useViewer, useViewerStore } from './viewer'
 import { useLoginDialog } from './LoginDialog'
 import { usePrefs } from './prefs'
@@ -51,6 +51,7 @@ function ToolSkeleton() {
 }
 
 function ToolHeader({ tool }: { tool: ToolDef }) {
+  const group = useSite((s) => groupOf(s.config, tool))
   const favorite = usePrefs((s) => s.favorites.includes(tool.id))
   const toggle = usePrefs((s) => s.toggleFavorite)
   return (
@@ -62,7 +63,7 @@ function ToolHeader({ tool }: { tool: ToolDef }) {
             모든 도구
           </Link>
           <ChevronRight className="size-3" aria-hidden />
-          <span>{GROUP_BY_ID[tool.group].title}</span>
+          <span>{GROUP_BY_ID[group].title}</span>
         </nav>
         <h1 className="text-2xl">{tool.title}</h1>
         <p className="text-sm text-muted">{tool.summary}</p>
@@ -118,7 +119,7 @@ export function ToolPage() {
       </EmptyState>
     )
   }
-  if (status !== 'loading' && viewerStatus !== 'loading' && !visible && config.groups[tool.group].enabled && hiddenByRole(config.tools[tool.id], tool.id, viewer)) {
+  if (status !== 'loading' && viewerStatus !== 'loading' && !visible && config.groups[groupOf(config, tool)].enabled && hiddenByRole(config.tools[tool.id], tool.id, viewer)) {
     const guest = viewer.role === 'guest'
     return (
       <EmptyState

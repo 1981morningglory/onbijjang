@@ -4,8 +4,8 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router'
 import { api, ApiError } from '@/lib/api'
 import { readAsDataURL } from '@/lib/files'
-import { Badge, Button, Callout, ColorField, Field, IconButton, NumberInput, Panel, PositionGrid, Segmented, Slider, Spinner, Switch, Tabs, TextInput, Textarea, toast } from '@/ui'
-import { useSite, type SiteConfig } from './config'
+import { Badge, Button, Callout, ColorField, Field, IconButton, NumberInput, Panel, PositionGrid, Segmented, Select, Slider, Spinner, Switch, Tabs, TextInput, Textarea, toast } from '@/ui'
+import { groupOf, useSite, type SiteConfig } from './config'
 import { GROUPS, TOOLS, artUrl, type GroupId } from './registry'
 import { AccountsEditor, DeletedEditor, LinksEditor, NewAppsEditor, RoleChips } from './AdminAccess'
 import { useLoginDialog } from './LoginDialog'
@@ -62,11 +62,35 @@ function PasswordForm({ mode, onDone }: { mode: 'setup' | 'login'; onDone: () =>
 // ── 메뉴 관리 ─────────────────────────────────────────────
 function MenuEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: (c: SiteConfig) => void }) {
   const rank = useMemo(() => new Map(draft.toolOrder.map((id, i) => [id, i])), [draft.toolOrder])
+  const idsIn = (group: GroupId, except?: string) =>
+    TOOLS.filter((t) => groupOf(draft, t) === group && !draft.tools[t.id].deleted && t.id !== except)
+      .sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0))
+      .map((t) => t.id)
+  /** 다른 카테고리로 옮기기 — 그 카테고리의 맨 앞(start) 또는 맨 뒤(end)에 놓는다 */
+  const relocate = (id: string, target: GroupId, where: 'start' | 'end') => {
+    const tool = TOOLS.find((t) => t.id === id)!
+    const others = idsIn(target, id)
+    const order = draft.toolOrder.filter((x) => x !== id)
+    if (others.length) {
+      const anchor = where === 'start' ? order.indexOf(others[0]) : order.indexOf(others[others.length - 1]) + 1
+      order.splice(anchor, 0, id)
+    } else order.push(id)
+    const entry = { ...draft.tools[id] }
+    if (target === tool.group) delete entry.group
+    else entry.group = target
+    setDraft({ ...draft, toolOrder: order, tools: { ...draft.tools, [id]: entry } })
+  }
+  /** 위·아래로 한 칸. 카테고리 맨 끝에서 더 가면 이웃 카테고리로 넘어간다 */
   const move = (group: GroupId, id: string, dir: -1 | 1) => {
-    const inGroup = TOOLS.filter((t) => t.group === group).sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0)).map((t) => t.id)
+    const inGroup = idsIn(group)
     const i = inGroup.indexOf(id)
     const j = i + dir
-    if (j < 0 || j >= inGroup.length) return
+    if (j < 0 || j >= inGroup.length) {
+      const gi = GROUPS.findIndex((g) => g.id === group) + dir
+      if (gi < 0 || gi >= GROUPS.length) return
+      relocate(id, GROUPS[gi].id, dir < 0 ? 'end' : 'start')
+      return
+    }
     const order = [...draft.toolOrder]
     const a = order.indexOf(inGroup[i])
     const b = order.indexOf(inGroup[j])
@@ -75,7 +99,7 @@ function MenuEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: (c: Site
   }
   const setTool = (id: string, patch: Partial<SiteConfig['tools'][string]>) => setDraft({ ...draft, tools: { ...draft.tools, [id]: { ...draft.tools[id], ...patch } } })
   const setAll = (enabled: boolean) => setDraft({ ...draft, tools: Object.fromEntries(Object.entries(draft.tools).map(([id, t]) => [id, { ...t, enabled }])) })
-  const onCount = TOOLS.filter((t) => draft.tools[t.id].enabled && !draft.tools[t.id].deleted && draft.groups[t.group].enabled).length
+  const onCount = TOOLS.filter((t) => draft.tools[t.id].enabled && !draft.tools[t.id].deleted && draft.groups[groupOf(draft, t)].enabled).length
 
   return (
     <div className="flex flex-col gap-5">
@@ -95,7 +119,8 @@ function MenuEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: (c: Site
       <NewAppsEditor draft={draft} setDraft={setDraft} />
       {GROUPS.map((group) => {
         const groupOn = draft.groups[group.id].enabled
-        const tools = TOOLS.filter((t) => t.group === group.id && !draft.tools[t.id].deleted).sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0))
+        const tools = TOOLS.filter((t) => groupOf(draft, t) === group.id && !draft.tools[t.id].deleted).sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0))
+        const gIndex = GROUPS.findIndex((g) => g.id === group.id)
         return (
           <Panel key={group.id} className="overflow-hidden">
             <div className="flex items-center gap-3 border-b border-line bg-paper px-4 py-3">
@@ -106,6 +131,7 @@ function MenuEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: (c: Site
               </div>
               <Switch className="w-auto!" checked={groupOn} onChange={(enabled) => setDraft({ ...draft, groups: { ...draft.groups, [group.id]: { enabled } } })} label={<span className="sr-only">{group.title} 그룹 노출</span>} />
             </div>
+            {tools.length === 0 && <p className="px-4 py-3 text-sm text-muted">이 카테고리에 도구가 없습니다. 다른 도구의 [카테고리]에서 이곳을 고르면 옮겨 올 수 있습니다. 비어 있으면 홈·사이드바에 보이지 않습니다.</p>}
             <ul className={clsx('divide-y divide-line', !groupOn && 'opacity-50')}>
               {tools.map((t, i) => {
                 const state = draft.tools[t.id]
@@ -129,13 +155,24 @@ function MenuEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: (c: Site
                       NEW 표시
                     </button>
                     <div className="flex">
-                      <IconButton icon={ArrowUp} label={`${t.title} 위로`} size="sm" disabled={i === 0} onClick={() => move(group.id, t.id, -1)} />
-                      <IconButton icon={ArrowDown} label={`${t.title} 아래로`} size="sm" disabled={i === tools.length - 1} onClick={() => move(group.id, t.id, 1)} />
+                      <IconButton icon={ArrowUp} label={i === 0 ? `${t.title} 위 카테고리로` : `${t.title} 위로`} size="sm" disabled={i === 0 && gIndex === 0} onClick={() => move(group.id, t.id, -1)} />
+                      <IconButton icon={ArrowDown} label={i === tools.length - 1 ? `${t.title} 아래 카테고리로` : `${t.title} 아래로`} size="sm" disabled={i === tools.length - 1 && gIndex === GROUPS.length - 1} onClick={() => move(group.id, t.id, 1)} />
                     </div>
                     <Switch className="w-auto!" checked={state.enabled} disabled={!groupOn} onChange={(enabled) => setTool(t.id, { enabled })} label={<span className="sr-only">{t.title} 노출</span>} />
                     <IconButton icon={Trash2} label={`${t.title} 메뉴에서 삭제`} size="sm" onClick={() => setTool(t.id, { deleted: true })} />
-                    <div className="basis-full pl-[52px]">
+                    <div className="flex basis-full flex-wrap items-center gap-x-3 gap-y-2 pl-[52px]">
                       <RoleChips value={state.roles} onChange={(roles) => setTool(t.id, { roles })} size="sm" disabled={!state.enabled || !groupOn} />
+                      <label className="ml-auto flex items-center gap-1.5 text-xs font-semibold text-muted">
+                        카테고리
+                        <Select
+                          value={group.id}
+                          onValue={(g) => relocate(t.id, g, 'end')}
+                          options={GROUPS.map((g) => ({ value: g.id, label: g.id === t.group ? `${g.title} (원래)` : g.title }))}
+                          aria-label={`${t.title} 카테고리 옮기기`}
+                          className="h-8! w-44! text-sm"
+                        />
+                      </label>
+                      {t.group !== group.id && <Badge tone="mark">원래: {GROUPS.find((g) => g.id === t.group)?.title}</Badge>}
                     </div>
                   </li>
                 )
