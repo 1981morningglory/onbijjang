@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { ArrowDown, ArrowUp, Ban, Check, Eye, EyeOff, KeyRound, Link2, Plus, Search, ShieldCheck, Trash2, UserPlus } from 'lucide-react'
+import { ArrowDown, ArrowUp, Ban, Check, Eye, EyeOff, KeyRound, Link2, Plus, Search, ShieldCheck, Sparkles, Trash2, UserPlus } from 'lucide-react'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { api } from '@/lib/api'
 import { Badge, Button, Callout, Dialog, EmptyState, Field, IconButton, Panel, Segmented, Select, Spinner, Switch, TextInput, toast } from '@/ui'
@@ -58,10 +58,14 @@ export function LinksEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: 
     e.preventDefault()
     if (!form.title.trim()) return toast.error('앱 이름을 입력하세요.')
     if (!validUrl(form.url)) return toast.error('주소는 https:// 로 시작하는 외부 주소나 / 로 시작하는 사이트 안 주소여야 합니다.')
-    setLinks([
+    const id = newId()
+    const links = [
       ...draft.links,
-      { id: newId(), title: form.title.trim(), url: form.url.trim(), summary: form.summary.trim(), group: form.group, enabled: true, badge: 'new', roles: ['member', 'admin'], deleted: false },
-    ])
+      { id, title: form.title.trim(), url: form.url.trim(), summary: form.summary.trim(), group: form.group, enabled: true, badge: 'new' as const, roles: ['member', 'admin'] as Role[], deleted: false },
+    ]
+    // 신상앱 자동 등록이 켜져 있으면 맨 앞에 올린다
+    const newApps = draft.newApps.autoAdd ? { ...draft.newApps, items: [`link-${id}`, ...draft.newApps.items] } : draft.newApps
+    setDraft({ ...draft, links, newApps })
     setForm({ title: '', url: '', summary: '', group: form.group })
     toast.info('목록에 추가했습니다. 아래 [저장]을 눌러야 모두에게 보입니다.')
   }
@@ -155,7 +159,7 @@ export function DeletedEditor({ draft, setDraft }: { draft: SiteConfig; setDraft
             <Button size="sm" onClick={() => setDraft({ ...draft, links: draft.links.map((x) => (x.id === l.id ? { ...x, deleted: false } : x)) })}>
               복원
             </Button>
-            <Button size="sm" variant="danger" icon={Trash2} onClick={() => setDraft({ ...draft, links: draft.links.filter((x) => x.id !== l.id) })}>
+            <Button size="sm" variant="danger" icon={Trash2} onClick={() => setDraft({ ...draft, links: draft.links.filter((x) => x.id !== l.id), newApps: { ...draft.newApps, items: draft.newApps.items.filter((k) => k !== `link-${l.id}`) } })}>
               완전 삭제
             </Button>
           </li>
@@ -479,5 +483,94 @@ export function AccountsEditor() {
         </p>
       </Dialog>
     </div>
+  )
+}
+
+// ── 신상앱(메인 화면 소개 칸) ─────────────────────────────
+export function NewAppsEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: (c: SiteConfig) => void }) {
+  const na = draft.newApps
+  const setNa = (p: Partial<SiteConfig['newApps']>) => setDraft({ ...draft, newApps: { ...na, ...p } })
+  const options = [
+    ...TOOLS.filter((t) => !draft.tools[t.id]?.deleted).map((t) => ({ key: t.id, title: t.title, art: t.art as string | undefined, group: t.group })),
+    ...draft.links.filter((l) => !l.deleted).map((l) => ({ key: `link-${l.id}`, title: l.title, art: undefined, group: l.group })),
+  ]
+  const byKey = new Map(options.map((o) => [o.key, o]))
+  const items = na.items.filter((k) => byKey.has(k))
+  const rest = options.filter((o) => !items.includes(o.key))
+  const [pick, setPick] = useState('')
+  const move = (i: number, dir: -1 | 1) => {
+    const arr = [...items]
+    const j = i + dir
+    if (j < 0 || j >= arr.length) return
+    ;[arr[i], arr[j]] = [arr[j], arr[i]]
+    setNa({ items: arr })
+  }
+  const add = () => {
+    const key = pick || rest[0]?.key
+    if (!key) return
+    setNa({ items: [key, ...items] })
+    setPick('')
+  }
+
+  return (
+    <Panel className="overflow-hidden">
+      <div className="flex flex-wrap items-center gap-3 border-b border-line bg-mark-soft/60 px-4 py-3">
+        <Sparkles className="size-[18px] text-accent" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <h3 className="flex items-center gap-1.5 text-base">
+            신상앱 <Badge tone="accent">NEW</Badge>
+          </h3>
+          <p className="text-xs text-muted">메인 화면 맨 위에 새로 들어온 앱을 소개합니다. 넣고 빼기·순서는 여기서 정하고, 누구에게 보일지는 각 도구의 등급 설정을 따릅니다.</p>
+        </div>
+        <Switch className="w-auto!" checked={na.enabled} onChange={(enabled) => setNa({ enabled })} label={<span className="text-sm font-semibold">메인 화면에 보이기</span>} />
+      </div>
+      <div className="flex flex-col gap-4 px-4 py-4">
+        <div className="grid gap-3 sm:grid-cols-[minmax(0,240px)_1fr] sm:items-end">
+          <Field label="칸 제목">{(id) => <TextInput id={id} value={na.title} maxLength={20} onChange={(e) => setNa({ title: e.target.value })} />}</Field>
+          <Switch checked={na.autoAdd} onChange={(autoAdd) => setNa({ autoAdd })} label="새로 추가되는 앱은 자동으로 신상앱 맨 앞에 넣기" hint="새 도구가 생기거나 아래 [새로 추가한 앱]에서 링크 앱을 추가하면 바로 올라갑니다." />
+        </div>
+
+        {items.length ? (
+          <ol className="flex flex-col divide-y divide-line rounded-md border border-line">
+            {items.map((k, i) => {
+              const o = byKey.get(k)!
+              return (
+                <li key={k} className="flex items-center gap-3 px-3 py-2">
+                  <span className="num w-5 text-right text-xs text-muted">{i + 1}</span>
+                  {o.art ? <img src={artUrl(o.art)} alt="" className="size-9 object-contain" /> : <span className="grid size-9 place-items-center rounded-md border border-line text-brand"><Link2 className="size-4" aria-hidden /></span>}
+                  <span className="min-w-0 flex-1 truncate font-semibold text-ink">{o.title}</span>
+                  <div className="flex">
+                    <IconButton icon={ArrowUp} label={`${o.title} 앞으로`} size="sm" disabled={i === 0} onClick={() => move(i, -1)} />
+                    <IconButton icon={ArrowDown} label={`${o.title} 뒤로`} size="sm" disabled={i === items.length - 1} onClick={() => move(i, 1)} />
+                  </div>
+                  <Button size="sm" variant="ghost" onClick={() => setNa({ items: items.filter((x) => x !== k) })}>
+                    빼기
+                  </Button>
+                </li>
+              )
+            })}
+          </ol>
+        ) : (
+          <p className="rounded-md border border-dashed border-line-strong px-3 py-4 text-center text-sm text-muted">신상앱에 올린 앱이 없습니다. 아래에서 골라 넣으세요. 비어 있으면 메인 화면에 칸이 보이지 않습니다.</p>
+        )}
+
+        <div className="flex flex-wrap items-end gap-2">
+          <Field label="신상앱에 넣을 앱" className="min-w-0 flex-1 basis-60">
+            {(id) => (
+              <Select
+                id={id}
+                value={pick || rest[0]?.key || ''}
+                onValue={setPick}
+                disabled={!rest.length}
+                options={rest.length ? rest.map((o) => ({ value: o.key, label: `${GROUPS.find((g) => g.id === o.group)?.title ?? ''} · ${o.title}` })) : [{ value: '', label: '넣을 수 있는 앱이 없습니다' }]}
+              />
+            )}
+          </Field>
+          <Button icon={Plus} disabled={!rest.length || items.length >= 24} onClick={add}>
+            넣기
+          </Button>
+        </div>
+      </div>
+    </Panel>
   )
 }

@@ -7,7 +7,7 @@ import { readAsDataURL } from '@/lib/files'
 import { Badge, Button, Callout, ColorField, Field, IconButton, NumberInput, Panel, PositionGrid, Segmented, Slider, Spinner, Switch, Tabs, TextInput, Textarea, toast } from '@/ui'
 import { useSite, type SiteConfig } from './config'
 import { GROUPS, TOOLS, artUrl, type GroupId } from './registry'
-import { AccountsEditor, DeletedEditor, LinksEditor, RoleChips } from './AdminAccess'
+import { AccountsEditor, DeletedEditor, LinksEditor, NewAppsEditor, RoleChips } from './AdminAccess'
 import { useLoginDialog } from './LoginDialog'
 import { useViewerStore } from './viewer'
 
@@ -92,6 +92,7 @@ function MenuEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: (c: Site
           </Button>
         </div>
       </div>
+      <NewAppsEditor draft={draft} setDraft={setDraft} />
       {GROUPS.map((group) => {
         const groupOn = draft.groups[group.id].enabled
         const tools = TOOLS.filter((t) => t.group === group.id && !draft.tools[t.id].deleted).sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0))

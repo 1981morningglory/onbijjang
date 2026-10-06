@@ -48,6 +48,20 @@ export interface LinkApp extends MenuEntry {
   group: GroupId
 }
 
+/** 신상앱 칸 설정. items 는 도구 id 또는 'link-<링크 앱 id>' (앞쪽이 먼저 보임) */
+export interface NewApps {
+  enabled: boolean
+  title: string
+  items: string[]
+  /** 새로 들어오는 도구·링크 앱을 자동으로 신상앱 맨 앞에 넣기 */
+  autoAdd: boolean
+}
+
+/** 처음 신상앱 칸을 만들 때 올려 둘 앱 */
+const FIRST_NEW_APPS = ['barcode']
+/** 신상앱 칸을 만든 날(2026-10-06)의 도구 목록. 이후 registry 에 생기는 도구는 '새로 들어온 앱'이다. */
+const LAUNCH_TOOLS = ['image', 'template', 'background', 'split', 'mosaic', 'cleanup', 'signature', 'qr', 'rename', 'capture', 'clips', 'gif', 'record', 'pdf', 'quote', 'label', 'barcode', 'fee-compare', 'smartstore', 'coupang', 'rocket-margin', 'rocket-policy', 'gmarket', 'auction', 'elevenst', 'blog']
+
 export interface SiteConfig {
   version: 1
   tools: Record<string, MenuEntry>
@@ -57,6 +71,10 @@ export interface SiteConfig {
   links: LinkApp[]
   /** 등급 체계 버전. 2 = 4단계(전체공개·일반등급·직원등급·전체마스터) */
   rolesV?: 2
+  /** 메인 화면의 '(NEW) 신상앱' 소개 칸 */
+  newApps: NewApps
+  /** 지금까지 알려진 도구 목록 — 여기에 없는 도구가 생기면 '새로 들어온 앱'으로 본다 */
+  knownTools?: string[]
   notice: { enabled: boolean; text: string }
   presets: TeamPresets
   updatedAt?: string
@@ -100,6 +118,8 @@ export function defaultConfig(): SiteConfig {
     toolOrder: TOOLS.map((t) => t.id),
     links: [],
     rolesV: 2,
+    newApps: { enabled: true, title: '신상앱', items: [...FIRST_NEW_APPS], autoAdd: true },
+    knownTools: TOOLS.map((t) => t.id),
     notice: { enabled: false, text: '' },
     presets: structuredClone(DEFAULT_PRESETS),
   }
@@ -151,6 +171,28 @@ export function normalizeConfig(raw: unknown): SiteConfig {
     if (Array.isArray(p.canvasSizes)) base.presets.canvasSizes = p.canvasSizes.filter((s) => s && s.w > 0 && s.h > 0).slice(0, 40)
     if (p.filename) base.presets.filename = { ...DEFAULT_PRESETS.filename, ...p.filename }
   }
+  // 신상앱 칸
+  const na = r.newApps
+  if (na && typeof na === 'object') {
+    base.newApps = {
+      enabled: na.enabled !== false,
+      title: typeof na.title === 'string' && na.title.trim() ? na.title.trim().slice(0, 20) : '신상앱',
+      items: Array.isArray(na.items) ? na.items.filter((x): x is string => typeof x === 'string') : [],
+      autoAdd: na.autoAdd !== false,
+    }
+  }
+  // 저장 뒤에 새로 생긴 도구 → (자동 등록이 켜져 있으면) 신상앱 맨 앞 + NEW 표시
+  {
+    const known = new Set(Array.isArray(r.knownTools) ? r.knownTools : LAUNCH_TOOLS)
+    const fresh = TOOLS.map((t) => t.id).filter((id) => !known.has(id))
+    if (fresh.length && base.newApps.autoAdd) {
+      base.newApps.items = [...fresh.filter((id) => !base.newApps.items.includes(id)), ...base.newApps.items]
+      for (const id of fresh) if (!r.tools?.[id]) base.tools[id].badge = 'new'
+    }
+  }
+  // 없는 도구·지운 링크 앱은 신상앱에서 뺀다
+  const liveKeys = new Set([...TOOLS.map((t) => t.id), ...base.links.map((l) => `link-${l.id}`)])
+  base.newApps.items = Array.from(new Set(base.newApps.items)).filter((k) => liveKeys.has(k)).slice(0, 24)
   base.updatedAt = r.updatedAt
   return base
 }

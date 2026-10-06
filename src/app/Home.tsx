@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { ExternalLink, Link2, Search, Star } from 'lucide-react'
+import { ArrowRight, ExternalLink, Link2, Search, Sparkles, Star } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router'
 import { Badge, EmptyState } from '@/ui'
@@ -76,6 +76,64 @@ function LinkTile({ link }: { link: LinkApp }) {
     <Link to={link.url} className={cls}>
       {body}
     </Link>
+  )
+}
+
+/** 메인 화면 '(NEW) 신상앱' — 관리자가 정한 순서대로, 지금 보는 사람에게 보이는 앱만 */
+function NewAppsSection({ tools, links }: { tools: ToolDef[]; links: LinkApp[] }) {
+  const newApps = useSite((s) => s.config.newApps)
+  const toolById = new Map(tools.map((t) => [t.id, t]))
+  const linkByKey = new Map(links.map((l) => [`link-${l.id}`, l]))
+  const items = newApps.items
+    .map((k) => (toolById.has(k) ? { kind: 'tool' as const, tool: toolById.get(k)! } : linkByKey.has(k) ? { kind: 'link' as const, link: linkByKey.get(k)! } : null))
+    .filter((x): x is NonNullable<typeof x> => x !== null)
+  if (!newApps.enabled || !items.length) return null
+
+  const card = 'group flex min-w-0 items-center gap-4 rounded-xl border border-line bg-surface p-3 pr-4 shadow-1 transition-[border-color,box-shadow] duration-200 hover:border-line-strong hover:shadow-2'
+  const body = (title: string, summary: string, art: React.ReactNode) => (
+    <>
+      <span className="grid size-16 shrink-0 place-items-center">{art}</span>
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="flex items-center gap-1.5 text-base font-bold text-ink">
+          <span className="truncate">{title}</span>
+          <Badge tone="accent">NEW</Badge>
+        </span>
+        {summary && <span className="line-clamp-2 text-sm leading-snug text-muted">{summary}</span>}
+      </span>
+      <ArrowRight className="size-4 shrink-0 text-faint transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-brand" aria-hidden />
+    </>
+  )
+  return (
+    <section id="new" aria-labelledby="new-apps-title" className="flex flex-col gap-4 rounded-2xl border border-line bg-mark-soft/60 p-5 sm:p-6">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h2 id="new-apps-title" className="flex items-center gap-2 text-2xl">
+            <Sparkles className="size-6 text-accent" aria-hidden />
+            {newApps.title}
+            <span className="rounded-full bg-accent px-2 py-0.5 text-xs font-bold text-on-brand">NEW</span>
+          </h2>
+          <p className="mt-1 text-sm text-ink-2">새로 들어온 도구입니다. 먼저 써 보세요.</p>
+        </div>
+        <span className="num text-sm text-muted">{items.length}개</span>
+      </div>
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,300px),1fr))] gap-3">
+        {items.map((it) =>
+          it.kind === 'tool' ? (
+            <Link key={it.tool.id} to={toolPath(it.tool.id)} className={card}>
+              {body(it.tool.title, it.tool.summary, <img src={artUrl(it.tool.art)} alt="" className="size-16 object-contain drop-shadow-[0_6px_6px_rgb(60_48_20/0.16)] transition-transform duration-300 ease-out-expo group-hover:-translate-y-1" />)}
+            </Link>
+          ) : /^https?:\/\//i.test(it.link.url) ? (
+            <a key={it.link.id} href={it.link.url} target="_blank" rel="noopener noreferrer" className={card}>
+              {body(it.link.title, it.link.summary, <span className="grid size-14 place-items-center rounded-xl border border-line bg-paper text-brand"><Link2 className="size-7" aria-hidden /></span>)}
+            </a>
+          ) : (
+            <Link key={it.link.id} to={it.link.url} className={card}>
+              {body(it.link.title, it.link.summary, <span className="grid size-14 place-items-center rounded-xl border border-line bg-paper text-brand"><Link2 className="size-7" aria-hidden /></span>)}
+            </Link>
+          ),
+        )}
+      </div>
+    </section>
   )
 }
 
@@ -168,6 +226,7 @@ export function Home() {
         </section>
       ) : (
         <>
+          <NewAppsSection tools={all} links={links} />
           {(favTools.length > 0 || recentTools.length > 0) && (
             <section className="flex flex-col gap-3">
               {favTools.length > 0 && (
