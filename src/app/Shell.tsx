@@ -1,12 +1,14 @@
 import clsx from 'clsx'
-import { Home as HomeIcon, Megaphone, Menu, PanelLeftClose, PanelLeftOpen, Search, Settings, ShieldCheck, X } from 'lucide-react'
+import { ExternalLink, Home as HomeIcon, Link2, Megaphone, Menu, PanelLeftClose, PanelLeftOpen, Search, Settings, ShieldCheck, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router'
 import { IconButton, Kbd } from '@/ui'
 import { CommandPalette } from './CommandPalette'
-import { useSite, useVisibleGroups } from './config'
+import { useSite, useVisibleGroups, useVisibleLinks, type LinkApp } from './config'
+import { AccountButton, LoginDialog } from './LoginDialog'
+import { useViewerStore } from './viewer'
 import { usePrefs } from './prefs'
-import { toolPath } from './registry'
+import { GROUP_BY_ID, toolPath } from './registry'
 
 export function Logo({ className }: { className?: string }) {
   return (
@@ -48,9 +50,35 @@ function NavItem({ to, icon: Icon, label, collapsed, end, badge }: { to: string;
   )
 }
 
+/** 관리자가 추가한 링크 앱 — 외부 주소는 새 탭으로 */
+function LinkItem({ link, collapsed }: { link: LinkApp; collapsed: boolean }) {
+  const external = /^https?:\/\//i.test(link.url)
+  const inner = (
+    <>
+      <Link2 className="size-[18px] shrink-0 text-muted group-hover:text-ink-2" />
+      {!collapsed && <span className="min-w-0 flex-1 truncate">{link.title}</span>}
+      {!collapsed && external && <ExternalLink className="size-3.5 shrink-0 text-faint" aria-hidden />}
+      {link.badge === 'new' && <span className={clsx('size-1.5 rounded-full bg-accent', collapsed && 'absolute right-1.5 top-1.5')} aria-label="새 기능" />}
+    </>
+  )
+  const cls = clsx('group relative flex h-9 items-center gap-2.5 rounded-md text-sm font-medium text-ink-2 transition-colors duration-150 hover:bg-surface/70 hover:text-ink', collapsed ? 'justify-center px-0' : 'px-2.5')
+  return external ? (
+    <a href={link.url} target="_blank" rel="noopener noreferrer" title={collapsed ? link.title : undefined} className={cls}>
+      {inner}
+    </a>
+  ) : (
+    <Link to={link.url} title={collapsed ? link.title : undefined} className={cls}>
+      {inner}
+    </Link>
+  )
+}
+
 function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
   const groups = useVisibleGroups()
+  const links = useVisibleLinks()
   const config = useSite((s) => s.config)
+  const shown = new Set(groups.map((g) => g.group.id))
+  const extraGroups = Array.from(new Set(links.map((l) => l.group))).filter((g) => !shown.has(g))
   return (
     <nav aria-label="도구 메뉴" className="flex h-full flex-col gap-4 overflow-y-auto px-2.5 py-3" onClick={(e) => (e.target as HTMLElement).closest('a') && onNavigate?.()}>
       <NavItem to="/" end icon={HomeIcon} label="모든 도구" collapsed={collapsed} />
@@ -63,6 +91,17 @@ function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: (
           )}
           {tools.map((t) => (
             <NavItem key={t.id} to={toolPath(t.id)} icon={t.icon} label={t.title} collapsed={collapsed} badge={config.tools[t.id]?.badge === 'new'} />
+          ))}
+          {links.filter((l) => l.group === group.id).map((l) => (
+            <LinkItem key={l.id} link={l} collapsed={collapsed} />
+          ))}
+        </div>
+      ))}
+      {extraGroups.map((gid) => (
+        <div key={gid} className="flex flex-col gap-0.5">
+          {collapsed ? <div className="mx-auto mb-1 h-px w-6 bg-line-strong" /> : <p className="px-2.5 pb-1 text-xs font-bold text-muted">{GROUP_BY_ID[gid].title}</p>}
+          {links.filter((l) => l.group === gid).map((l) => (
+            <LinkItem key={l.id} link={l} collapsed={collapsed} />
           ))}
         </div>
       ))}
@@ -80,6 +119,7 @@ export function Shell() {
   const collapsed = usePrefs((s) => s.sidebarCollapsed)
   const setCollapsed = usePrefs((s) => s.setSidebarCollapsed)
   const notice = useSite((s) => s.config.notice)
+  const isAdminViewer = useViewerStore((s) => s.admin)
   const [drawer, setDrawer] = useState(false)
   const [palette, setPalette] = useState(false)
   const [noticeClosed, setNoticeClosed] = useState(false)
@@ -124,9 +164,12 @@ export function Shell() {
             <Kbd>K</Kbd>
           </span>
         </button>
-        <Link to="/admin" title="관리자" aria-label="관리자" className="inline-flex size-10 items-center justify-center rounded-md text-ink-2 transition-colors hover:bg-sunken hover:text-ink">
-          <Settings className="size-[18px]" aria-hidden />
-        </Link>
+        {isAdminViewer && (
+          <Link to="/admin" title="관리자" aria-label="관리자" className="inline-flex size-10 items-center justify-center rounded-md text-ink-2 transition-colors hover:bg-sunken hover:text-ink">
+            <Settings className="size-[18px]" aria-hidden />
+          </Link>
+        )}
+        <AccountButton />
       </header>
 
       {notice.enabled && notice.text.trim() && !noticeClosed && (
@@ -163,6 +206,7 @@ export function Shell() {
       </div>
 
       <CommandPalette open={palette} onClose={() => setPalette(false)} />
+      <LoginDialog />
     </div>
   )
 }

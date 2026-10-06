@@ -1,11 +1,11 @@
 import clsx from 'clsx'
-import { Search, Star } from 'lucide-react'
+import { ExternalLink, Link2, Search, Star } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router'
 import { Badge, EmptyState } from '@/ui'
-import { useSite, useVisibleGroups } from './config'
+import { useSite, useVisibleGroups, useVisibleLinks, type LinkApp } from './config'
 import { usePrefs } from './prefs'
-import { artUrl, toolPath, type ToolDef } from './registry'
+import { GROUP_BY_ID, artUrl, toolPath, type ToolDef } from './registry'
 import { searchTools } from './search'
 
 /** 책상 위에 놓인 도구 하나. 카드 상자 없이 종이 위에 바로 놓인다. */
@@ -49,6 +49,36 @@ function ToolTile({ tool, isNew }: { tool: ToolDef; isNew: boolean }) {
   )
 }
 
+/** 관리자가 추가한 링크 앱 — 그림 대신 아이콘 판 */
+function LinkTile({ link }: { link: LinkApp }) {
+  const external = /^https?:\/\//i.test(link.url)
+  const body = (
+    <>
+      <span className="grid size-28 place-items-center">
+        <span className="grid size-20 place-items-center rounded-2xl border border-line bg-surface text-brand shadow-2 transition-transform duration-300 ease-out-expo group-hover:-translate-y-1.5 group-hover:rotate-[-3deg]">
+          <Link2 className="size-9" aria-hidden />
+        </span>
+      </span>
+      <span className="mt-1 flex items-center gap-1.5 text-base font-bold text-ink">
+        {link.title}
+        {external && <ExternalLink className="size-3.5 text-faint" aria-label="새 탭에서 열림" />}
+        {link.badge === 'new' && <Badge tone="accent">NEW</Badge>}
+      </span>
+      {link.summary && <span className="text-sm leading-snug text-muted">{link.summary}</span>}
+    </>
+  )
+  const cls = 'group flex h-full flex-col items-start gap-1 rounded-xl p-3 transition-colors duration-200 hover:bg-surface hover:shadow-2 focus-visible:bg-surface'
+  return external ? (
+    <a href={link.url} target="_blank" rel="noopener noreferrer" className={cls}>
+      {body}
+    </a>
+  ) : (
+    <Link to={link.url} className={cls}>
+      {body}
+    </Link>
+  )
+}
+
 function QuickChip({ tool }: { tool: ToolDef }) {
   return (
     <Link
@@ -81,7 +111,10 @@ function DeskScene() {
 
 export function Home() {
   const groups = useVisibleGroups()
+  const links = useVisibleLinks()
   const config = useSite((s) => s.config)
+  const shownGroups = new Set(groups.map((g) => g.group.id))
+  const linkOnlyGroups = Array.from(new Set(links.map((l) => l.group))).filter((g) => !shownGroups.has(g))
   const favorites = usePrefs((s) => s.favorites)
   const recents = usePrefs((s) => s.recents)
   const [query, setQuery] = useState('')
@@ -170,11 +203,27 @@ export function Home() {
                 {tools.map((t) => (
                   <ToolTile key={t.id} tool={t} isNew={config.tools[t.id]?.badge === 'new'} />
                 ))}
+                {links.filter((l) => l.group === group.id).map((l) => (
+                  <LinkTile key={l.id} link={l} />
+                ))}
+              </div>
+            </section>
+          ))}
+          {linkOnlyGroups.map((gid) => (
+            <section key={gid} className="grid gap-x-8 gap-y-3 border-t border-line pt-8 lg:grid-cols-[200px_minmax(0,1fr)]">
+              <div className="lg:sticky lg:top-20 lg:self-start">
+                <h2 className="text-2xl">{GROUP_BY_ID[gid].title}</h2>
+                <p className="mt-1 text-sm text-muted">{GROUP_BY_ID[gid].blurb}</p>
+              </div>
+              <div className="-m-3 grid grid-cols-[repeat(auto-fill,minmax(210px,1fr))] gap-2">
+                {links.filter((l) => l.group === gid).map((l) => (
+                  <LinkTile key={l.id} link={l} />
+                ))}
               </div>
             </section>
           ))}
 
-          {groups.length === 0 && (
+          {groups.length === 0 && links.length === 0 && (
             <EmptyState title="지금 열려 있는 도구가 없습니다">관리자가 모든 메뉴를 꺼 두었습니다. 관리자 화면에서 다시 켤 수 있습니다.</EmptyState>
           )}
         </>

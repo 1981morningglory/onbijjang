@@ -7,6 +7,9 @@ import { readAsDataURL } from '@/lib/files'
 import { Badge, Button, Callout, ColorField, Field, IconButton, NumberInput, Panel, PositionGrid, Segmented, Slider, Spinner, Switch, Tabs, TextInput, Textarea, toast } from '@/ui'
 import { useSite, type SiteConfig } from './config'
 import { GROUPS, TOOLS, artUrl, type GroupId } from './registry'
+import { AccountsEditor, DeletedEditor, LinksEditor, RoleChips } from './AdminAccess'
+import { useLoginDialog } from './LoginDialog'
+import { useViewerStore } from './viewer'
 
 type AuthStatus = { configured: boolean; loggedIn: boolean } | 'offline' | null
 
@@ -72,13 +75,13 @@ function MenuEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: (c: Site
   }
   const setTool = (id: string, patch: Partial<SiteConfig['tools'][string]>) => setDraft({ ...draft, tools: { ...draft.tools, [id]: { ...draft.tools[id], ...patch } } })
   const setAll = (enabled: boolean) => setDraft({ ...draft, tools: Object.fromEntries(Object.entries(draft.tools).map(([id, t]) => [id, { ...t, enabled }])) })
-  const onCount = TOOLS.filter((t) => draft.tools[t.id].enabled && draft.groups[t.group].enabled).length
+  const onCount = TOOLS.filter((t) => draft.tools[t.id].enabled && !draft.tools[t.id].deleted && draft.groups[t.group].enabled).length
 
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-ink-2">
-          스위치를 끄면 그 메뉴가 홈·사이드바·검색에서 사라지고, 주소로 직접 들어와도 열리지 않습니다. 지금 <b className="num text-ink">{onCount}</b> / {TOOLS.length}개가 보입니다.
+          스위치를 끄면 모두에게서 숨겨집니다. <b className="text-ink">방문자·직원·관리자</b> 칩을 눌러 등급별로 보이기/감추기를 정하고, 휴지통으로 메뉴에서 삭제합니다(아래에서 복원). 지금 <b className="num text-ink">{onCount}</b> / {TOOLS.length}개가 켜져 있습니다.
         </p>
         <div className="flex gap-2">
           <Button size="sm" onClick={() => setAll(true)}>
@@ -91,7 +94,7 @@ function MenuEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: (c: Site
       </div>
       {GROUPS.map((group) => {
         const groupOn = draft.groups[group.id].enabled
-        const tools = TOOLS.filter((t) => t.group === group.id).sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0))
+        const tools = TOOLS.filter((t) => t.group === group.id && !draft.tools[t.id].deleted).sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0))
         return (
           <Panel key={group.id} className="overflow-hidden">
             <div className="flex items-center gap-3 border-b border-line bg-paper px-4 py-3">
@@ -106,7 +109,7 @@ function MenuEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: (c: Site
               {tools.map((t, i) => {
                 const state = draft.tools[t.id]
                 return (
-                  <li key={t.id} className="flex items-center gap-3 px-4 py-2.5">
+                  <li key={t.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5">
                     <img src={artUrl(t.art)} alt="" className={clsx('size-10 shrink-0 object-contain transition-[filter,opacity]', !state.enabled && 'opacity-40 grayscale')} />
                     <div className="min-w-0 flex-1">
                       <p className="flex items-center gap-1.5 font-semibold text-ink">
@@ -129,6 +132,10 @@ function MenuEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: (c: Site
                       <IconButton icon={ArrowDown} label={`${t.title} 아래로`} size="sm" disabled={i === tools.length - 1} onClick={() => move(group.id, t.id, 1)} />
                     </div>
                     <Switch className="w-auto!" checked={state.enabled} disabled={!groupOn} onChange={(enabled) => setTool(t.id, { enabled })} label={<span className="sr-only">{t.title} 노출</span>} />
+                    <IconButton icon={Trash2} label={`${t.title} 메뉴에서 삭제`} size="sm" onClick={() => setTool(t.id, { deleted: true })} />
+                    <div className="basis-full pl-[52px]">
+                      <RoleChips value={state.roles} onChange={(roles) => setTool(t.id, { roles })} size="sm" disabled={!state.enabled || !groupOn} />
+                    </div>
                   </li>
                 )
               })}
@@ -136,6 +143,8 @@ function MenuEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: (c: Site
           </Panel>
         )
       })}
+      <LinksEditor draft={draft} setDraft={setDraft} />
+      <DeletedEditor draft={draft} setDraft={setDraft} />
     </div>
   )
 }
@@ -585,7 +594,10 @@ export function Admin() {
   const config = useSite((s) => s.config)
   const save = useSite((s) => s.save)
   const [draft, setDraft] = useState<SiteConfig>(config)
-  const [tab, setTab] = useState<'menu' | 'presets' | 'company' | 'account'>('menu')
+  const [tab, setTab] = useState<'menu' | 'accounts' | 'presets' | 'company' | 'account'>('menu')
+  const reloadViewer = useViewerStore((s) => s.load)
+  const viewerUser = useViewerStore((s) => s.user)
+  const showLogin = useLoginDialog((s) => s.show)
   const [saving, setSaving] = useState(false)
   const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(config), [draft, config])
 
@@ -621,6 +633,8 @@ export function Admin() {
   }
   const logout = async () => {
     await api('/admin/logout', { method: 'POST' }).catch(() => {})
+    await api('/auth/logout', { method: 'POST' }).catch(() => {})
+    void reloadViewer()
     refresh()
   }
 
@@ -643,7 +657,27 @@ export function Admin() {
   if (!auth.loggedIn) {
     return (
       <div className="px-4">
-        <PasswordForm mode={auth.configured ? 'login' : 'setup'} onDone={refresh} />
+        {viewerUser && (
+          <Callout tone="warn" className="mx-auto mt-10 max-w-sm">
+            {viewerUser.name} 님 계정은 직원 등급이라 관리자 화면을 쓸 수 없습니다. 필요하면 관리자에게 등급 변경을 요청하세요.
+          </Callout>
+        )}
+        <PasswordForm
+          mode={auth.configured ? 'login' : 'setup'}
+          onDone={() => {
+            refresh()
+            void reloadViewer()
+          }}
+        />
+        {auth.configured && !viewerUser && (
+          <p className="mt-4 text-center text-sm text-muted">
+            관리자 등급 계정이 있으면{' '}
+            <button type="button" onClick={showLogin} className="font-semibold text-brand underline">
+              계정으로 로그인
+            </button>
+            하세요.
+          </p>
+        )}
       </div>
     )
   }
@@ -659,14 +693,16 @@ export function Admin() {
         value={tab}
         onValue={setTab}
         tabs={[
-          { value: 'menu', label: '메뉴 노출' },
+          { value: 'menu', label: '메뉴·앱 관리' },
+          { value: 'accounts', label: '계정·권한' },
           { value: 'presets', label: '공지·팀 프리셋' },
           { value: 'company', label: '팀·회사 자료' },
-          { value: 'account', label: '계정' },
+          { value: 'account', label: '관리자 비밀번호' },
         ]}
       />
       {tab === 'menu' && <MenuEditor draft={draft} setDraft={setDraft} />}
       {tab === 'presets' && <PresetEditor draft={draft} setDraft={setDraft} />}
+      {tab === 'accounts' && <AccountsEditor />}
       {tab === 'company' && <TeamsEditor />}
       {tab === 'account' && <AccountEditor onLogout={logout} />}
 

@@ -23,6 +23,8 @@ const HOST = process.env.HOST ?? '0.0.0.0'
 
 const CONFIG_FILE = path.join(DATA_DIR, 'config.json')
 const AUTH_FILE = path.join(DATA_DIR, 'auth.json')
+const USERS_FILE = path.join(DATA_DIR, 'users.json')
+const SECRET_FILE = path.join(DATA_DIR, 'session-secret')
 const LIBRARY_DIR = path.join(DATA_DIR, 'library')
 
 fs.mkdirSync(LIBRARY_DIR, { recursive: true })
@@ -66,7 +68,8 @@ function readCookie(req, name) {
   }
   return null
 }
-function isAdmin(req) {
+/** 관리자 비밀번호로 들어온 세션 */
+function isMasterAdmin(req) {
   const token = readCookie(req, SESSION_COOKIE)
   if (!token) return false
   const expires = sessions.get(token)
@@ -75,6 +78,63 @@ function isAdmin(req) {
     return false
   }
   return true
+}
+
+// ── 직원 계정 ─────────────────────────────────────────────
+// users.json 에 계정을 두고, 로그인 쿠키는 서명된 토큰(서버를 다시 켜도 유지)으로 준다.
+// role: admin(관리자 화면 사용) · member(직원). 로그인하지 않은 사람은 방문자.
+// access: 계정별 예외 — { 도구id: 'allow' | 'deny' } (관리자 메뉴 설정의 등급별 노출보다 우선)
+const USER_COOKIE = 'ob_user'
+const USER_TTL_MS = 1000 * 60 * 60 * 24 * 30
+const ROLES = ['admin', 'member']
+const SECRET = (() => {
+  try {
+    return fs.readFileSync(SECRET_FILE, 'utf8').trim()
+  } catch {
+    const s = crypto.randomBytes(32).toString('hex')
+    fs.writeFileSync(SECRET_FILE, s, 'utf8')
+    return s
+  }
+})()
+let users = (() => {
+  try {
+    const raw = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'))
+    return Array.isArray(raw?.users) ? raw.users : []
+  } catch {
+    return []
+  }
+})()
+async function saveUsers(next) {
+  users = next
+  await writeJson(USERS_FILE, { users })
+}
+const sign = (body) => crypto.createHmac('sha256', SECRET).update(body).digest('base64url')
+function userToken(u) {
+  const body = Buffer.from(JSON.stringify({ u: u.id, v: u.tokenVersion ?? 0, e: Date.now() + USER_TTL_MS })).toString('base64url')
+  return `${body}.${sign(body)}`
+}
+/** 로그인한 직원(없으면 null) */
+function currentUser(req) {
+  const raw = readCookie(req, USER_COOKIE)
+  if (!raw) return null
+  const [body, mac] = raw.split('.')
+  if (!body || !mac) return null
+  const expect = sign(body)
+  if (mac.length !== expect.length || !crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expect))) return null
+  try {
+    const { u, v, e } = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'))
+    if (typeof e !== 'number' || e < Date.now()) return null
+    const user = users.find((x) => x.id === u)
+    if (!user || user.disabled || (user.tokenVersion ?? 0) !== v) return null
+    return user
+  } catch {
+    return null
+  }
+}
+const publicUser = (u) => ({ id: u.id, username: u.username, name: u.name, role: u.role, access: u.access ?? {}, disabled: Boolean(u.disabled), createdAt: u.createdAt, lastLoginAt: u.lastLoginAt ?? null })
+
+function isAdmin(req) {
+  return isMasterAdmin(req) || currentUser(req)?.role === 'admin'
 }
 function cookieFlags(req) {
   // HTTPS(프록시 뒤 포함)로 들어온 요청에는 Secure 를 붙인다.
@@ -91,7 +151,7 @@ function requireAdmin(req, res, next) {
 }
 /** 팀원이면 되는 동작. 공개 배포에서는 관리자만, 믿을 수 있는 네트워크에서는 누구나. */
 function requireMember(req, res, next) {
-  if (TRUSTED) return next()
+  if (TRUSTED || currentUser(req)) return next()
   requireAdmin(req, res, next)
 }
 function validPassword(pw) {
@@ -173,6 +233,114 @@ app.post('/api/admin/password', requireAdmin, async (req, res) => {
   }
   if (!validPassword(next)) return res.status(400).json({ error: '새 비밀번호는 8자 이상이어야 합니다.' })
   await writeJson(AUTH_FILE, { ...hashPassword(next), createdAt: auth.createdAt, changedAt: new Date().toISOString() })
+  res.json({ ok: true })
+})
+
+// ── 직원 로그인 ───────────────────────────────────────────
+const USERNAME_RE = /^[0-9A-Za-z가-힣._-]{2,30}$/
+const validUserPassword = (pw) => typeof pw === 'string' && pw.length >= 6 && pw.length <= 200
+
+app.get('/api/auth/me', (req, res) => {
+  const u = currentUser(req)
+  res.json({ user: u ? publicUser(u) : null, admin: isAdmin(req), master: isMasterAdmin(req) })
+})
+app.post('/api/auth/login', async (req, res) => {
+  const ip = req.ip ?? 'unknown'
+  const attempt = loginAttempts.get(ip)
+  if (attempt && attempt.until > Date.now() && attempt.count >= 5) {
+    return res.status(429).json({ error: '로그인 시도가 많습니다. 1분 뒤에 다시 시도하세요.' })
+  }
+  const { username, password } = req.body ?? {}
+  const u = users.find((x) => typeof username === 'string' && x.username.toLowerCase() === username.trim().toLowerCase())
+  if (!u || u.disabled || typeof password !== 'string' || !verifyPassword(password, u)) {
+    const count = attempt && attempt.until > Date.now() ? attempt.count + 1 : 1
+    loginAttempts.set(ip, { count, until: Date.now() + 60_000 })
+    return res.status(401).json({ error: u?.disabled ? '사용이 중지된 계정입니다. 관리자에게 문의하세요.' : '아이디 또는 비밀번호가 맞지 않습니다.' })
+  }
+  loginAttempts.delete(ip)
+  await saveUsers(users.map((x) => (x.id === u.id ? { ...x, lastLoginAt: new Date().toISOString() } : x)))
+  res.setHeader('Set-Cookie', `${USER_COOKIE}=${userToken(u)}; ${cookieFlags(req)}; Max-Age=${USER_TTL_MS / 1000}`)
+  res.json({ user: publicUser(u) })
+})
+app.post('/api/auth/logout', (req, res) => {
+  res.setHeader('Set-Cookie', `${USER_COOKIE}=; ${cookieFlags(req)}; Max-Age=0`)
+  res.json({ ok: true })
+})
+app.post('/api/auth/password', async (req, res) => {
+  const u = currentUser(req)
+  if (!u) return res.status(401).json({ error: '로그인이 필요합니다.' })
+  const { current, next } = req.body ?? {}
+  if (typeof current !== 'string' || !verifyPassword(current, u)) return res.status(401).json({ error: '현재 비밀번호가 맞지 않습니다.' })
+  if (!validUserPassword(next)) return res.status(400).json({ error: '새 비밀번호는 6자 이상이어야 합니다.' })
+  const updated = { ...u, ...hashPassword(next), tokenVersion: (u.tokenVersion ?? 0) + 1 }
+  await saveUsers(users.map((x) => (x.id === u.id ? updated : x)))
+  res.setHeader('Set-Cookie', `${USER_COOKIE}=${userToken(updated)}; ${cookieFlags(req)}; Max-Age=${USER_TTL_MS / 1000}`)
+  res.json({ ok: true })
+})
+
+// ── 계정 관리(관리자) ─────────────────────────────────────
+function cleanAccess(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null
+  const out = {}
+  for (const [k, a] of Object.entries(v)) if (/^[a-z0-9-]{1,60}$/.test(k) && (a === 'allow' || a === 'deny')) out[k] = a
+  return out
+}
+app.get('/api/admin/users', requireAdmin, (_req, res) => {
+  res.json({ users: users.map(publicUser) })
+})
+app.post('/api/admin/users', requireAdmin, async (req, res) => {
+  const { username, name, password, role } = req.body ?? {}
+  const un = typeof username === 'string' ? username.trim() : ''
+  const nm = typeof name === 'string' ? name.trim() : ''
+  if (!USERNAME_RE.test(un)) return res.status(400).json({ error: '아이디는 2~30자의 한글·영문·숫자·. _ - 로 정해 주세요.' })
+  if (!nm || nm.length > 30) return res.status(400).json({ error: '이름은 1~30자여야 합니다.' })
+  if (!validUserPassword(password)) return res.status(400).json({ error: '비밀번호는 6자 이상이어야 합니다.' })
+  if (!ROLES.includes(role)) return res.status(400).json({ error: '등급을 골라 주세요.' })
+  if (users.some((x) => x.username.toLowerCase() === un.toLowerCase())) return res.status(409).json({ error: '이미 있는 아이디입니다.' })
+  if (users.length >= 500) return res.status(409).json({ error: '계정은 500개까지 만들 수 있습니다.' })
+  const u = { id: crypto.randomBytes(8).toString('hex'), username: un, name: nm, role, access: {}, ...hashPassword(password), tokenVersion: 0, createdAt: new Date().toISOString() }
+  await saveUsers([...users, u])
+  res.json({ user: publicUser(u) })
+})
+app.patch('/api/admin/users/:uid', requireAdmin, async (req, res) => {
+  const u = users.find((x) => x.id === req.params.uid)
+  if (!u) return res.status(404).json({ error: '계정을 찾을 수 없습니다.' })
+  const b = req.body ?? {}
+  const next = { ...u }
+  const me = currentUser(req)
+  if (b.name !== undefined) {
+    const nm = typeof b.name === 'string' ? b.name.trim() : ''
+    if (!nm || nm.length > 30) return res.status(400).json({ error: '이름은 1~30자여야 합니다.' })
+    next.name = nm
+  }
+  if (b.role !== undefined) {
+    if (!ROLES.includes(b.role)) return res.status(400).json({ error: '등급을 골라 주세요.' })
+    if (me?.id === u.id && b.role !== 'admin' && !isMasterAdmin(req)) return res.status(400).json({ error: '내 계정의 관리자 등급은 직접 내릴 수 없습니다.' })
+    next.role = b.role
+  }
+  if (b.disabled !== undefined) {
+    if (me?.id === u.id && b.disabled) return res.status(400).json({ error: '내 계정은 사용 중지할 수 없습니다.' })
+    next.disabled = Boolean(b.disabled)
+    if (next.disabled) next.tokenVersion = (u.tokenVersion ?? 0) + 1
+  }
+  if (b.password !== undefined) {
+    if (!validUserPassword(b.password)) return res.status(400).json({ error: '비밀번호는 6자 이상이어야 합니다.' })
+    Object.assign(next, hashPassword(b.password))
+    next.tokenVersion = (u.tokenVersion ?? 0) + 1
+  }
+  if (b.access !== undefined) {
+    const a = cleanAccess(b.access)
+    if (!a) return res.status(400).json({ error: '권한 형식이 올바르지 않습니다.' })
+    next.access = a
+  }
+  await saveUsers(users.map((x) => (x.id === u.id ? next : x)))
+  res.json({ user: publicUser(next) })
+})
+app.delete('/api/admin/users/:uid', requireAdmin, async (req, res) => {
+  const u = users.find((x) => x.id === req.params.uid)
+  if (!u) return res.status(404).json({ error: '계정을 찾을 수 없습니다.' })
+  if (currentUser(req)?.id === u.id) return res.status(400).json({ error: '내 계정은 삭제할 수 없습니다.' })
+  await saveUsers(users.filter((x) => x.id !== u.id))
   res.json({ ok: true })
 })
 

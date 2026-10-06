@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { api, ApiError } from '@/lib/api'
 import { GROUPS, TOOLS, type GroupId, type ToolDef } from './registry'
+import { ALL_ROLES, useViewer, type Role, type Viewer } from './viewer'
 
 export type Pos9 = 'tl' | 'tc' | 'tr' | 'ml' | 'mc' | 'mr' | 'bl' | 'bc' | 'br'
 
@@ -27,12 +28,33 @@ export interface TeamPresets {
   filename: { base: string; start: number; digits: number }
 }
 
+/** 메뉴 항목 하나의 노출 설정 */
+export interface MenuEntry {
+  enabled: boolean
+  badge: 'new' | null
+  /** 볼 수 있는 등급. 계정별 예외(허용·차단)가 이보다 우선한다. */
+  roles: Role[]
+  /** 메뉴에서 삭제(관리자 화면의 '삭제한 앱'에서 복원 가능) */
+  deleted: boolean
+}
+
+/** 관리자가 추가한 링크 앱(새로 출시한 앱·외부 도구) */
+export interface LinkApp extends MenuEntry {
+  id: string
+  title: string
+  summary: string
+  /** https://… 또는 사이트 안 주소(/…) */
+  url: string
+  group: GroupId
+}
+
 export interface SiteConfig {
   version: 1
-  tools: Record<string, { enabled: boolean; badge: 'new' | null }>
+  tools: Record<string, MenuEntry>
   groups: Record<GroupId, { enabled: boolean }>
   /** 전체 도구 id 순서. 그룹 안에서의 순서로 쓰인다. */
   toolOrder: string[]
+  links: LinkApp[]
   notice: { enabled: boolean; text: string }
   presets: TeamPresets
   updatedAt?: string
@@ -71,9 +93,10 @@ export const DEFAULT_PRESETS: TeamPresets = {
 export function defaultConfig(): SiteConfig {
   return {
     version: 1,
-    tools: Object.fromEntries(TOOLS.map((t) => [t.id, { enabled: true, badge: null }])),
+    tools: Object.fromEntries(TOOLS.map((t) => [t.id, { enabled: true, badge: null, roles: [...ALL_ROLES], deleted: false }])),
     groups: Object.fromEntries(GROUPS.map((g) => [g.id, { enabled: true }])) as SiteConfig['groups'],
     toolOrder: TOOLS.map((t) => t.id),
+    links: [],
     notice: { enabled: false, text: '' },
     presets: structuredClone(DEFAULT_PRESETS),
   }
@@ -86,7 +109,7 @@ export function normalizeConfig(raw: unknown): SiteConfig {
   const r = raw as Partial<SiteConfig>
   for (const t of TOOLS) {
     const saved = r.tools?.[t.id]
-    if (saved) base.tools[t.id] = { enabled: saved.enabled !== false, badge: saved.badge === 'new' ? 'new' : null }
+    if (saved) base.tools[t.id] = { enabled: saved.enabled !== false, badge: saved.badge === 'new' ? 'new' : null, roles: cleanRoles(saved.roles), deleted: saved.deleted === true }
   }
   for (const g of GROUPS) {
     const saved = r.groups?.[g.id]
@@ -97,6 +120,16 @@ export function normalizeConfig(raw: unknown): SiteConfig {
     const ordered = r.toolOrder.filter((id): id is string => typeof id === 'string' && known.has(id))
     const seen = new Set(ordered)
     base.toolOrder = [...ordered, ...TOOLS.map((t) => t.id).filter((id) => !seen.has(id))]
+  }
+  if (Array.isArray(r.links)) {
+    const groupIds = new Set(GROUPS.map((g) => g.id))
+    base.links = r.links
+      .filter((l): l is LinkApp => Boolean(l) && typeof l.id === 'string' && typeof l.title === 'string' && typeof l.url === 'string' && groupIds.has(l.group))
+      .slice(0, 60)
+      .map((l) => ({
+        id: l.id, title: l.title.slice(0, 30), summary: typeof l.summary === 'string' ? l.summary.slice(0, 120) : '', url: l.url.slice(0, 500), group: l.group,
+        enabled: l.enabled !== false, badge: l.badge === 'new' ? 'new' : null, roles: cleanRoles(l.roles), deleted: l.deleted === true,
+      }))
   }
   if (r.notice && typeof r.notice.text === 'string') {
     base.notice = { enabled: Boolean(r.notice.enabled), text: r.notice.text.slice(0, 300) }
@@ -138,18 +171,46 @@ export const useSite = create<SiteState>((set) => ({
   },
 }))
 
-export function isToolVisible(config: SiteConfig, tool: ToolDef) {
-  return config.groups[tool.group].enabled && config.tools[tool.id]?.enabled !== false
+function cleanRoles(v: unknown): Role[] {
+  if (!Array.isArray(v)) return [...ALL_ROLES]
+  return ALL_ROLES.filter((r) => v.includes(r))
+}
+
+/** 이 사람에게 보이는가: 꺼짐·삭제면 아무에게도 안 보이고, 그 밖에는 계정별 예외 → 등급 순서로 정한다. */
+export function canSee(entry: MenuEntry | undefined, id: string, viewer: Viewer): boolean {
+  if (!entry) return true
+  if (!entry.enabled || entry.deleted) return false
+  const ov = viewer.access[id]
+  if (ov === 'deny') return false
+  if (ov === 'allow') return true
+  return entry.roles.includes(viewer.role)
+}
+
+/** 등급 때문에 못 보는 것인가(꺼짐·삭제가 아니라) */
+export function hiddenByRole(entry: MenuEntry | undefined, id: string, viewer: Viewer): boolean {
+  return Boolean(entry && entry.enabled && !entry.deleted && !canSee(entry, id, viewer))
+}
+
+export function isToolVisible(config: SiteConfig, tool: ToolDef, viewer: Viewer) {
+  return config.groups[tool.group].enabled && canSee(config.tools[tool.id], tool.id, viewer)
+}
+
+/** 이 사람에게 보이는 링크 앱(그룹별) */
+export function useVisibleLinks() {
+  const config = useSite((s) => s.config)
+  const viewer = useViewer()
+  return config.links.filter((l) => config.groups[l.group].enabled && canSee(l, `link-${l.id}`, viewer))
 }
 
 /** 관리자 설정을 반영한, 화면에 보이는 도구 목록(그룹별·순서 적용). */
 export function useVisibleGroups() {
   const config = useSite((s) => s.config)
+  const viewer = useViewer()
   const rank = new Map(config.toolOrder.map((id, i) => [id, i]))
   return GROUPS.filter((g) => config.groups[g.id].enabled)
     .map((group) => ({
       group,
-      tools: TOOLS.filter((t) => t.group === group.id && isToolVisible(config, t)).sort(
+      tools: TOOLS.filter((t) => t.group === group.id && isToolVisible(config, t, viewer)).sort(
         (a, b) => (rank.get(a.id) ?? 999) - (rank.get(b.id) ?? 999),
       ),
     }))

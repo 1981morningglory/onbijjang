@@ -1,6 +1,6 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react'
 import {
-  Blend, Calculator, Camera, Clapperboard, ClipboardCheck, Crop, Eraser, FileText, Files, Film, Gavel,
+  Barcode, Blend, Calculator, Camera, Clapperboard, ClipboardCheck, Crop, Eraser, FileText, Files, Film, Gavel,
   Grid3x3, Image as ImageIcon, Images, LayoutTemplate, MonitorPlay, NotebookPen, Package, PenLine, QrCode,
   ReceiptText, Rocket, Scale, Scissors, ShoppingBag, ShoppingCart, Signature, Store, Tags, FilePenLine,
   type LucideIcon,
@@ -160,6 +160,13 @@ export const TOOLS: ToolDef[] = [
     keywords: ['라벨', '바코드', '폼텍', '주소', '스티커', '인쇄'],
     icon: Tags, art: 'label', local: false,
     component: lazy(() => import('@/tools/label')),
+  },
+  {
+    id: 'barcode', group: 'doc', title: '바코드 생성',
+    summary: '회사코드로 EAN-13(평형·롱바)과 쿠팡 R 바코드를 EPS·AI·PDF로, 엑셀 붙여넣기로 여러 개',
+    keywords: ['바코드', 'ean', 'ean13', '쿠팡', 'r바코드', 'code128', '코드128', 'eps', 'ai', '일러스트', '회사코드', '품번'],
+    icon: Barcode, art: 'label', local: true,
+    component: lazy(() => import('@/tools/barcode')),
   },
 
   // ── 마켓 수수료 ─────────────────────────────────────────

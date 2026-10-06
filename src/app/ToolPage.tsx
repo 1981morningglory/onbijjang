@@ -1,9 +1,11 @@
 import clsx from 'clsx'
-import { ChevronRight, EyeOff, RotateCcw, ShieldCheck, Star } from 'lucide-react'
+import { ChevronRight, EyeOff, Lock, RotateCcw, ShieldCheck, Star } from 'lucide-react'
 import { Component, Suspense, useEffect, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 import { Button, Callout, EmptyState } from '@/ui'
-import { isToolVisible, useSite } from './config'
+import { hiddenByRole, isToolVisible, useSite } from './config'
+import { useViewer, useViewerStore } from './viewer'
+import { useLoginDialog } from './LoginDialog'
 import { usePrefs } from './prefs'
 import { GROUP_BY_ID, TOOL_BY_ID, artUrl, type ToolDef } from './registry'
 
@@ -93,8 +95,11 @@ export function ToolPage() {
   const tool = TOOL_BY_ID[id]
   const config = useSite((s) => s.config)
   const status = useSite((s) => s.status)
+  const viewer = useViewer()
+  const viewerStatus = useViewerStore((s) => s.status)
+  const openLogin = useLoginDialog((s) => s.show)
   const touchRecent = usePrefs((s) => s.touchRecent)
-  const visible = tool ? isToolVisible(config, tool) : false
+  const visible = tool ? isToolVisible(config, tool, viewer) : false
 
   useEffect(() => {
     if (tool && visible) {
@@ -113,7 +118,30 @@ export function ToolPage() {
       </EmptyState>
     )
   }
-  if (status !== 'loading' && !visible) {
+  if (status !== 'loading' && viewerStatus !== 'loading' && !visible && config.groups[tool.group].enabled && hiddenByRole(config.tools[tool.id], tool.id, viewer)) {
+    const guest = viewer.role === 'guest'
+    return (
+      <EmptyState
+        icon={Lock}
+        title={guest ? `‘${tool.title}’은(는) 로그인하면 쓸 수 있습니다` : `‘${tool.title}’을(를) 쓸 권한이 없습니다`}
+        className="py-24"
+        action={
+          guest ? (
+            <Button variant="primary" onClick={openLogin}>
+              로그인
+            </Button>
+          ) : (
+            <Link to="/" className="font-semibold text-brand underline">
+              모든 도구 보기
+            </Link>
+          )
+        }
+      >
+        {guest ? '직원 계정으로 로그인하세요. 계정이 없으면 관리자에게 요청하세요.' : '필요하면 관리자에게 이 도구의 권한을 요청하세요.'}
+      </EmptyState>
+    )
+  }
+  if (status !== 'loading' && viewerStatus !== 'loading' && !visible) {
     return (
       <EmptyState icon={EyeOff} title={`‘${tool.title}’은(는) 지금 꺼져 있습니다`} className="py-24" action={<Link to="/" className="font-semibold text-brand underline">모든 도구 보기</Link>}>
         관리자가 이 메뉴를 숨겼습니다. 필요하면 관리자에게 다시 켜 달라고 요청하세요.
