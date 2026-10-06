@@ -13,6 +13,7 @@ import {
   type CornerDotShape, type CornerShape, type DotShape, type Ecc, type QrContent, type QrFormat, type QrKind, type QrStyle,
 } from './logic'
 import { renderQr } from './render'
+import { svgToVecDoc, toEps, toPdf } from './vector'
 
 const PREVIEW_PX = 640
 const MAX_LOGO_BYTES = 2 * 1024 * 1024
@@ -28,10 +29,28 @@ const KIND_TABS = [
   { value: 'email', label: '이메일', icon: Mail },
 ] as const satisfies ReadonlyArray<{ value: QrKind; label: string; icon: typeof Link }>
 
+/** 바코드 생성기와 같은 저장 형식(여러 개 고를 수 있음) */
+type SaveFmt = 'eps' | 'ai' | 'pdf' | 'svg' | 'png' | 'jpeg'
+const SAVE_FMTS: Array<{ value: SaveFmt; label: string }> = [
+  { value: 'eps', label: 'EPS' },
+  { value: 'ai', label: 'AI' },
+  { value: 'pdf', label: 'PDF' },
+  { value: 'svg', label: 'SVG' },
+  { value: 'png', label: 'PNG' },
+  { value: 'jpeg', label: 'JPG' },
+]
+const SAVE_EXT: Record<SaveFmt, string> = { eps: 'eps', ai: 'ai', pdf: 'pdf', svg: 'svg', png: 'png', jpeg: 'jpg' }
+const VECTOR: SaveFmt[] = ['eps', 'ai', 'pdf']
+const PRINT_MM = [15, 20, 25, 30, 40, 50, 100]
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
 interface Prefs {
   format: QrFormat
   size: number
   kind: QrKind
+  formats?: SaveFmt[]
+  saveMode?: 'zip' | 'each'
+  printMm?: number
 }
 
 // ── 내용 입력 ─────────────────────────────────────────────
@@ -154,7 +173,10 @@ export default function QrTool() {
 
   const ecc = effectiveEcc(style.ecc, Boolean(logo))
   const batch = useMemo(() => parseBatch(batchText), [batchText])
-  const batchFiles = useMemo(() => batchFileNames(batch.rows, FORMAT_EXT[prefs.format]), [batch, prefs.format])
+  const formats: SaveFmt[] = prefs.formats?.length ? prefs.formats : [prefs.format]
+  const saveMode = prefs.saveMode ?? 'zip'
+  const printMm = prefs.printMm ?? 30
+  const batchFiles = useMemo(() => batchFileNames(batch.rows, 'x').map((b) => ({ ...b, filename: b.filename.replace(/\.x$/, '') })), [batch])
   const batchProblems = batch.rows.length - batchFiles.length
 
   // 미리보기에 쓸 내용: 한 개 모드는 입력한 내용, 여러 개 모드는 첫 번째 줄
@@ -236,16 +258,52 @@ export default function QrTool() {
   }
 
   // ── 저장 ──
-  const singleName = `${sanitizeFilename(fileName, 'QR')}.${FORMAT_EXT[prefs.format]}`
+  const baseName = sanitizeFilename(fileName, 'QR')
+  const singleName = formats.length === 1 ? `${baseName}.${SAVE_EXT[formats[0]]}` : `${baseName}.${formats.map((f) => SAVE_EXT[f]).join(' · ')}`
   const canSaveSingle = mode === 'single' && Boolean(payload.data) && !tooLong && !renderError
+  const toggleFmt = (f: SaveFmt, on: boolean) =>
+    setPrefs((p) => {
+      const cur = p.formats?.length ? p.formats : [p.format]
+      const next = SAVE_FMTS.map((x) => x.value).filter((v) => (v === f ? on : cur.includes(v)))
+      return next.length ? { ...p, formats: next } : p
+    })
+
+  /** 한 QR 을 고른 형식들로 만든다 */
+  const makeFiles = async (data: string, base: string) => {
+    const out: Array<{ name: string; data: Blob }> = []
+    let svgText: string | null = null
+    const svg = async () => (svgText ??= await (await renderQr(data, style, prefs.size, logo, 'svg')).blob.text())
+    for (const f of formats) {
+      const name = `${base}.${SAVE_EXT[f]}`
+      if (f === 'png' || f === 'jpeg') out.push({ name, data: (await renderQr(data, style, prefs.size, logo, f)).blob })
+      else if (f === 'svg') out.push({ name, data: new Blob([await svg()], { type: 'image/svg+xml' }) })
+      else {
+        const doc = await svgToVecDoc(await svg())
+        const pt = (printMm / 25.4) * 72
+        const bytes = f === 'eps' ? toEps(doc, pt, base) : toPdf(doc, pt, base)
+        out.push({ name, data: new Blob([bytes as BlobPart], { type: f === 'eps' ? 'application/postscript' : f === 'ai' ? 'application/illustrator' : 'application/pdf' }) })
+      }
+    }
+    return out
+  }
+  const deliver = async (entries: Array<{ name: string; data: Blob }>, zipName: string, signal?: AbortSignal) => {
+    if (entries.length === 1) return downloadBlob(entries[0].data, entries[0].name)
+    if (saveMode === 'zip') return downloadZip(entries, zipName)
+    for (const e of entries) {
+      if (signal?.aborted) return
+      downloadBlob(e.data, e.name)
+      await sleep(250)
+    }
+  }
+
   const saveSingle = async () => {
     if (!canSaveSingle) return
     setSaving(true)
     setSaveError(null)
     try {
-      const { blob } = await renderQr(payload.data, style, prefs.size, logo, prefs.format)
-      downloadBlob(blob, singleName)
-      toast.success(`${singleName} 을 저장했습니다.`)
+      const entries = await makeFiles(payload.data, baseName)
+      await deliver(entries, baseName)
+      toast.success(entries.length === 1 ? `${entries[0].name} 을 저장했습니다.` : `${fmt.format(entries.length)}개 파일을 ${saveMode === 'zip' ? 'ZIP 으로' : '낱개로'} 저장했습니다.`)
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'QR 을 저장하지 못했습니다.')
     } finally {
@@ -253,9 +311,9 @@ export default function QrTool() {
     }
   }
   const sendFiles = async () => {
-    const format = prefs.format === 'svg' ? 'png' : prefs.format
+    const format = formats.includes('jpeg') && !formats.includes('png') ? 'jpeg' : 'png'
     const { blob } = await renderQr(payload.data, style, prefs.size, logo, format)
-    return [blobToFile(blob, `${sanitizeFilename(fileName, 'QR')}.${FORMAT_EXT[format]}`)]
+    return [blobToFile(blob, `${baseName}.${FORMAT_EXT[format]}`)]
   }
   const saveBatch = async () => {
     if (!batchFiles.length) return
@@ -265,20 +323,21 @@ export default function QrTool() {
     try {
       const entries: Array<{ name: string; data: Blob }> = []
       const failed: string[] = []
+      let done = 0
       for (const { row, filename } of batchFiles) {
         if (signal.aborted) return void toast.info('QR 만들기를 취소했습니다.')
         try {
-          entries.push({ name: filename, data: (await renderQr(row.content, style, prefs.size, logo, prefs.format)).blob })
+          entries.push(...(await makeFiles(row.content, filename)))
         } catch {
           failed.push(row.name)
         }
-        setProgress({ done: entries.length + failed.length, total: batchFiles.length })
+        setProgress({ done: ++done, total: batchFiles.length })
       }
       if (signal.aborted) return void toast.info('QR 만들기를 취소했습니다.')
       if (!entries.length) throw new Error('만들 수 있는 QR 이 없습니다. 내용이 너무 길지 않은지 확인해 주세요.')
-      await downloadZip(entries, `QR_${todayStamp()}`)
+      await deliver(entries, `QR_${todayStamp()}`, signal)
       if (failed.length) setSaveError(`${fmt.format(failed.length)}개는 내용이 너무 길어 만들지 못했습니다: ${failed.slice(0, 5).join(', ')}${failed.length > 5 ? ' 등' : ''}`)
-      toast.success(`QR ${fmt.format(entries.length)}개를 ZIP 으로 저장했습니다.`)
+      toast.success(`QR ${fmt.format(batchFiles.length - failed.length)}개(파일 ${fmt.format(entries.length)}개)를 ${saveMode === 'zip' && entries.length > 1 ? 'ZIP 으로' : '낱개로'} 저장했습니다.`)
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'QR 을 저장하지 못했습니다.')
     } finally {
@@ -406,30 +465,61 @@ export default function QrTool() {
 
       <Section title="저장">
         <div className="flex flex-col gap-1.5">
-          <span className="text-sm font-semibold text-ink-2">형식</span>
-          <Segmented<QrFormat>
-            label="저장 형식"
-            block
-            value={prefs.format}
-            onValue={(format) => setPrefs((p) => ({ ...p, format }))}
-            options={[
-              { value: 'png', label: 'PNG' },
-              { value: 'jpeg', label: 'JPG' },
-              { value: 'svg', label: 'SVG' },
-            ]}
-          />
+          <span className="text-sm font-semibold text-ink-2">
+            파일 형식 <span className="font-normal text-muted">(여러 개 선택 가능)</span>
+          </span>
+          <div className="grid grid-cols-3 gap-1.5">
+            {SAVE_FMTS.map((o) => (
+              <Checkbox
+                key={o.value}
+                checked={formats.includes(o.value)}
+                onChange={(on) => toggleFmt(o.value, on)}
+                label={<span className="font-semibold">{o.label}</span>}
+                className="rounded-md border border-line bg-surface px-2.5 py-2"
+              />
+            ))}
+          </div>
+          <p className="text-xs text-muted">EPS·AI·PDF 는 인쇄용 벡터 파일(키워도 깨지지 않음), PNG·JPG 는 화면·웹용 이미지입니다. AI 는 일러스트레이터에서 바로 열리는 PDF 호환 파일입니다.</p>
         </div>
-        <div className="flex flex-col gap-1.5">
-          <span className="text-sm font-semibold text-ink-2">크기</span>
-          <Segmented
-            label="저장 크기"
-            block
-            value={String(prefs.size)}
-            onValue={(v) => setPrefs((p) => ({ ...p, size: Number(v) }))}
-            options={SIZES.map((s) => ({ value: String(s), label: `${fmt.format(s)}px` }))}
-          />
-          {prefs.format === 'svg' && <p className="text-sm text-muted">SVG 는 인쇄소에 넘기기 좋은 형식으로, 키워도 깨지지 않습니다.</p>}
-        </div>
+        {formats.some((f) => VECTOR.includes(f)) && (
+          <div className="flex flex-col gap-1.5">
+            <Field label="인쇄 크기 (EPS·AI·PDF)" hint="QR 한 변의 실제 크기입니다. 벡터라 인쇄소에서 키워도 깨지지 않습니다.">
+              {(id) => (
+                <Select id={id} value={String(printMm)} onValue={(v) => setPrefs((p) => ({ ...p, printMm: Number(v) }))} options={PRINT_MM.map((m) => ({ value: String(m), label: `${m} × ${m}mm` }))} />
+              )}
+            </Field>
+          </div>
+        )}
+        {formats.some((f) => f === 'png' || f === 'jpeg') && (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-sm font-semibold text-ink-2">이미지 크기 (PNG·JPG)</span>
+            <Segmented
+              label="저장 크기"
+              block
+              value={String(prefs.size)}
+              onValue={(v) => setPrefs((p) => ({ ...p, size: Number(v) }))}
+              options={SIZES.map((s) => ({ value: String(s), label: `${fmt.format(s)}px` }))}
+            />
+          </div>
+        )}
+        {(mode === 'batch' || formats.length > 1) && (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-sm font-semibold text-ink-2">받는 방법</span>
+            <Segmented
+              label="받는 방법"
+              block
+              value={saveMode}
+              onValue={(v) => setPrefs((p) => ({ ...p, saveMode: v as 'zip' | 'each' }))}
+              options={[
+                { value: 'zip', label: 'ZIP 하나로', icon: FileArchive },
+                { value: 'each', label: '낱개 파일로', icon: Download },
+              ]}
+            />
+            <p className="text-xs text-muted">
+              {saveMode === 'zip' ? '모든 파일을 ZIP 하나에 담아 받습니다.' : '파일마다 따로 저장합니다. 브라우저가 "여러 파일 다운로드"를 물으면 [허용]을 눌러 주세요.'}
+            </p>
+          </div>
+        )}
         {mode === 'single' && (
           <Field label="파일 이름" hint={<span className="num">{singleName}</span>}>
             {(id) => <TextInput id={id} value={fileName} onChange={(e) => setFileName(e.target.value)} placeholder="QR" maxLength={80} />}
@@ -450,13 +540,14 @@ export default function QrTool() {
         ) : mode === 'single' ? (
           <div className="flex flex-col gap-2">
             <Button variant="primary" size="lg" block icon={Download} disabled={!canSaveSingle} loading={saving} onClick={saveSingle}>
-              {FORMAT_EXT[prefs.format].toUpperCase()} 로 저장
+              {formats.length === 1 ? `${SAVE_EXT[formats[0]].toUpperCase()} 로 저장` : `${formats.map((f) => SAVE_EXT[f].toUpperCase()).join('·')} 저장`}
             </Button>
             <SendToMenu label="다른 도구로 보내기" disabled={!canSaveSingle || busy} files={sendFiles} />
           </div>
         ) : (
-          <Button variant="primary" size="lg" block icon={FileArchive} disabled={!batchFiles.length} onClick={saveBatch}>
-            ZIP 으로 저장{batchFiles.length ? ` (${fmt.format(batchFiles.length)}개)` : ''}
+          <Button variant="primary" size="lg" block icon={saveMode === 'zip' ? FileArchive : Download} disabled={!batchFiles.length} onClick={saveBatch}>
+            {saveMode === 'zip' ? 'ZIP 으로 저장' : '낱개로 저장'}
+            {batchFiles.length ? ` (${fmt.format(batchFiles.length)}개${formats.length > 1 ? ` × ${formats.length}형식` : ''})` : ''}
           </Button>
         )}
       </Section>
