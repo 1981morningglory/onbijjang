@@ -79,9 +79,31 @@ function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: (
   const config = useSite((s) => s.config)
   const shown = new Set(groups.map((g) => g.group.id))
   const extraGroups = Array.from(new Set(links.map((l) => l.group))).filter((g) => !shown.has(g))
+  // 맨 위 'NEW 신상앱' — 메인 화면 신상앱 칸과 같은 목록·순서(보이는 것만)
+  const toolById = new Map(groups.flatMap((g) => g.tools).map((t) => [t.id, t]))
+  const linkByKey = new Map(links.map((l) => [`link-${l.id}`, l]))
+  const fresh = config.newApps.enabled ? config.newApps.items.filter((k) => toolById.has(k) || linkByKey.has(k)) : []
   return (
     <nav aria-label="도구 메뉴" className="flex h-full flex-col gap-4 overflow-y-auto px-2.5 py-3" onClick={(e) => (e.target as HTMLElement).closest('a') && onNavigate?.()}>
       <NavItem to="/" end icon={HomeIcon} label="모든 도구" collapsed={collapsed} />
+      {fresh.length > 0 && (
+        <div className="flex flex-col gap-0.5">
+          {collapsed ? (
+            <div className="mx-auto mb-1 h-px w-6 bg-accent" />
+          ) : (
+            <p className="flex items-center gap-1.5 px-2.5 pb-1 text-xs font-bold text-accent">
+              <span className="rounded-full bg-accent px-1.5 py-px text-2xs text-on-brand">NEW</span>
+              {config.newApps.title}
+            </p>
+          )}
+          {fresh.map((k) => {
+            const t = toolById.get(k)
+            if (t) return <NavItem key={`new-${k}`} to={toolPath(t.id)} icon={t.icon} label={t.title} collapsed={collapsed} badge />
+            const l = linkByKey.get(k)!
+            return <LinkItem key={`new-${k}`} link={{ ...l, badge: 'new' }} collapsed={collapsed} />
+          })}
+        </div>
+      )}
       {groups.map(({ group, tools }) => (
         <div key={group.id} className="flex flex-col gap-0.5">
           {collapsed ? (

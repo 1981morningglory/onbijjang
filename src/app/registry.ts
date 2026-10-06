@@ -35,12 +35,13 @@ export interface ToolDef {
   component: LazyExoticComponent<ComponentType>
 }
 
+/** 카테고리 순서: (맨 위 NEW 신상앱) → 문서 → 영상 → 이미지 → 블로그 → 마켓 수수료 */
 export const GROUPS: ToolGroup[] = [
-  { id: 'image', title: '이미지', blurb: '자르고, 지우고, 가리고, 꾸미기', icon: ImageIcon },
-  { id: 'video', title: '영상', blurb: '필요한 순간만 GIF·MP4로', icon: Film },
   { id: 'doc', title: '문서', blurb: 'PDF와 라벨 인쇄', icon: FileText },
-  { id: 'fees', title: '마켓 수수료', blurb: '남는 돈을 먼저 계산', icon: Calculator },
+  { id: 'video', title: '영상', blurb: '필요한 순간만 GIF·MP4로', icon: Film },
+  { id: 'image', title: '이미지', blurb: '자르고, 지우고, 가리고, 꾸미기', icon: ImageIcon },
   { id: 'blog', title: '블로그', blurb: '붙여넣기 전에 글 다듬기', icon: PenLine },
+  { id: 'fees', title: '마켓 수수료', blurb: '남는 돈을 먼저 계산', icon: Calculator },
 ]
 
 export const TOOLS: ToolDef[] = [
