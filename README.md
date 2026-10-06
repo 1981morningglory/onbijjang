@@ -45,6 +45,7 @@ GitHub 저장소를 Railway 에 연결하면 `main` 에 올릴 때마다 자동�
 | `PORT` | 서버 포트(Railway 가 자동으로 줍니다) |
 | `DATA_DIR` | 데이터 폴더. 지정하지 않으면 Railway 볼륨 경로, 그것도 없으면 `data/` |
 | `TRUSTED_NETWORK` | `1` 이면 팀원 누구나 팀 보관함 저장·서버 변환 가능 |
+| `ADMIN_PASSWORD` | 있으면 켜질 때 관리자 비밀번호와 전체마스터 계정 `admin` 의 비밀번호를 이 값으로 맞춤(8자 이상, 비밀번호를 잊었을 때) |
 
 ## 관리자
 

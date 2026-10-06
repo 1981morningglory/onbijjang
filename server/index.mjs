@@ -438,6 +438,30 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: '서버에서 문제가 생겼습니다.' })
 })
 
+// ── 관리자 비밀번호 지정(환경 변수) ───────────────────────
+// Railway 변수 ADMIN_PASSWORD 가 있으면 켜질 때마다 관리자 비밀번호와 전체마스터 계정 admin 을 그 값으로 맞춘다.
+// 비밀번호를 잊었을 때 쓰는 방법이다. 저장소에는 비밀번호를 적지 않는다(공개 저장소).
+{
+  const pw = process.env.ADMIN_PASSWORD
+  if (typeof pw === 'string' && pw.length >= 8) {
+    const auth = await readJson(AUTH_FILE, null)
+    if (!auth || !verifyPassword(pw, auth)) {
+      await writeJson(AUTH_FILE, { ...hashPassword(pw), createdAt: auth?.createdAt ?? new Date().toISOString(), changedAt: new Date().toISOString() })
+      console.log('[온비짱] ADMIN_PASSWORD 로 관리자 비밀번호를 맞췄습니다.')
+    }
+    const admin = users.find((u) => u.username.toLowerCase() === 'admin')
+    if (!admin) {
+      await saveUsers([...users, { id: crypto.randomBytes(8).toString('hex'), username: 'admin', name: '전체마스터', role: 'admin', access: {}, ...hashPassword(pw), tokenVersion: 0, createdAt: new Date().toISOString() }])
+      console.log('[온비짱] 전체마스터 계정 admin 을 만들었습니다.')
+    } else if (!verifyPassword(pw, admin) || admin.role !== 'admin' || admin.disabled) {
+      await saveUsers(users.map((u) => (u.id === admin.id ? { ...u, ...hashPassword(pw), role: 'admin', disabled: false, tokenVersion: (u.tokenVersion ?? 0) + 1 } : u)))
+      console.log('[온비짱] 계정 admin 을 ADMIN_PASSWORD 로 맞췄습니다.')
+    }
+  } else if (pw) {
+    console.warn('[온비짱] ADMIN_PASSWORD 는 8자 이상이어야 합니다. 적용하지 않았습니다.')
+  }
+}
+
 app.listen(PORT, HOST, () => {
   console.log(`[온비짱] 서버 실행 중: http://localhost:${PORT}  (데이터: ${DATA_DIR}${TRUSTED ? ', 믿을 수 있는 네트워크 모드' : ''})`)
   if (!DEV && !process.env.DATA_DIR && !process.env.RAILWAY_VOLUME_MOUNT_PATH && process.env.RAILWAY_ENVIRONMENT) {
