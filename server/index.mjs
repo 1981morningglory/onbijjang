@@ -438,6 +438,26 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: '서버에서 문제가 생겼습니다.' })
 })
 
+// ── 관리자 비밀번호 1회 재설정(2026-10) ──────────────────
+// 관리자 요청으로 관리자 비밀번호와 전체마스터 계정 admin 의 비밀번호를 한 번만 바꾼다.
+// 공개 저장소라 비밀번호 글자는 적지 않고 해시만 둔다. 적용 뒤에는 표시 파일이 남아 다시 바꾸지 않는다.
+{
+  const DONE = path.join(DATA_DIR, 'admin-reset-2026-10.done')
+  if (!fs.existsSync(DONE)) {
+    const HASHED = { salt: '9db94532aca39e279d69da58c35665ca', hash: '7db4a4c1e65c8818f8744e4e8770f04bdd08310c693be7ba384ca62556db6f468aaa86d06e88e299a74584592c853b5651ec407a738d04a41b302017c065c0ce' }
+    const auth = await readJson(AUTH_FILE, null)
+    await writeJson(AUTH_FILE, { ...HASHED, createdAt: auth?.createdAt ?? new Date().toISOString(), changedAt: new Date().toISOString() })
+    const admin = users.find((u) => u.username.toLowerCase() === 'admin')
+    if (!admin) {
+      await saveUsers([...users, { id: crypto.randomBytes(8).toString('hex'), username: 'admin', name: '전체마스터', role: 'admin', access: {}, ...HASHED, tokenVersion: 0, createdAt: new Date().toISOString() }])
+    } else {
+      await saveUsers(users.map((u) => (u.id === admin.id ? { ...u, ...HASHED, role: 'admin', disabled: false, tokenVersion: (u.tokenVersion ?? 0) + 1 } : u)))
+    }
+    await fsp.writeFile(DONE, new Date().toISOString(), 'utf8')
+    console.log('[온비짱] 관리자 비밀번호와 계정 admin 의 비밀번호를 재설정했습니다(1회).')
+  }
+}
+
 // ── 관리자 비밀번호 지정(환경 변수) ───────────────────────
 // Railway 변수 ADMIN_PASSWORD 가 있으면 켜질 때마다 관리자 비밀번호와 전체마스터 계정 admin 을 그 값으로 맞춘다.
 // 비밀번호를 잊었을 때 쓰는 방법이다. 저장소에는 비밀번호를 적지 않는다(공개 저장소).
