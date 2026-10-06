@@ -662,7 +662,15 @@ if (typeof module !== 'undefined') module.exports = BC;
       const codeLike = isEan() ? /^(NO\.?)?[0-9\-–—]+$/i : /^[A-Za-z0-9-]+$/;
       if (toks.length > 1 && toks.every(t => codeLike.test(t))) return toks.map(t => [t]);
     }
-    return lines.map(l => l.split('\t').map(c => c.trim().replace(/^"|"$/g, '')).filter(c => c !== ''));
+    return lines.map(l => {
+      if (l.includes('\t')) return l.split('\t').map(c => c.trim().replace(/^"|"$/g, '')).filter(c => c !== '');
+      // 탭 없이 공백으로 나뉜 줄: 앞이 회사코드·바코드 값이면 뒤는 제품명 (예: 15099-89039 2000노트)
+      const t = l.trim();
+      const m = isEan()
+        ? (t.match(/^((?:NO\.?\s*)?\d{5}\s*[-–—_]\s*\d{5})\s+(.+)$/i) || t.match(/^(\d{1,13})\s+(.+)$/))
+        : t.match(/^(R\d+|[\x21-\x7E]+)\s+(.+)$/i);
+      return m ? [m[1], m[2].trim()] : [t];
+    });
   }
 
   // 회사코드: 15099-89039 / 1509989039 / NO.15099-89039 / 15099 – 89039
@@ -935,8 +943,17 @@ if (typeof module !== 'undefined') module.exports = BC;
   document.querySelectorAll('input[name=mode], #fmts input').forEach(el => el.addEventListener('change', renderSave));
   ['codes', 'name', 'no', 'ori', 'ori-on', 'mag', 'xr', 'quiet'].forEach(id => $(id).addEventListener('input', refresh));
   $('codes').addEventListener('paste', () => setTimeout(() => {
-    const n = splitRows($('codes').value).length;
-    if (n > 1) toast(`${n}줄을 읽었습니다. 아래 생성 목록을 확인하세요.`);
+    const rows = splitRows($('codes').value).map(isEan() ? parseEanRow : parseRRow);
+    const named = rows.filter(r => !r.skip && r.name).length;
+    const msgs = [];
+    if (rows.length > 1) msgs.push(`${rows.length}줄을 읽었습니다.`);
+    // 두 번째 칸(제품명)이 있으면 맨 위 문구를 제품명으로
+    if (named) {
+      const topName = $('t-name');
+      if (!topName.checked) { topName.checked = true; refresh(); }
+      msgs.push('두 번째 칸을 제품명으로 넣었습니다.');
+    }
+    if (msgs.length) toast(msgs.join(' '));
   }, 120));
   $('clear').addEventListener('click', () => { $('codes').value = ''; $('codes').focus(); refresh(); });
   $('bh').addEventListener('input', () => { $('bh-r').value = $('bh').value; $('bh-o').textContent = `${$('bh').value}mm`; refresh(); });
