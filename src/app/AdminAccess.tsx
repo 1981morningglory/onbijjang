@@ -5,7 +5,7 @@ import { api } from '@/lib/api'
 import { Badge, Button, Callout, Dialog, EmptyState, Field, IconButton, Panel, Segmented, Select, Spinner, Switch, TextInput, toast } from '@/ui'
 import { canSee, useSite, type LinkApp, type SiteConfig } from './config'
 import { GROUPS, TOOLS, artUrl, type GroupId } from './registry'
-import { ALL_ROLES, ROLE_LABEL, ROLE_OPTIONS, useViewerStore, type Access, type PublicUser, type Role } from './viewer'
+import { ACCOUNT_ROLES, ALL_ROLES, ROLE_LABEL, ROLE_OPTIONS, useViewerStore, type Access, type AccountRole, type PublicUser, type Role } from './viewer'
 
 /** 등급 칩 — 눌러서 그 등급에게 보이기/감추기 */
 export function RoleChips({ value, onChange, disabled, size = 'md' }: { value: Role[]; onChange: (v: Role[]) => void; disabled?: boolean; size?: 'sm' | 'md' }) {
@@ -72,7 +72,7 @@ export function LinksEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: 
         <Link2 className="size-[18px] text-brand" aria-hidden />
         <div className="min-w-0 flex-1">
           <h3 className="text-base">새로 추가한 앱</h3>
-          <p className="text-xs text-muted">새로 만든 도구나 자주 쓰는 사이트를 메뉴에 추가합니다. 처음에는 NEW 표시가 붙고 직원·관리자에게만 보입니다.</p>
+          <p className="text-xs text-muted">새로 만든 도구나 자주 쓰는 사이트를 메뉴에 추가합니다. 처음에는 NEW 표시가 붙고 직원등급·전체마스터에게만 보입니다.</p>
         </div>
       </div>
       {live.length > 0 && (
@@ -166,6 +166,7 @@ export function DeletedEditor({ draft, setDraft }: { draft: SiteConfig; setDraft
 }
 
 // ── 계정 관리 ─────────────────────────────────────────────
+const ROLE_RANK: Record<AccountRole, number> = { admin: 0, member: 1, general: 2 }
 const fmtDate = (s: string | null) => (s ? new Date(s).toLocaleString('ko-KR', { year: '2-digit', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-')
 
 function AccessDialog({ user, onClose, onSaved }: { user: PublicUser | null; onClose: () => void; onSaved: (u: PublicUser) => void }) {
@@ -274,7 +275,7 @@ export function AccountsEditor() {
   const reloadViewer = useViewerStore((s) => s.load)
   const [users, setUsers] = useState<PublicUser[] | null>(null)
   const [q, setQ] = useState('')
-  const [form, setForm] = useState({ username: '', name: '', password: '', role: 'member' as 'member' | 'admin' })
+  const [form, setForm] = useState({ username: '', name: '', password: '', role: 'member' as AccountRole })
   const [busy, setBusy] = useState<string | null>(null)
   const [accessOf, setAccessOf] = useState<PublicUser | null>(null)
   const [reset, setReset] = useState<{ user: PublicUser; pw: string } | null>(null)
@@ -310,13 +311,13 @@ export function AccountsEditor() {
   }
   const filtered = useMemo(() => {
     const k = q.trim().toLowerCase()
-    return (users ?? []).filter((u) => !k || `${u.name} ${u.username}`.toLowerCase().includes(k)).sort((a, b) => (a.role === b.role ? a.name.localeCompare(b.name, 'ko') : a.role === 'admin' ? -1 : 1))
+    return (users ?? []).filter((u) => !k || `${u.name} ${u.username}`.toLowerCase().includes(k)).sort((a, b) => ROLE_RANK[a.role] - ROLE_RANK[b.role] || a.name.localeCompare(b.name, 'ko'))
   }, [users, q])
 
   return (
     <div className="flex flex-col gap-5">
       <Callout tone="info" title="등급">
-        <b>방문자</b>는 로그인하지 않은 사람, <b>직원</b>은 로그인한 팀원, <b>관리자</b>는 이 관리자 화면까지 쓰는 사람입니다. 도구별로 어떤 등급에게 보일지는 [메뉴·앱 관리]에서, 특정 사람만 다르게 하려면 아래 목록의 [도구 권한]에서 정합니다.
+        <b>전체마스터</b>는 이 관리자 화면까지 쓰는 사람, <b>직원등급</b>은 팀원(팀 보관함 저장 가능), <b>일반등급</b>은 로그인한 일반 사용자, <b>전체공개</b>는 로그인하지 않은 모든 사람입니다. 도구별로 어떤 등급에게 보일지는 [메뉴·앱 관리]에서, 특정 사람만 다르게 하려면 아래 목록의 [도구 권한]에서 정합니다.
       </Callout>
 
       <Panel className="p-5">
@@ -328,7 +329,7 @@ export function AccountsEditor() {
             <Field label="이름">{(id) => <TextInput id={id} value={form.name} maxLength={30} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="예: 김담당" />}</Field>
             <Field label="아이디" hint="한글·영문·숫자 2~30자">{(id) => <TextInput id={id} value={form.username} maxLength={30} autoComplete="off" onChange={(e) => setForm({ ...form, username: e.target.value })} />}</Field>
             <Field label="처음 비밀번호" hint="6자 이상 · 로그인 후 본인이 바꿀 수 있음">{(id) => <TextInput id={id} value={form.password} autoComplete="new-password" onChange={(e) => setForm({ ...form, password: e.target.value })} />}</Field>
-            <Field label="등급">{(id) => <Select id={id} value={form.role} onValue={(role) => setForm({ ...form, role })} options={[{ value: 'member', label: '직원' }, { value: 'admin', label: '관리자' }]} />}</Field>
+            <Field label="등급">{(id) => <Select id={id} value={form.role} onValue={(role) => setForm({ ...form, role })} options={ACCOUNT_ROLES} />}</Field>
           </div>
           <Button type="submit" variant="primary" icon={Plus} loading={busy === 'create'} className="self-start">
             계정 만들기
@@ -382,8 +383,8 @@ export function AccountsEditor() {
                           value={u.role}
                           aria-label={`${u.name} 등급`}
                           onValue={(role) => void run(`role:${u.id}`, async () => replace((await api<{ user: PublicUser }>(`/admin/users/${u.id}`, { method: 'PATCH', body: { role } })).user))}
-                          options={[{ value: 'member', label: '직원' }, { value: 'admin', label: '관리자' }]}
-                          className="h-8! w-28!"
+                          options={ACCOUNT_ROLES}
+                          className="h-8! w-32!"
                         />
                       </td>
                       <td className="px-4 py-2.5">

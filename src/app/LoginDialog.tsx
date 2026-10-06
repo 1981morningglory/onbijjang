@@ -6,7 +6,7 @@ import { api } from '@/lib/api'
 import { Button, Callout, Dialog, Field, MenuItem, Popover, TextInput, toast } from '@/ui'
 import { ROLE_LABEL, useViewerStore } from './viewer'
 
-/** 직원 로그인 창 — 머리말의 [로그인] 버튼과 권한 안내 화면에서 연다 */
+/** 로그인 창 — 머리말의 [로그인] 버튼과 권한 안내 화면에서 연다 */
 export const useLoginDialog = create<{ open: boolean; show: () => void; hide: () => void }>((set) => ({
   open: false,
   show: () => set({ open: true }),
@@ -40,9 +40,9 @@ export function LoginDialog() {
   }
 
   return (
-    <Dialog open={open} onClose={hide} title="직원 로그인" size="sm">
+    <Dialog open={open} onClose={hide} title="로그인" size="sm">
       <form onSubmit={submit} className="flex flex-col gap-4">
-        <p className="text-sm text-muted">관리자에게 받은 아이디로 로그인하면 직원용 도구가 열립니다.</p>
+        <p className="text-sm text-muted">관리자에게 받은 아이디로 로그인하면 내 등급에 맞는 도구가 열립니다.</p>
         <Field label="아이디">{(id) => <TextInput id={id} autoFocus autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} />}</Field>
         <Field label="비밀번호">{(id) => <TextInput id={id} type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />}</Field>
         {error && <Callout tone="danger">{error}</Callout>}
@@ -94,7 +94,7 @@ function PasswordDialog({ open, onClose }: { open: boolean; onClose: () => void 
   )
 }
 
-/** 머리말 오른쪽 — 방문자는 [로그인], 로그인한 사람은 이름 메뉴 */
+/** 머리말 오른쪽 — 로그인 전에는 [로그인], 로그인한 사람은 이름 메뉴 */
 export function AccountButton() {
   const user = useViewerStore((s) => s.user)
   const master = useViewerStore((s) => s.master)
@@ -112,7 +112,7 @@ export function AccountButton() {
       </Button>
     )
   }
-  const label = user ? user.name : '관리자'
+  const label = user ? user.name : '전체마스터'
   return (
     <>
       <Popover

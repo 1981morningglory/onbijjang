@@ -80,13 +80,13 @@ function isMasterAdmin(req) {
   return true
 }
 
-// ── 직원 계정 ─────────────────────────────────────────────
+// ── 계정 ─────────────────────────────────────────────────
 // users.json 에 계정을 두고, 로그인 쿠키는 서명된 토큰(서버를 다시 켜도 유지)으로 준다.
-// role: admin(관리자 화면 사용) · member(직원). 로그인하지 않은 사람은 방문자.
+// role: admin(전체마스터, 관리자 화면 사용) · member(직원등급) · general(일반등급). 로그인하지 않은 사람은 전체공개.
 // access: 계정별 예외 — { 도구id: 'allow' | 'deny' } (관리자 메뉴 설정의 등급별 노출보다 우선)
 const USER_COOKIE = 'ob_user'
 const USER_TTL_MS = 1000 * 60 * 60 * 24 * 30
-const ROLES = ['admin', 'member']
+const ROLES = ['admin', 'member', 'general']
 const SECRET = (() => {
   try {
     return fs.readFileSync(SECRET_FILE, 'utf8').trim()
@@ -151,7 +151,8 @@ function requireAdmin(req, res, next) {
 }
 /** 팀원이면 되는 동작. 공개 배포에서는 관리자만, 믿을 수 있는 네트워크에서는 누구나. */
 function requireMember(req, res, next) {
-  if (TRUSTED || currentUser(req)) return next()
+  const role = currentUser(req)?.role
+  if (TRUSTED || role === 'member' || role === 'admin') return next()
   requireAdmin(req, res, next)
 }
 function validPassword(pw) {
@@ -236,7 +237,7 @@ app.post('/api/admin/password', requireAdmin, async (req, res) => {
   res.json({ ok: true })
 })
 
-// ── 직원 로그인 ───────────────────────────────────────────
+// ── 로그인 ───────────────────────────────────────────────
 const USERNAME_RE = /^[0-9A-Za-z가-힣._-]{2,30}$/
 const validUserPassword = (pw) => typeof pw === 'string' && pw.length >= 6 && pw.length <= 200
 
@@ -315,7 +316,7 @@ app.patch('/api/admin/users/:uid', requireAdmin, async (req, res) => {
   }
   if (b.role !== undefined) {
     if (!ROLES.includes(b.role)) return res.status(400).json({ error: '등급을 골라 주세요.' })
-    if (me?.id === u.id && b.role !== 'admin' && !isMasterAdmin(req)) return res.status(400).json({ error: '내 계정의 관리자 등급은 직접 내릴 수 없습니다.' })
+    if (me?.id === u.id && b.role !== 'admin' && !isMasterAdmin(req)) return res.status(400).json({ error: '내 계정의 전체마스터 등급은 직접 내릴 수 없습니다.' })
     next.role = b.role
   }
   if (b.disabled !== undefined) {
@@ -423,7 +424,8 @@ if (fs.existsSync(path.join(DIST_DIR, 'index.html'))) {
   app.use('/assets', express.static(path.join(DIST_DIR, 'assets'), { index: false, maxAge: '365d', immutable: true }))
   // 없는 assets 파일은 첫 화면(HTML)으로 대신 답하지 않고 404 로 알린다.
   app.use('/assets', (_req, res) => res.status(404).end())
-  app.use(express.static(DIST_DIR, { index: false, maxAge: '1h' }))
+  // 단독 HTML 페이지(바코드 생성기 등)는 고치면 바로 반영되도록 매번 새로 받게 한다
+  app.use(express.static(DIST_DIR, { index: false, maxAge: '1h', setHeaders: (res, file) => { if (file.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache') } }))
   app.get(/^(?!\/api\/).*/, (_req, res) => {
     res.setHeader('Cache-Control', 'no-cache')
     res.sendFile(path.join(DIST_DIR, 'index.html'))

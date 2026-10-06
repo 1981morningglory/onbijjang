@@ -1,16 +1,24 @@
 import { create } from 'zustand'
 import { api, ApiError } from '@/lib/api'
 
-/** 지금 보고 있는 사람 — 방문자(로그인 안 함) · 직원 · 관리자. 메뉴 노출과 계정별 예외 권한에 쓴다. */
+/** 지금 보고 있는 사람 — 등급 4단계: 전체공개(로그인 안 함) · 일반등급 · 직원등급 · 전체마스터. 메뉴 노출과 계정별 예외 권한에 쓴다. */
 
-export type Role = 'guest' | 'member' | 'admin'
+export type Role = 'guest' | 'general' | 'member' | 'admin'
 export const ROLE_OPTIONS: ReadonlyArray<{ value: Role; label: string }> = [
-  { value: 'guest', label: '방문자' },
-  { value: 'member', label: '직원' },
-  { value: 'admin', label: '관리자' },
+  { value: 'admin', label: '전체마스터' },
+  { value: 'member', label: '직원등급' },
+  { value: 'general', label: '일반등급' },
+  { value: 'guest', label: '전체공개' },
 ]
-export const ALL_ROLES: Role[] = ['guest', 'member', 'admin']
-export const ROLE_LABEL: Record<Role, string> = { guest: '방문자', member: '직원', admin: '관리자' }
+export const ALL_ROLES: Role[] = ['admin', 'member', 'general', 'guest']
+export const ROLE_LABEL: Record<Role, string> = { admin: '전체마스터', member: '직원등급', general: '일반등급', guest: '전체공개' }
+/** 계정에 줄 수 있는 등급(전체공개는 로그인하지 않은 상태라 계정 등급이 아님) */
+export const ACCOUNT_ROLES = [
+  { value: 'admin', label: '전체마스터' },
+  { value: 'member', label: '직원등급' },
+  { value: 'general', label: '일반등급' },
+] as const
+export type AccountRole = (typeof ACCOUNT_ROLES)[number]['value']
 
 export type Access = Record<string, 'allow' | 'deny'>
 
@@ -18,7 +26,7 @@ export interface PublicUser {
   id: string
   username: string
   name: string
-  role: 'admin' | 'member'
+  role: AccountRole
   access: Access
   disabled: boolean
   createdAt: string
@@ -32,7 +40,7 @@ export interface Viewer {
 
 interface ViewerState {
   user: PublicUser | null
-  /** 관리자 화면을 쓸 수 있음(관리자 등급 계정 또는 관리자 비밀번호) */
+  /** 관리자 화면을 쓸 수 있음(전체마스터 계정 또는 관리자 비밀번호) */
   admin: boolean
   /** 관리자 비밀번호로 들어온 상태 */
   master: boolean

@@ -81,7 +81,7 @@ function MenuEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: (c: Site
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-ink-2">
-          스위치를 끄면 모두에게서 숨겨집니다. <b className="text-ink">방문자·직원·관리자</b> 칩을 눌러 등급별로 보이기/감추기를 정하고, 휴지통으로 메뉴에서 삭제합니다(아래에서 복원). 지금 <b className="num text-ink">{onCount}</b> / {TOOLS.length}개가 켜져 있습니다.
+          스위치를 끄면 모두에게서 숨겨집니다. <b className="text-ink">전체마스터·직원등급·일반등급·전체공개</b> 칩을 눌러 등급별로 보이기/감추기를 정하고, 휴지통으로 메뉴에서 삭제합니다(아래에서 복원). 지금 <b className="num text-ink">{onCount}</b> / {TOOLS.length}개가 켜져 있습니다.
         </p>
         <div className="flex gap-2">
           <Button size="sm" onClick={() => setAll(true)}>
@@ -659,7 +659,7 @@ export function Admin() {
       <div className="px-4">
         {viewerUser && (
           <Callout tone="warn" className="mx-auto mt-10 max-w-sm">
-            {viewerUser.name} 님 계정은 직원 등급이라 관리자 화면을 쓸 수 없습니다. 필요하면 관리자에게 등급 변경을 요청하세요.
+            {viewerUser.name} 님 계정은 전체마스터 등급이 아니라 관리자 화면을 쓸 수 없습니다. 필요하면 전체마스터에게 등급 변경을 요청하세요.
           </Callout>
         )}
         <PasswordForm
@@ -671,7 +671,7 @@ export function Admin() {
         />
         {auth.configured && !viewerUser && (
           <p className="mt-4 text-center text-sm text-muted">
-            관리자 등급 계정이 있으면{' '}
+            전체마스터 계정이 있으면{' '}
             <button type="button" onClick={showLogin} className="font-semibold text-brand underline">
               계정으로 로그인
             </button>

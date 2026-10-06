@@ -55,6 +55,8 @@ export interface SiteConfig {
   /** 전체 도구 id 순서. 그룹 안에서의 순서로 쓰인다. */
   toolOrder: string[]
   links: LinkApp[]
+  /** 등급 체계 버전. 2 = 4단계(전체공개·일반등급·직원등급·전체마스터) */
+  rolesV?: 2
   notice: { enabled: boolean; text: string }
   presets: TeamPresets
   updatedAt?: string
@@ -97,6 +99,7 @@ export function defaultConfig(): SiteConfig {
     groups: Object.fromEntries(GROUPS.map((g) => [g.id, { enabled: true }])) as SiteConfig['groups'],
     toolOrder: TOOLS.map((t) => t.id),
     links: [],
+    rolesV: 2,
     notice: { enabled: false, text: '' },
     presets: structuredClone(DEFAULT_PRESETS),
   }
@@ -107,6 +110,13 @@ export function normalizeConfig(raw: unknown): SiteConfig {
   const base = defaultConfig()
   if (!raw || typeof raw !== 'object') return base
   const r = raw as Partial<SiteConfig>
+  // 3단계(방문자·직원·관리자) 시절 저장분: 방문자에게 보이던 것은 일반등급에게도 보이게 옮긴다
+  const migrate = r.rolesV !== 2
+  const cleanRoles = (v: unknown): Role[] => {
+    const roles = cleanRoleList(v)
+    if (migrate && roles.includes('guest') && !roles.includes('general')) roles.push('general')
+    return ALL_ROLES.filter((x) => roles.includes(x))
+  }
   for (const t of TOOLS) {
     const saved = r.tools?.[t.id]
     if (saved) base.tools[t.id] = { enabled: saved.enabled !== false, badge: saved.badge === 'new' ? 'new' : null, roles: cleanRoles(saved.roles), deleted: saved.deleted === true }
@@ -171,7 +181,7 @@ export const useSite = create<SiteState>((set) => ({
   },
 }))
 
-function cleanRoles(v: unknown): Role[] {
+function cleanRoleList(v: unknown): Role[] {
   if (!Array.isArray(v)) return [...ALL_ROLES]
   return ALL_ROLES.filter((r) => v.includes(r))
 }
