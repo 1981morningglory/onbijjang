@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { normalizeConfig } from './config'
 
 describe('신상앱', () => {
-  it('설정이 없던 서버: 바코드가 첫 신상앱', () => {
-    expect(normalizeConfig({ version: 1, tools: {} }).newApps.items).toEqual(['barcode'])
+  it('설정이 없던 서버: 출시 뒤 추가한 앱(바코드·SNS 영상 받기)이 신상앱', () => {
+    expect(normalizeConfig({ version: 1, tools: {} }).newApps.items.sort()).toEqual(['barcode', 'saver'])
+  })
+  it('SNS 영상 받기는 처음엔 직원등급 이상만', () => {
+    expect(normalizeConfig({ version: 1, tools: {} }).tools.saver.roles.sort()).toEqual(['admin', 'member'])
   })
   it('저장 뒤 새로 생긴 도구는 자동으로 맨 앞 + NEW 표시', () => {
     const known = normalizeConfig({ version: 1, tools: {} }).knownTools!.filter((id) => id !== 'blog')

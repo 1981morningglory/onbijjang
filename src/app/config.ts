@@ -120,7 +120,7 @@ export const DEFAULT_PRESETS: TeamPresets = {
 export function defaultConfig(): SiteConfig {
   return {
     version: 1,
-    tools: Object.fromEntries(TOOLS.map((t) => [t.id, { enabled: true, badge: null, roles: [...ALL_ROLES], deleted: false }])),
+    tools: Object.fromEntries(TOOLS.map((t) => [t.id, { enabled: true, badge: null, roles: t.roles ? ALL_ROLES.filter((r) => t.roles!.includes(r)) : [...ALL_ROLES], deleted: false }])),
     groups: Object.fromEntries(GROUPS.map((g) => [g.id, { enabled: true }])) as SiteConfig['groups'],
     groupOrder: GROUPS.map((g) => g.id),
     toolOrder: TOOLS.map((t) => t.id),
