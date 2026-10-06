@@ -397,6 +397,8 @@ export default function SaverTool() {
                 className="aspect-video w-full max-w-[760px] rounded-md bg-ink"
                 src={`https://www.youtube-nocookie.com/embed/${ytId}?rel=0`}
                 allow="encrypted-media; picture-in-picture"
+                // 유튜브 플레이어는 출처(Referer)가 없으면 '오류 153'을 낸다. 사이트 전체 정책(same-origin)과 달리 이 미리보기에만 주소(도메인)를 보낸다
+                referrerPolicy="strict-origin-when-cross-origin"
                 allowFullScreen
               />
             ) : info.thumbnail ? (
