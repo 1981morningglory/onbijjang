@@ -24,6 +24,13 @@ export const TEXT_FORMATS = [
   { value: 'txt', label: 'TXT (대본만)' },
   { value: 'srt', label: 'SRT (시간 포함 자막)' },
 ] as const
+export const ASR_LANGS = [
+  { value: 'ko', label: '한국어' },
+  { value: 'en', label: '영어' },
+  { value: 'ja', label: '일본어' },
+  { value: 'zh', label: '중국어' },
+  { value: 'auto', label: '자동 감지' },
+] as const
 export const BITRATES = [
   { value: '320', label: '320kbps (최고)' },
   { value: '256', label: '256kbps' },

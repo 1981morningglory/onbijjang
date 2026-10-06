@@ -22,6 +22,7 @@ import { createRequire } from 'node:module'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
+import { ASR_LANGS, ASR_MAX_SECONDS, asrQueue, segmentsToSrt, transcribePcm } from './asr.mjs'
 
 const require = createRequire(import.meta.url)
 const MAX_ACTIVE = 2
@@ -372,6 +373,58 @@ export default async function mediaRoutes(app, { DATA_DIR, TRUSTED, currentUser,
     })
   }
 
+  /** 소리를 받아 16kHz 모노로 바꾼 뒤 음성 인식 → SRT. 남길 구간만 인식하고 시간은 원본 기준으로 둔다 */
+  async function speechToSrt(j, bin, o, edited) {
+    if (!FFMPEG) throw new Error('이 서버에 영상 변환 프로그램(ffmpeg)이 없습니다.')
+    j.stage = '소리를 받는 중'
+    await spawnTracked(j, bin, [...baseArgs(), '--newline', '--no-part', '--max-filesize', '1G', '--match-filter', `duration <? ${MAX_DURATION}`, '-f', 'ba/b', '-o', path.join(j.dir, 'asr.%(ext)s'), o.url], (line) => {
+      const m = line.match(/\[download\]\s+(\d+(?:\.\d+)?)%/)
+      if (m) j.progress = Math.min(20, Number(m[1]) * 0.2)
+    })
+    const src = (await fsp.readdir(j.dir)).filter((f) => f.startsWith('asr.')).map((f) => path.join(j.dir, f))[0]
+    if (!src) throw Object.assign(new Error('no file'), { stderr: 'ERROR: 소리 파일을 받지 못했습니다.' })
+    const info = await probe(src)
+    if (!info.a) throw new Error('이 영상에는 소리가 없습니다.')
+    const dur = info.duration || o.duration
+    const ranges = edited ? keepRanges(o.edit.mode, o.edit.ranges, dur) : [[0, dur || ASR_MAX_SECONDS]]
+    if (!ranges.length) throw new Error('남는 구간이 없습니다. 구간 시간을 확인하세요.')
+    const total = ranges.reduce((a, [s, e]) => a + (e - s), 0)
+    if (total > ASR_MAX_SECONDS + 1) throw new Error(`음성 인식은 한 번에 ${ASR_MAX_SECONDS / 60}분까지 할 수 있습니다. [구간 편집]으로 나눠서 받으세요.`)
+    j.stage = '음성 인식 차례를 기다리는 중'
+    j.progress = 20
+    return asrQueue(async () => {
+      const segs = []
+      let done = 0
+      for (const [s, e] of ranges) {
+        if (j.status === 'canceled') throw Object.assign(new Error('canceled'), { canceled: true })
+        const pcmFile = path.join(j.dir, 'asr.pcm')
+        await run(FFMPEG, ['-v', 'error', '-y', '-ss', String(s), '-to', String(e), '-i', src, '-vn', '-ac', '1', '-ar', '16000', '-f', 'f32le', pcmFile], { timeout: 10 * 60_000 })
+        const buf = await fsp.readFile(pcmFile)
+        await fsp.rm(pcmFile, { force: true })
+        const pcm = new Float32Array(buf.buffer, buf.byteOffset, Math.floor(buf.length / 4))
+        const len = e - s
+        j.stage = '음성을 글로 바꾸는 중'
+        segs.push(
+          ...(await transcribePcm(pcm.byteOffset % 4 ? new Float32Array(pcm) : pcm, {
+            DATA_DIR,
+            language: ASR_LANGS[o.asrLang] !== undefined ? o.asrLang : 'ko',
+            offset: s,
+            isCanceled: () => j.status === 'canceled',
+            onDownload: (pct) => {
+              j.stage = `음성 인식 모델을 처음 한 번 받는 중 (${Math.round(pct)}%)`
+            },
+            onProgress: (f) => {
+              j.stage = '음성을 글로 바꾸는 중'
+              j.progress = 20 + ((done + f * len) / total) * 79
+            },
+          })),
+        )
+        done += len
+      }
+      return segmentsToSrt(segs)
+    })
+  }
+
   async function runJob(j) {
     const o = j.opts
     j.dir = await fsp.mkdtemp(path.join(os.tmpdir(), TEMP_PREFIX))
@@ -387,17 +440,27 @@ export default async function mediaRoutes(app, { DATA_DIR, TRUSTED, currentUser,
     }
 
     if (o.kind === 'transcript') {
-      j.stage = '자막을 받는 중'
-      const langs = o.subLang ? [o.subLang] : ['ko', 'ko-KR', 'en']
-      await spawnTracked(j, bin, [...baseArgs(), '--skip-download', '--write-subs', '--write-auto-subs', '--sub-langs', langs.join(','), '--sub-format', 'srt/vtt/best', '--convert-subs', 'srt', '-o', path.join(j.dir, 'sub.%(ext)s'), o.url])
-      const files = (await fsp.readdir(j.dir)).filter((f) => f.endsWith('.srt'))
-      if (!files.length) throw Object.assign(new Error('no subs'), { stderr: 'There are no subtitles' })
-      let srt = await fsp.readFile(path.join(j.dir, files[0]), 'utf8')
-      if (edited) srt = filterSrt(srt, keepRanges(o.edit.mode, o.edit.ranges, o.duration))
+      let srt = null
+      let how = '자막'
+      if (o.asr !== 'always') {
+        j.stage = '자막을 받는 중'
+        const langs = o.subLang ? [o.subLang] : ['ko', 'ko-KR', 'en']
+        await spawnTracked(j, bin, [...baseArgs(), '--skip-download', '--write-subs', '--write-auto-subs', '--sub-langs', langs.join(','), '--sub-format', 'srt/vtt/best', '--convert-subs', 'srt', '-o', path.join(j.dir, 'sub.%(ext)s'), o.url]).catch((e) => {
+          if (e.canceled || o.asr === 'never') throw e
+        })
+        const files = (await fsp.readdir(j.dir)).filter((f) => f.endsWith('.srt'))
+        if (files.length) srt = await fsp.readFile(path.join(j.dir, files[0]), 'utf8')
+        else if (o.asr === 'never') throw Object.assign(new Error('no subs'), { stderr: 'There are no subtitles' })
+      }
+      if (srt == null) {
+        srt = await speechToSrt(j, bin, o, edited)
+        how = '음성인식'
+      } else if (edited) srt = filterSrt(srt, keepRanges(o.edit.mode, o.edit.ranges, o.duration))
       const text = o.format === 'srt' ? srt : srtToText(srt)
-      const outName = `${base}${tag}_대본.${o.format}`
+      if (!text.trim()) throw new Error('알아들을 수 있는 말소리가 없습니다(음악만 있거나 소리가 작을 수 있습니다).')
+      const outName = `${base}${tag}_${how === '음성인식' ? '대본(음성인식)' : '대본'}.${o.format}`
       const out = path.join(j.dir, 'out.' + o.format)
-      await fsp.writeFile(out, '﻿' + text, 'utf8')
+      await fsp.writeFile(out, '\ufeff' + text, 'utf8')
       return { out, outName }
     }
 
@@ -503,6 +566,8 @@ export default async function mediaRoutes(app, { DATA_DIR, TRUSTED, currentUser,
         subLang: typeof b.subLang === 'string' && /^[\w-]{1,20}$/.test(b.subLang) ? b.subLang : '',
         title: typeof b.title === 'string' ? b.title.slice(0, 200) : '',
         name: typeof b.name === 'string' ? b.name.slice(0, 120) : '',
+        asr: ['auto', 'always', 'never'].includes(b.asr) ? b.asr : 'auto',
+        asrLang: typeof b.asrLang === 'string' && b.asrLang in ASR_LANGS ? b.asrLang : 'ko',
         duration: Number(b.duration) || 0,
         edit: { enabled: Boolean(b.edit?.enabled) && ranges.length > 0, mode: b.edit?.mode === 'cut' ? 'cut' : 'keep', ranges },
       },

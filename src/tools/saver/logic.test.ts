@@ -70,3 +70,23 @@ describe('파일 이름', () => {
     expect(fileNameFromTitle('')).toBe('영상')
   })
 })
+
+describe('음성 인식', () => {
+  it('5분씩 끊어 인식하고 시간을 원본 기준으로 맞춘다', async () => {
+    // @ts-expect-error — 서버 모듈
+    const { transcribePcm, segmentsToSrt } = await import('../../../server/routes/asr.mjs')
+    const calls: number[] = []
+    const fake = async (pcm: Float32Array) => {
+      calls.push(pcm.length / 16000)
+      return { text: '', chunks: [{ timestamp: [1, 3], text: ' 안녕하세요 ' }, { timestamp: [3, 4], text: '안녕하세요' }, { timestamp: [10, null], text: '끝' }] }
+    }
+    const progress: number[] = []
+    const segs = await transcribePcm(new Float32Array(16000 * 400), { offset: 60, transcriber: fake, onProgress: (f: number) => progress.push(f) })
+    expect(calls).toEqual([300, 100])
+    expect(segs[0]).toEqual({ start: 61, end: 64, text: '안녕하세요' })
+    expect(segs[1]).toEqual({ start: 70, end: 360, text: '끝' })
+    expect(segs[3].end).toBe(460)
+    expect(progress.at(-1)).toBe(1)
+    expect(segmentsToSrt(segs.slice(0, 1))).toBe('1\n00:01:01,000 --> 00:01:04,000\n안녕하세요\n')
+  })
+})

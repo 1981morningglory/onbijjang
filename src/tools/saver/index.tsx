@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, ApiError } from '@/lib/api'
 import { usePersistentState } from '@/lib/hooks'
 import { Badge, Button, Callout, EmptyState, Field, IconButton, Panel, Progress, Section, Segmented, Select, SendToMenu, Spinner, Stage, Switch, TextInput, ToolLayout, toast } from '@/ui'
-import { AUDIO_FORMATS, BITRATES, TEXT_FORMATS, VIDEO_FORMATS, extractUrl, fileNameFromTitle, formatTime, keptRanges, parseTime, siteOf, youtubeId, type EditMode, type Kind } from './logic'
+import { ASR_LANGS, AUDIO_FORMATS, BITRATES, TEXT_FORMATS, VIDEO_FORMATS, extractUrl, fileNameFromTitle, formatTime, keptRanges, parseTime, siteOf, youtubeId, type EditMode, type Kind } from './logic'
 
 const K = (n: string) => `onbijjang:saver:${n}`
 
@@ -78,6 +78,8 @@ export default function SaverTool() {
   const [height, setHeight] = usePersistentState(K('height'), '0')
   const [abr, setAbr] = usePersistentState(K('abr'), '192')
   const [subLang, setSubLang] = useState('')
+  const [asrMode, setAsrMode] = usePersistentState<'auto' | 'always'>(K('asr'), 'auto')
+  const [asrLang, setAsrLang] = usePersistentState(K('asrLang'), 'ko')
   const [fileName, setFileName] = useState('')
   const [editOn, setEditOn] = useState(false)
   const [mode, setMode] = useState<EditMode>('keep')
@@ -157,7 +159,7 @@ export default function SaverTool() {
       const { id } = await api<{ id: string }>('/media/jobs', {
         method: 'POST',
         body: {
-          url: info.url, kind, format, height: Number(height), abr: Number(abr), subLang, title: info.title, name: fileName.trim() || fileNameFromTitle(info.title), duration,
+          url: info.url, kind, format, height: Number(height), abr: Number(abr), subLang, asr: subOptions.length ? asrMode : 'always', asrLang, title: info.title, name: fileName.trim() || fileNameFromTitle(info.title), duration,
           edit: { enabled: editActive, mode, ranges: validRanges },
         },
       })
@@ -203,7 +205,8 @@ export default function SaverTool() {
   }
 
   const busy = job && (job.status === 'queued' || job.status === 'running')
-  const transcriptMissing = kind === 'transcript' && info && !subOptions.length
+  const noSubs = Boolean(info) && !subOptions.length
+  const useSpeech = kind === 'transcript' && (noSubs || asrMode === 'always')
 
   if (authErr) {
     return (
@@ -228,7 +231,7 @@ export default function SaverTool() {
           ]}
         />
         <p className="-mt-1 text-xs text-muted">
-          {kind === 'video' ? '자막을 입히지 않은 원본 영상을 받습니다.' : kind === 'audio' ? '영상에서 소리만 뽑아 받습니다.' : '영상에 붙은 자막을 글로 받습니다. 자막이 없는 영상은 받을 수 없습니다.'}
+          {kind === 'video' ? '자막을 입히지 않은 원본 영상을 받습니다.' : kind === 'audio' ? '영상에서 소리만 뽑아 받습니다.' : '자막이 있으면 자막을, 없으면 말소리를 인식해서 글로 받습니다.'}
         </p>
       </Section>
 
@@ -253,9 +256,33 @@ export default function SaverTool() {
         {kind === 'transcript' && (
           <>
             <Field label="파일 형식">{(id) => <Select id={id} value={tfmt} onValue={setTfmt} options={TEXT_FORMATS} />}</Field>
-            <Field label="언어">
-              {(id) => <Select id={id} value={subLang} onValue={setSubLang} disabled={!subOptions.length} options={subOptions.length ? subOptions : [{ value: '', label: info ? '이 영상에는 자막이 없습니다' : '링크를 먼저 불러오세요' }]} />}
-            </Field>
+            {!noSubs && (
+              <Segmented
+                label="대본 만드는 방법"
+                block
+                size="sm"
+                value={asrMode}
+                onValue={setAsrMode}
+                options={[
+                  { value: 'auto', label: '자막 사용' },
+                  { value: 'always', label: '음성 인식' },
+                ]}
+              />
+            )}
+            {useSpeech ? (
+              <>
+                <Field label="말하는 언어" hint="영상 속 말소리를 듣고 글로 바꿉니다. 언어를 정확히 고르면 더 잘 알아듣습니다.">
+                  {(id) => <Select id={id} value={asrLang} onValue={setAsrLang} options={ASR_LANGS} />}
+                </Field>
+                <p className="text-xs text-muted">
+                  {noSubs && info ? '이 영상에는 자막이 없어 음성 인식으로 대본을 만듭니다. ' : ''}10분짜리 영상이면 몇 분쯤 걸리고, 처음 한 번은 서버가 인식 모델(수백 MB)을 받느라 몇 분 더 걸립니다. 사람 이름·전문 용어는 틀릴 수 있으니 확인하세요.
+                </p>
+              </>
+            ) : (
+              <Field label="자막 언어">
+                {(id) => <Select id={id} value={subLang} onValue={setSubLang} disabled={!subOptions.length} options={subOptions.length ? subOptions : [{ value: '', label: '링크를 먼저 불러오세요' }]} />}
+              </Field>
+            )}
           </>
         )}
       </Section>
@@ -308,8 +335,8 @@ export default function SaverTool() {
             </Button>
           </>
         ) : (
-          <Button variant="primary" icon={Download} block disabled={!info || !!rangeErr || Boolean(transcriptMissing) || (status != null && !status.ready && !status.installing)} onClick={start}>
-            {kind === 'video' ? `영상 받기 (${vfmt.toUpperCase()})` : kind === 'audio' ? `소리 받기 (${afmt.toUpperCase()})` : `대본 받기 (${tfmt.toUpperCase()})`}
+          <Button variant="primary" icon={Download} block disabled={!info || !!rangeErr || (status != null && !status.ready && !status.installing)} onClick={start}>
+            {kind === 'video' ? `영상 받기 (${vfmt.toUpperCase()})` : kind === 'audio' ? `소리 받기 (${afmt.toUpperCase()})` : `${useSpeech ? '음성 인식 대본' : '대본'} 받기 (${tfmt.toUpperCase()})`}
           </Button>
         )}
         {job?.status === 'error' && <Callout tone="danger">{job.error}</Callout>}
@@ -419,7 +446,7 @@ export default function SaverTool() {
           </Stage>
           {editOn && duration > 0 && !rangeErr && <Timeline duration={duration} kept={kept} />}
           {info.isLive && <Callout tone="warn">진행 중인 라이브 방송은 받을 수 없습니다.</Callout>}
-          {transcriptMissing && <Callout tone="warn">이 영상에는 자막이 없어 대본을 받을 수 없습니다. [영상]이나 [소리만]으로 받아 보세요.</Callout>}
+          {kind === 'transcript' && noSubs && <Callout tone="info">이 영상에는 자막이 없습니다. 말소리를 인식해서 대본을 만들어 드립니다.</Callout>}
         </Panel>
       ) : (
         !loadingInfo && (
