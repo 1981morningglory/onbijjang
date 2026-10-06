@@ -166,7 +166,7 @@ export const TOOLS: ToolDef[] = [
     id: 'barcode', group: 'doc', title: '바코드 생성',
     summary: '회사코드로 EAN-13(평형·롱바)과 쿠팡 R 바코드를 EPS·AI·PDF로, 엑셀 붙여넣기로 여러 개',
     keywords: ['바코드', 'ean', 'ean13', '쿠팡', 'r바코드', 'code128', '코드128', 'eps', 'ai', '일러스트', '회사코드', '품번'],
-    icon: Barcode, art: 'label', local: true,
+    icon: Barcode, art: 'barcode', local: true,
     component: lazy(() => import('@/tools/barcode')),
   },
 
