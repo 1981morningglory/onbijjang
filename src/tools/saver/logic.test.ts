@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 // @ts-expect-error — 서버 모듈(.mjs)의 순수 함수도 함께 확인한다
 import { checkUrl, filterSrt, friendlyError, keepRanges, srtToText } from '../../../server/routes/media.mjs'
-import { extractUrl, formatTime, keptRanges, parseTime, siteOf, youtubeId } from './logic'
+import { extractUrl, fileNameFromTitle, formatTime, keptRanges, parseTime, siteOf, youtubeId } from './logic'
 
 describe('시간 입력', () => {
   it('여러 표기를 초로', () => {
@@ -58,5 +58,15 @@ describe('대본', () => {
   it('오류를 사용자 말로', () => {
     expect(friendlyError("ERROR: [youtube] x: Sign in to confirm you're not a bot")).toContain('유튜브')
     expect(friendlyError('ERROR: Unsupported URL: https://a')).toContain('지원하지 않는')
+  })
+})
+
+describe('파일 이름', () => {
+  it('제목에서 군더더기를 뺀다', () => {
+    expect(fileNameFromTitle("YENA(최예나) - '캐치 캐치' M/V")).toBe('YENA(최예나) 캐치 캐치')
+    expect(fileNameFromTitle('Artist - Song (Official Music Video)')).toBe('Artist Song')
+    expect(fileNameFromTitle('모닝글로리 신제품 소개 | 노트')).toBe('모닝글로리 신제품 소개 노트')
+    expect(fileNameFromTitle('a/b:c?')).toBe('a b c')
+    expect(fileNameFromTitle('')).toBe('영상')
   })
 })

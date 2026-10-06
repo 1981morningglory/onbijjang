@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, ApiError } from '@/lib/api'
 import { usePersistentState } from '@/lib/hooks'
 import { Badge, Button, Callout, EmptyState, Field, IconButton, Panel, Progress, Section, Segmented, Select, SendToMenu, Spinner, Stage, Switch, TextInput, ToolLayout, toast } from '@/ui'
-import { AUDIO_FORMATS, BITRATES, TEXT_FORMATS, VIDEO_FORMATS, extractUrl, formatTime, keptRanges, parseTime, siteOf, youtubeId, type EditMode, type Kind } from './logic'
+import { AUDIO_FORMATS, BITRATES, TEXT_FORMATS, VIDEO_FORMATS, extractUrl, fileNameFromTitle, formatTime, keptRanges, parseTime, siteOf, youtubeId, type EditMode, type Kind } from './logic'
 
 const K = (n: string) => `onbijjang:saver:${n}`
 
@@ -78,6 +78,7 @@ export default function SaverTool() {
   const [height, setHeight] = usePersistentState(K('height'), '0')
   const [abr, setAbr] = usePersistentState(K('abr'), '192')
   const [subLang, setSubLang] = useState('')
+  const [fileName, setFileName] = useState('')
   const [editOn, setEditOn] = useState(false)
   const [mode, setMode] = useState<EditMode>('keep')
   const [ranges, setRanges] = useState<RangeText[]>([{ start: '', end: '' }])
@@ -138,6 +139,7 @@ export default function SaverTool() {
     try {
       const r = await api<Info>('/media/info', { method: 'POST', body: { url } })
       setInfo(r)
+      setFileName(fileNameFromTitle(r.title))
       if (!r.hasVideo && r.heights.length === 0 && kind === 'video' && r.duration === 0) {
         // 길이·화질 정보를 주지 않는 사이트 — 그래도 받아 볼 수는 있다
       }
@@ -155,7 +157,7 @@ export default function SaverTool() {
       const { id } = await api<{ id: string }>('/media/jobs', {
         method: 'POST',
         body: {
-          url: info.url, kind, format, height: Number(height), abr: Number(abr), subLang, title: info.title, duration,
+          url: info.url, kind, format, height: Number(height), abr: Number(abr), subLang, title: info.title, name: fileName.trim() || fileNameFromTitle(info.title), duration,
           edit: { enabled: editActive, mode, ranges: validRanges },
         },
       })
@@ -290,6 +292,14 @@ export default function SaverTool() {
       </Section>
 
       <Section title="받기">
+        <Field label="파일 이름" hint="불러온 영상 제목으로 자동 입력됩니다. 확장자는 형식에 맞춰 붙습니다.">
+          {(id) => (
+            <div className="flex items-center gap-1.5">
+              <TextInput id={id} value={fileName} onChange={(e) => setFileName(e.target.value)} placeholder={info ? fileNameFromTitle(info.title) : '링크를 먼저 불러오세요'} disabled={!info} className="min-w-0 flex-1" />
+              <span className="num shrink-0 text-sm text-muted">.{kind === 'video' ? vfmt : kind === 'audio' ? afmt : tfmt}</span>
+            </div>
+          )}
+        </Field>
         {busy ? (
           <>
             <Progress value={job!.status === 'queued' ? null : job!.progress} label={job!.status === 'queued' && job!.position ? `${job!.stage} (앞에 ${job!.position - 1}건)` : job!.stage} />

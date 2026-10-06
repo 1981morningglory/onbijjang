@@ -114,3 +114,17 @@ export function extractUrl(text: string): string {
   const m = text.match(/https?:\/\/[^\s<>"']+/)
   return m ? m[0] : text.trim()
 }
+
+/** 영상 제목 → 파일 이름. "YENA(최예나) - '캐치 캐치' M/V" → "YENA(최예나) 캐치 캐치" */
+export function fileNameFromTitle(title: string): string {
+  let t = title
+    .replace(/[\[(（【]\s*(official|공식|lyrics?|가사|m\/?v|music video|audio|performance|4k|hd|mv)[^\])）】]*[\])）】]/gi, ' ')
+    .replace(/\b(official\s+)?(music\s+video|lyric\s+video|audio|m\/v|mv)\b/gi, ' ')
+    .replace(/['"‘’“”「」『』]/g, ' ')
+    .replace(/\s[-–—|·]\s/g, ' ')
+    .replace(/[\\/:*?<>|\x00-\x1f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  t = t.replace(/^[-–—|·\s]+|[-–—|·\s]+$/g, '')
+  return t.slice(0, 80) || '영상'
+}

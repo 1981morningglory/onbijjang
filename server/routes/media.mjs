@@ -376,9 +376,11 @@ export default async function mediaRoutes(app, { DATA_DIR, TRUSTED, currentUser,
     const o = j.opts
     j.dir = await fsp.mkdtemp(path.join(os.tmpdir(), TEMP_PREFIX))
     const bin = await ensureYtdlp()
-    const base = safeName(o.title)
+    // 화면에서 정한 파일 이름이 있으면 그대로(확장자만 붙인다), 없으면 제목 + 편집 표시
+    const custom = typeof o.name === 'string' && o.name.trim() !== ''
+    const base = safeName(custom ? o.name.replace(/\.(mp4|mov|mkv|webm|avi|mp3|m4a|wav|txt|srt)$/i, '') : o.title)
     const edited = o.edit?.enabled && Array.isArray(o.edit.ranges) && o.edit.ranges.length > 0
-    const tag = edited ? (o.edit.mode === 'cut' ? '_잘라냄' : '_구간') : ''
+    const tag = edited && !custom ? (o.edit.mode === 'cut' ? '_잘라냄' : '_구간') : ''
     const dlProgress = (line) => {
       const m = line.match(/\[download\]\s+(\d+(?:\.\d+)?)%/)
       if (m) j.progress = Math.min(60, Number(m[1]) * 0.6)
@@ -500,6 +502,7 @@ export default async function mediaRoutes(app, { DATA_DIR, TRUSTED, currentUser,
         url: chk.url, kind, format: b.format, height: height > 0 && height <= 4320 ? height : 0, abr,
         subLang: typeof b.subLang === 'string' && /^[\w-]{1,20}$/.test(b.subLang) ? b.subLang : '',
         title: typeof b.title === 'string' ? b.title.slice(0, 200) : '',
+        name: typeof b.name === 'string' ? b.name.slice(0, 120) : '',
         duration: Number(b.duration) || 0,
         edit: { enabled: Boolean(b.edit?.enabled) && ranges.length > 0, mode: b.edit?.mode === 'cut' ? 'cut' : 'keep', ranges },
       },
