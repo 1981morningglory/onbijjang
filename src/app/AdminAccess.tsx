@@ -61,7 +61,7 @@ export function LinksEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: 
     const id = newId()
     const links = [
       ...draft.links,
-      { id, title: form.title.trim(), url: form.url.trim(), summary: form.summary.trim(), group: form.group, enabled: true, badge: 'new' as const, roles: ['member', 'admin'] as Role[], deleted: false },
+      { id, title: form.title.trim(), url: form.url.trim(), summary: form.summary.trim(), group: form.group, enabled: true, badge: 'new' as const, roles: ['member', 'staff', 'admin'] as Role[], deleted: false },
     ]
     // 신상앱 자동 등록이 켜져 있으면 맨 앞에 올린다
     const newApps = draft.newApps.autoAdd ? { ...draft.newApps, items: [`link-${id}`, ...draft.newApps.items] } : draft.newApps
@@ -76,7 +76,7 @@ export function LinksEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: 
         <Link2 className="size-[18px] text-brand" aria-hidden />
         <div className="min-w-0 flex-1">
           <h3 className="text-base">새로 추가한 앱</h3>
-          <p className="text-xs text-muted">새로 만든 도구나 자주 쓰는 사이트를 메뉴에 추가합니다. 처음에는 NEW 표시가 붙고 직원등급·전체마스터에게만 보입니다.</p>
+          <p className="text-xs text-muted">새로 만든 도구나 자주 쓰는 사이트를 메뉴에 추가합니다. 처음에는 NEW 표시가 붙고 직원등급 이상(직원등급·스탭·전체마스터)에게만 보입니다.</p>
         </div>
       </div>
       {live.length > 0 && (
@@ -170,7 +170,7 @@ export function DeletedEditor({ draft, setDraft }: { draft: SiteConfig; setDraft
 }
 
 // ── 계정 관리 ─────────────────────────────────────────────
-const ROLE_RANK: Record<AccountRole, number> = { admin: 0, member: 1, general: 2 }
+const ROLE_RANK: Record<AccountRole, number> = { admin: 0, staff: 1, member: 2, general: 3 }
 const fmtDate = (s: string | null) => (s ? new Date(s).toLocaleString('ko-KR', { year: '2-digit', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-')
 
 function AccessDialog({ user, onClose, onSaved }: { user: PublicUser | null; onClose: () => void; onSaved: (u: PublicUser) => void }) {
@@ -321,7 +321,7 @@ export function AccountsEditor() {
   return (
     <div className="flex flex-col gap-5">
       <Callout tone="info" title="등급">
-        <b>전체마스터</b>는 이 관리자 화면까지 쓰는 사람, <b>직원등급</b>은 팀원(팀 보관함 저장 가능), <b>일반등급</b>은 로그인한 일반 사용자, <b>전체공개</b>는 로그인하지 않은 모든 사람입니다. 도구별로 어떤 등급에게 보일지는 [메뉴·앱 관리]에서, 특정 사람만 다르게 하려면 아래 목록의 [도구 권한]에서 정합니다.
+        등급은 <b>전체마스터 &gt; 스탭 &gt; 직원등급 &gt; 사용자등급 &gt; 전체공개</b> 순서입니다. <b>전체마스터</b>는 이 관리자 화면까지 쓰는 사람, <b>스탭</b>은 직원등급보다 한 단계 위(직원등급이 쓰는 기능은 모두 사용), <b>직원등급</b>은 팀원(팀 보관함 저장 가능), <b>사용자등급</b>은 로그인한 일반 사용자, <b>전체공개</b>는 로그인하지 않은 모든 사람입니다. 도구별로 어떤 등급에게 보일지는 [메뉴·앱 관리]에서, 특정 사람만 다르게 하려면 아래 목록의 [도구 권한]에서 정합니다.
       </Callout>
 
       <Panel className="p-5">

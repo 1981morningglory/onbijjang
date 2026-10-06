@@ -1,22 +1,24 @@
 import { create } from 'zustand'
 import { api, ApiError } from '@/lib/api'
 
-/** 지금 보고 있는 사람 — 등급 4단계: 전체공개(로그인 안 함) · 일반등급 · 직원등급 · 전체마스터. 메뉴 노출과 계정별 예외 권한에 쓴다. */
+/** 지금 보고 있는 사람 — 등급 5단계: 전체마스터 > 스탭 > 직원등급 > 사용자등급 > 전체공개(로그인 안 함). 메뉴 노출과 계정별 예외 권한에 쓴다. */
 
-export type Role = 'guest' | 'general' | 'member' | 'admin'
+export type Role = 'guest' | 'general' | 'member' | 'staff' | 'admin'
 export const ROLE_OPTIONS: ReadonlyArray<{ value: Role; label: string }> = [
   { value: 'admin', label: '전체마스터' },
+  { value: 'staff', label: '스탭' },
   { value: 'member', label: '직원등급' },
-  { value: 'general', label: '일반등급' },
+  { value: 'general', label: '사용자등급' },
   { value: 'guest', label: '전체공개' },
 ]
-export const ALL_ROLES: Role[] = ['admin', 'member', 'general', 'guest']
-export const ROLE_LABEL: Record<Role, string> = { admin: '전체마스터', member: '직원등급', general: '일반등급', guest: '전체공개' }
+export const ALL_ROLES: Role[] = ['admin', 'staff', 'member', 'general', 'guest']
+export const ROLE_LABEL: Record<Role, string> = { admin: '전체마스터', staff: '스탭', member: '직원등급', general: '사용자등급', guest: '전체공개' }
 /** 계정에 줄 수 있는 등급(전체공개는 로그인하지 않은 상태라 계정 등급이 아님) */
 export const ACCOUNT_ROLES = [
   { value: 'admin', label: '전체마스터' },
+  { value: 'staff', label: '스탭' },
   { value: 'member', label: '직원등급' },
-  { value: 'general', label: '일반등급' },
+  { value: 'general', label: '사용자등급' },
 ] as const
 export type AccountRole = (typeof ACCOUNT_ROLES)[number]['value']
 

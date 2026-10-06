@@ -8,7 +8,7 @@
 //   DELETE /api/media/jobs/:id         → 취소
 //   GET    /api/media/jobs/:id/file    → 결과 파일
 //
-// 사용 권한: 로그인한 직원등급·전체마스터(또는 믿을 수 있는 네트워크). 서버 자원을 쓰는 기능이라 방문자에게 열지 않는다.
+// 사용 권한: 로그인한 직원등급·스탭·전체마스터(또는 믿을 수 있는 네트워크). 서버 자원을 쓰는 기능이라 방문자에게 열지 않는다.
 // 안전 장치
 // - yt-dlp·ffmpeg 는 execFile/spawn 으로 인자 배열을 넘겨 실행한다(셸을 거치지 않는다).
 // - 내부망 주소(localhost·사설 IP·*.internal)는 받지 않는다. 시험할 때만 MEDIA_ALLOW_LOCAL=1.
@@ -187,7 +187,7 @@ export default async function mediaRoutes(app, { DATA_DIR, TRUSTED, currentUser,
   // ── 권한 ──
   const requireStaff = (req, res, next) => {
     const role = currentUser?.(req)?.role
-    if (TRUSTED || isAdmin(req) || role === 'member' || role === 'admin') return next()
+    if (TRUSTED || isAdmin(req) || role === 'member' || role === 'staff' || role === 'admin') return next()
     res.status(401).json({ error: '직원등급 이상 계정으로 로그인해야 쓸 수 있습니다.' })
   }
 

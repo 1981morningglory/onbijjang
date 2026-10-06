@@ -74,8 +74,8 @@ export interface SiteConfig {
   /** 전체 도구 id 순서. 그룹 안에서의 순서로 쓰인다. */
   toolOrder: string[]
   links: LinkApp[]
-  /** 등급 체계 버전. 2 = 4단계(전체공개·일반등급·직원등급·전체마스터) */
-  rolesV?: 2
+  /** 등급 체계 버전. 2 = 4단계, 3 = 5단계(전체마스터·스탭·직원등급·사용자등급·전체공개) */
+  rolesV?: 2 | 3
   /** 메인 화면의 '(NEW) 신상앱' 소개 칸 */
   newApps: NewApps
   /** 지금까지 알려진 도구 목록 — 여기에 없는 도구가 생기면 '새로 들어온 앱'으로 본다 */
@@ -125,7 +125,7 @@ export function defaultConfig(): SiteConfig {
     groupOrder: GROUPS.map((g) => g.id),
     toolOrder: TOOLS.map((t) => t.id),
     links: [],
-    rolesV: 2,
+    rolesV: 3,
     newApps: { enabled: true, title: '신상앱', items: [...FIRST_NEW_APPS], autoAdd: true },
     knownTools: TOOLS.map((t) => t.id),
     notice: { enabled: false, text: '' },
@@ -139,10 +139,13 @@ export function normalizeConfig(raw: unknown): SiteConfig {
   if (!raw || typeof raw !== 'object') return base
   const r = raw as Partial<SiteConfig>
   // 3단계(방문자·직원·관리자) 시절 저장분: 방문자에게 보이던 것은 일반등급에게도 보이게 옮긴다
-  const migrate = r.rolesV !== 2
+  const migrate = r.rolesV !== 2 && r.rolesV !== 3
+  // 4단계 시절 저장분: 스탭은 직원등급보다 위라서, 직원등급에게 보이던 것은 스탭에게도 보이게 한다
+  const addStaff = r.rolesV !== 3
   const cleanRoles = (v: unknown): Role[] => {
     const roles = cleanRoleList(v)
     if (migrate && roles.includes('guest') && !roles.includes('general')) roles.push('general')
+    if (addStaff && Array.isArray(v) && roles.includes('member') && !roles.includes('staff')) roles.push('staff')
     return ALL_ROLES.filter((x) => roles.includes(x))
   }
   for (const t of TOOLS) {

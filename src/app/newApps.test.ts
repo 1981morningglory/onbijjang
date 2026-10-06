@@ -6,7 +6,16 @@ describe('신상앱', () => {
     expect(normalizeConfig({ version: 1, tools: {} }).newApps.items.sort()).toEqual(['barcode', 'saver'])
   })
   it('SNS 영상 받기는 처음엔 직원등급 이상만', () => {
-    expect(normalizeConfig({ version: 1, tools: {} }).tools.saver.roles.sort()).toEqual(['admin', 'member'])
+    expect(normalizeConfig({ version: 1, tools: {} }).tools.saver.roles.sort()).toEqual(['admin', 'member', 'staff'])
+  })
+  it('스탭 등급 추가: 예전 저장분에서 직원등급에게 보이던 것은 스탭에게도', () => {
+    const c = normalizeConfig({ version: 1, rolesV: 2, tools: { qr: { enabled: true, badge: null, roles: ['admin', 'member'], deleted: false }, pdf: { enabled: true, badge: null, roles: ['admin'], deleted: false } } })
+    expect(c.tools.qr.roles).toEqual(['admin', 'staff', 'member'])
+    expect(c.tools.pdf.roles).toEqual(['admin'])
+    const again = normalizeConfig({ ...c })
+    expect(again.tools.qr.roles).toEqual(['admin', 'staff', 'member'])
+    const removed = normalizeConfig({ ...c, tools: { ...c.tools, qr: { ...c.tools.qr, roles: ['admin', 'member'] } } })
+    expect(removed.tools.qr.roles).toEqual(['admin', 'member'])
   })
   it('저장 뒤 새로 생긴 도구는 자동으로 맨 앞 + NEW 표시', () => {
     const known = normalizeConfig({ version: 1, tools: {} }).knownTools!.filter((id) => id !== 'blog')

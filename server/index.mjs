@@ -82,11 +82,11 @@ function isMasterAdmin(req) {
 
 // ── 계정 ─────────────────────────────────────────────────
 // users.json 에 계정을 두고, 로그인 쿠키는 서명된 토큰(서버를 다시 켜도 유지)으로 준다.
-// role: admin(전체마스터, 관리자 화면 사용) · member(직원등급) · general(일반등급). 로그인하지 않은 사람은 전체공개.
+// role: admin(전체마스터, 관리자 화면 사용) · staff(스탭) · member(직원등급) · general(사용자등급). 로그인하지 않은 사람은 전체공개.
 // access: 계정별 예외 — { 도구id: 'allow' | 'deny' } (관리자 메뉴 설정의 등급별 노출보다 우선)
 const USER_COOKIE = 'ob_user'
 const USER_TTL_MS = 1000 * 60 * 60 * 24 * 30
-const ROLES = ['admin', 'member', 'general']
+const ROLES = ['admin', 'staff', 'member', 'general']
 const SECRET = (() => {
   try {
     return fs.readFileSync(SECRET_FILE, 'utf8').trim()
@@ -152,7 +152,7 @@ function requireAdmin(req, res, next) {
 /** 팀원이면 되는 동작. 공개 배포에서는 관리자만, 믿을 수 있는 네트워크에서는 누구나. */
 function requireMember(req, res, next) {
   const role = currentUser(req)?.role
-  if (TRUSTED || role === 'member' || role === 'admin') return next()
+  if (TRUSTED || role === 'member' || role === 'staff' || role === 'admin') return next()
   requireAdmin(req, res, next)
 }
 function validPassword(pw) {

@@ -114,7 +114,7 @@ function MenuEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: (c: Site
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-ink-2">
-          스위치를 끄면 모두에게서 숨겨집니다. <b className="text-ink">전체마스터·직원등급·일반등급·전체공개</b> 칩을 눌러 등급별로 보이기/감추기를 정하고, 휴지통으로 메뉴에서 삭제합니다(아래에서 복원). 지금 <b className="num text-ink">{onCount}</b> / {TOOLS.length}개가 켜져 있습니다.
+          스위치를 끄면 모두에게서 숨겨집니다. <b className="text-ink">전체마스터·스탭·직원등급·사용자등급·전체공개</b> 칩을 눌러 등급별로 보이기/감추기를 정하고, 휴지통으로 메뉴에서 삭제합니다(아래에서 복원). 지금 <b className="num text-ink">{onCount}</b> / {TOOLS.length}개가 켜져 있습니다.
         </p>
         <div className="flex gap-2">
           <Button size="sm" onClick={() => setAll(true)}>

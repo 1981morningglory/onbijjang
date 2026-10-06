@@ -33,7 +33,7 @@ export interface ToolDef {
   /** true 면 페이지 최대 폭 제한 없이 화면 전체 폭을 쓴다(편집기형 도구) */
   wide?: boolean
   /** 처음 볼 수 있는 등급(기본: 전체). 서버 자원을 쓰는 도구는 직원 이상으로 */
-  roles?: Array<'guest' | 'general' | 'member' | 'admin'>
+  roles?: Array<'guest' | 'general' | 'member' | 'staff' | 'admin'>
   component: LazyExoticComponent<ComponentType>
 }
 
@@ -145,7 +145,7 @@ export const TOOLS: ToolDef[] = [
     id: 'saver', group: 'video', title: 'SNS 영상 받기',
     summary: '유튜브·틱톡·인스타 링크로 영상·소리·대본을 원하는 형식과 구간으로',
     keywords: ['유튜브', '틱톡', '인스타', '다운로드', '저장', 'mp3', 'mp4', '대본', '자막', '링크'],
-    icon: Download, art: 'saver', local: false, roles: ['member', 'admin'],
+    icon: Download, art: 'saver', local: false, roles: ['member', 'staff', 'admin'],
     component: lazy(() => import('@/tools/saver')),
   },
 
