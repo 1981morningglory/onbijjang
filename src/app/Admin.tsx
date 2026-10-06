@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router'
 import { api, ApiError } from '@/lib/api'
 import { readAsDataURL } from '@/lib/files'
 import { Badge, Button, Callout, ColorField, Field, IconButton, NumberInput, Panel, PositionGrid, Segmented, Select, Slider, Spinner, Switch, Tabs, TextInput, Textarea, toast } from '@/ui'
-import { groupOf, useSite, type SiteConfig } from './config'
+import { groupOf, orderedGroups, useSite, type SiteConfig } from './config'
 import { GROUPS, TOOLS, artUrl, type GroupId } from './registry'
 import { AccountsEditor, DeletedEditor, LinksEditor, NewAppsEditor, RoleChips } from './AdminAccess'
 import { useLoginDialog } from './LoginDialog'
@@ -86,9 +86,10 @@ function MenuEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: (c: Site
     const i = inGroup.indexOf(id)
     const j = i + dir
     if (j < 0 || j >= inGroup.length) {
-      const gi = GROUPS.findIndex((g) => g.id === group) + dir
-      if (gi < 0 || gi >= GROUPS.length) return
-      relocate(id, GROUPS[gi].id, dir < 0 ? 'end' : 'start')
+      const og = orderedGroups(draft)
+      const gi = og.findIndex((g) => g.id === group) + dir
+      if (gi < 0 || gi >= og.length) return
+      relocate(id, og[gi].id, dir < 0 ? 'end' : 'start')
       return
     }
     const order = [...draft.toolOrder]
@@ -96,6 +97,14 @@ function MenuEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: (c: Site
     const b = order.indexOf(inGroup[j])
     ;[order[a], order[b]] = [order[b], order[a]]
     setDraft({ ...draft, toolOrder: order })
+  }
+  /** 카테고리 순서 한 칸 옮기기 */
+  const moveGroup = (index: number, dir: -1 | 1) => {
+    const order = [...draft.groupOrder]
+    const j = index + dir
+    if (j < 0 || j >= order.length) return
+    ;[order[index], order[j]] = [order[j], order[index]]
+    setDraft({ ...draft, groupOrder: order })
   }
   const setTool = (id: string, patch: Partial<SiteConfig['tools'][string]>) => setDraft({ ...draft, tools: { ...draft.tools, [id]: { ...draft.tools[id], ...patch } } })
   const setAll = (enabled: boolean) => setDraft({ ...draft, tools: Object.fromEntries(Object.entries(draft.tools).map(([id, t]) => [id, { ...t, enabled }])) })
@@ -117,17 +126,21 @@ function MenuEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: (c: Site
         </div>
       </div>
       <NewAppsEditor draft={draft} setDraft={setDraft} />
-      {GROUPS.map((group) => {
+      {orderedGroups(draft).map((group, gIndex, og) => {
         const groupOn = draft.groups[group.id].enabled
         const tools = TOOLS.filter((t) => groupOf(draft, t) === group.id && !draft.tools[t.id].deleted).sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0))
-        const gIndex = GROUPS.findIndex((g) => g.id === group.id)
         return (
           <Panel key={group.id} className="overflow-hidden">
             <div className="flex items-center gap-3 border-b border-line bg-paper px-4 py-3">
               <group.icon className="size-[18px] text-brand" aria-hidden />
               <div className="min-w-0 flex-1">
                 <h3 className="text-base">{group.title}</h3>
-                <p className="text-xs text-muted">그룹을 끄면 아래 도구가 모두 숨겨집니다.</p>
+                <p className="text-xs text-muted">그룹을 끄면 아래 도구가 모두 숨겨집니다. 오른쪽 ▲▼로 카테고리 순서를 바꿉니다.</p>
+              </div>
+              <div className="flex items-center gap-0.5 rounded-md border border-line bg-surface px-0.5" role="group" aria-label={`${group.title} 카테고리 순서`}>
+                <span className="num px-1.5 text-xs font-semibold text-muted">{gIndex + 1}번째</span>
+                <IconButton icon={ArrowUp} label={`${group.title} 카테고리 위로`} size="sm" disabled={gIndex === 0} onClick={() => moveGroup(gIndex, -1)} />
+                <IconButton icon={ArrowDown} label={`${group.title} 카테고리 아래로`} size="sm" disabled={gIndex === og.length - 1} onClick={() => moveGroup(gIndex, 1)} />
               </div>
               <Switch className="w-auto!" checked={groupOn} onChange={(enabled) => setDraft({ ...draft, groups: { ...draft.groups, [group.id]: { enabled } } })} label={<span className="sr-only">{group.title} 그룹 노출</span>} />
             </div>
@@ -156,7 +169,7 @@ function MenuEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: (c: Site
                     </button>
                     <div className="flex">
                       <IconButton icon={ArrowUp} label={i === 0 ? `${t.title} 위 카테고리로` : `${t.title} 위로`} size="sm" disabled={i === 0 && gIndex === 0} onClick={() => move(group.id, t.id, -1)} />
-                      <IconButton icon={ArrowDown} label={i === tools.length - 1 ? `${t.title} 아래 카테고리로` : `${t.title} 아래로`} size="sm" disabled={i === tools.length - 1 && gIndex === GROUPS.length - 1} onClick={() => move(group.id, t.id, 1)} />
+                      <IconButton icon={ArrowDown} label={i === tools.length - 1 ? `${t.title} 아래 카테고리로` : `${t.title} 아래로`} size="sm" disabled={i === tools.length - 1 && gIndex === og.length - 1} onClick={() => move(group.id, t.id, 1)} />
                     </div>
                     <Switch className="w-auto!" checked={state.enabled} disabled={!groupOn} onChange={(enabled) => setTool(t.id, { enabled })} label={<span className="sr-only">{t.title} 노출</span>} />
                     <IconButton icon={Trash2} label={`${t.title} 메뉴에서 삭제`} size="sm" onClick={() => setTool(t.id, { deleted: true })} />
@@ -167,7 +180,7 @@ function MenuEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: (c: Site
                         <Select
                           value={group.id}
                           onValue={(g) => relocate(t.id, g, 'end')}
-                          options={GROUPS.map((g) => ({ value: g.id, label: g.id === t.group ? `${g.title} (원래)` : g.title }))}
+                          options={og.map((g) => ({ value: g.id, label: g.id === t.group ? `${g.title} (원래)` : g.title }))}
                           aria-label={`${t.title} 카테고리 옮기기`}
                           className="h-8! w-44! text-sm"
                         />

@@ -80,6 +80,8 @@ export interface SiteConfig {
   newApps: NewApps
   /** 지금까지 알려진 도구 목록 — 여기에 없는 도구가 생기면 '새로 들어온 앱'으로 본다 */
   knownTools?: string[]
+  /** 카테고리 순서(관리자가 정함). 없는 카테고리는 기본 순서대로 뒤에 붙는다 */
+  groupOrder: GroupId[]
   notice: { enabled: boolean; text: string }
   presets: TeamPresets
   updatedAt?: string
@@ -120,6 +122,7 @@ export function defaultConfig(): SiteConfig {
     version: 1,
     tools: Object.fromEntries(TOOLS.map((t) => [t.id, { enabled: true, badge: null, roles: [...ALL_ROLES], deleted: false }])),
     groups: Object.fromEntries(GROUPS.map((g) => [g.id, { enabled: true }])) as SiteConfig['groups'],
+    groupOrder: GROUPS.map((g) => g.id),
     toolOrder: TOOLS.map((t) => t.id),
     links: [],
     rolesV: 2,
@@ -148,6 +151,11 @@ export function normalizeConfig(raw: unknown): SiteConfig {
       base.tools[t.id] = { enabled: saved.enabled !== false, badge: saved.badge === 'new' ? 'new' : null, roles: cleanRoles(saved.roles), deleted: saved.deleted === true }
       if (saved.group && saved.group !== t.group && GROUPS.some((g) => g.id === saved.group)) base.tools[t.id].group = saved.group
     }
+  }
+  if (Array.isArray(r.groupOrder)) {
+    const ids = GROUPS.map((g) => g.id)
+    const saved = r.groupOrder.filter((id): id is GroupId => ids.includes(id as GroupId))
+    base.groupOrder = [...new Set(saved), ...ids.filter((id) => !saved.includes(id))]
   }
   for (const g of GROUPS) {
     const saved = r.groups?.[g.id]
@@ -251,6 +259,11 @@ export function hiddenByRole(entry: MenuEntry | undefined, id: string, viewer: V
   return Boolean(entry && entry.enabled && !entry.deleted && !canSee(entry, id, viewer))
 }
 
+/** 관리자가 정한 순서의 카테고리 목록 */
+export function orderedGroups(config: Pick<SiteConfig, 'groupOrder'>) {
+  return config.groupOrder.map((id) => GROUPS.find((g) => g.id === id)!).filter(Boolean)
+}
+
 /** 도구가 지금 놓인 카테고리(관리자가 옮겼으면 그 카테고리) */
 export function groupOf(config: Pick<SiteConfig, 'tools'>, tool: ToolDef): GroupId {
   return config.tools[tool.id]?.group ?? tool.group
@@ -272,7 +285,7 @@ export function useVisibleGroups() {
   const config = useSite((s) => s.config)
   const viewer = useViewer()
   const rank = new Map(config.toolOrder.map((id, i) => [id, i]))
-  return GROUPS.filter((g) => config.groups[g.id].enabled)
+  return orderedGroups(config).filter((g) => config.groups[g.id].enabled)
     .map((group) => ({
       group,
       tools: TOOLS.filter((t) => groupOf(config, t) === group.id && isToolVisible(config, t, viewer)).sort(

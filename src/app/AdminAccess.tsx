@@ -3,7 +3,7 @@ import { ArrowDown, ArrowUp, Ban, Check, Eye, EyeOff, KeyRound, Link2, Plus, Sea
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { api } from '@/lib/api'
 import { Badge, Button, Callout, Dialog, EmptyState, Field, IconButton, Panel, Segmented, Select, Spinner, Switch, TextInput, toast } from '@/ui'
-import { canSee, groupOf, useSite, type LinkApp, type SiteConfig } from './config'
+import { canSee, groupOf, orderedGroups, useSite, type LinkApp, type SiteConfig } from './config'
 import { GROUPS, TOOLS, artUrl, type GroupId } from './registry'
 import { ACCOUNT_ROLES, ALL_ROLES, ROLE_LABEL, ROLE_OPTIONS, useViewerStore, type Access, type AccountRole, type PublicUser, type Role } from './viewer'
 
@@ -89,7 +89,7 @@ export function LinksEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: 
                 </span>
                 <TextInput value={l.title} aria-label="앱 이름" maxLength={30} onChange={(e) => patch(l.id, { title: e.target.value })} className="w-40! flex-none" />
                 <TextInput value={l.url} aria-label="주소" onChange={(e) => patch(l.id, { url: e.target.value })} className="num min-w-0 flex-1" />
-                <Select value={l.group} onValue={(g) => patch(l.id, { group: g })} options={GROUPS.map((g) => ({ value: g.id, label: g.title }))} aria-label="그룹" className="w-32!" />
+                <Select value={l.group} onValue={(g) => patch(l.id, { group: g })} options={orderedGroups(draft).map((g) => ({ value: g.id, label: g.title }))} aria-label="그룹" className="w-32!" />
                 <div className="flex">
                   <IconButton icon={ArrowUp} label={`${l.title} 위로`} size="sm" disabled={i === 0} onClick={() => move(l.id, -1)} />
                   <IconButton icon={ArrowDown} label={`${l.title} 아래로`} size="sm" disabled={i === live.length - 1} onClick={() => move(l.id, 1)} />
@@ -119,7 +119,7 @@ export function LinksEditor({ draft, setDraft }: { draft: SiteConfig; setDraft: 
           <Field label="앱 이름">{(id) => <TextInput id={id} value={form.title} maxLength={30} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="예: ERP 재고 조회" />}</Field>
           <Field label="주소" hint="https://… 는 새 탭, /tools/… 는 이 사이트 안">{(id) => <TextInput id={id} value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} placeholder="https://" className="num" />}</Field>
           <Field label="한 줄 설명(선택)">{(id) => <TextInput id={id} value={form.summary} maxLength={120} onChange={(e) => setForm({ ...form, summary: e.target.value })} />}</Field>
-          <Field label="넣을 그룹">{(id) => <Select id={id} value={form.group} onValue={(group) => setForm({ ...form, group })} options={GROUPS.map((g) => ({ value: g.id, label: g.title }))} />}</Field>
+          <Field label="넣을 그룹">{(id) => <Select id={id} value={form.group} onValue={(group) => setForm({ ...form, group })} options={orderedGroups(draft).map((g) => ({ value: g.id, label: g.title }))} />}</Field>
         </div>
         <Button type="submit" icon={Plus} className="self-start" disabled={draft.links.length >= 60}>
           목록에 추가
@@ -218,7 +218,7 @@ function AccessDialog({ user, onClose, onSaved }: { user: PublicUser | null; onC
               </tr>
             </thead>
             <tbody>
-              {GROUPS.map((g) => {
+              {orderedGroups(config).map((g) => {
                 const rows = items.filter((it) => it.group === g.id)
                 if (!rows.length) return null
                 return [

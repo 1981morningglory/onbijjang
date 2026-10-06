@@ -33,3 +33,12 @@ describe('카테고리 옮기기', () => {
     expect(c.tools.qr.group).toBeUndefined()
   })
 })
+
+describe('카테고리 순서', () => {
+  it('기본은 문서·영상·이미지·블로그·마켓 수수료', () => {
+    expect(normalizeConfig({ version: 1, tools: {} }).groupOrder).toEqual(['doc', 'video', 'image', 'blog', 'fees'])
+  })
+  it('저장된 순서를 따르고, 빠진 카테고리는 뒤에 붙인다', () => {
+    expect(normalizeConfig({ version: 1, tools: {}, groupOrder: ['fees', 'image', 'bad'] }).groupOrder).toEqual(['fees', 'image', 'doc', 'video', 'blog'])
+  })
+})
