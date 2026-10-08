@@ -231,7 +231,7 @@ function TeamApp({ team }: { team: TeamInfo }) {
       )}
       {view === 'docs' && <DocsBoard filter={filter} setFilter={setFilter} onOpen={openDoc} onCopy={copyDoc} />}
       {view === 'customers' && <CustomersBoard onShow={(customer) => showDocs({ customer })} />}
-      {view === 'items' && <ItemsBoard onShow={(item) => showDocs({ item })} />}
+      {view === 'items' && <ItemsBoard onShow={(item) => showDocs({ item })} onOpen={openDoc} />}
       {view === 'settings' && <TeamSettings section={section} setSection={setSection} />}
     </div>
   )

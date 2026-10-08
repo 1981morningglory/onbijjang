@@ -68,6 +68,8 @@ function kitProblem(kit) {
   return null
 }
 
+const DOC_STATUS = ['pending', 'done', 'canceled']
+
 /** 게시판 목록에 쓸 요약. 품목·거래처 집계도 이것으로 한다. */
 function summarize(doc, id, prev) {
   const items = Array.isArray(doc.items) ? doc.items : []
@@ -116,6 +118,8 @@ function summarize(doc, id, prev) {
     total,
     items: lines.slice(0, 80),
     author: str(doc.author, 30),
+    // 진행 상태(견적중·진행완료·취소됨). 문서를 고쳐도 유지한다
+    status: DOC_STATUS.includes(prev?.status) ? prev.status : 'pending',
     createdAt: prev?.createdAt ?? now,
     updatedAt: now,
   }
@@ -339,6 +343,27 @@ export default async function quoteRoutes(app, ctx) {
       await writeJson(docFile(teamId, req.params.id), { id: req.params.id, doc, meta: entry })
       index.splice(at, 1)
       await writeJson(indexFile(teamId), [entry, ...index])
+      return { entry }
+    })
+    if (result.error) return res.status(result.status ?? 409).json({ error: result.error })
+    res.json(result)
+  })
+
+  /** 진행 상태만 바꾼다(견적중 → 진행완료 → 취소됨) */
+  app.patch('/api/quote/docs/:id/status', requireTeam, async (req, res) => {
+    if (!ID_RE.test(req.params.id)) return res.status(400).json({ error: '문서 번호가 올바르지 않습니다.' })
+    const status = req.body?.status
+    if (!DOC_STATUS.includes(status)) return res.status(400).json({ error: '진행 상태가 올바르지 않습니다.' })
+    const teamId = req.team.id
+    const result = await serial(`docs:${teamId}`, async () => {
+      const index = await readJson(indexFile(teamId), [])
+      const entry = index.find((d) => d.id === req.params.id)
+      if (!entry) return { error: '문서를 찾을 수 없습니다.', status: 404 }
+      entry.status = status
+      entry.statusAt = new Date().toISOString()
+      await writeJson(indexFile(teamId), index)
+      const file = await readJson(docFile(teamId, req.params.id), null)
+      if (file) await writeJson(docFile(teamId, req.params.id), { ...file, meta: { ...file.meta, status, statusAt: entry.statusAt } })
       return { entry }
     })
     if (result.error) return res.status(result.status ?? 409).json({ error: result.error })

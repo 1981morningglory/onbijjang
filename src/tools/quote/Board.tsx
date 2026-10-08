@@ -1,13 +1,44 @@
 import clsx from 'clsx'
-import { Copy, FileDown, FileSpreadsheet, Inbox, PencilLine, Search, Trash2, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { ChevronRight, Copy, FileDown, FileSpreadsheet, Inbox, PencilLine, Search, Trash2, X } from 'lucide-react'
+import { Fragment, useMemo, useState, type ReactNode } from 'react'
 import { downloadBlob } from '@/lib/files'
 import { Badge, Button, EmptyState, IconButton, Panel, Segmented, Select, Spinner, TextInput, toast } from '@/ui'
 import { DOC_NAME, fileBase, todayIso, won, type QuoteDoc } from './model'
 import { docToPdf, docToXlsx } from './output'
-import { useTeam, type DocEntry } from './team'
+import { useTeam, type DocEntry, type DocStatus } from './team'
 
 export type BoardFilter = { customer?: string; item?: string }
+
+// ── 진행 상태(견적서) ─────────────────────────────────────
+const STATUS: Record<DocStatus, { label: string; cls: string }> = {
+  pending: { label: '견적중', cls: 'border-warn/40 bg-mark-soft text-ink' },
+  done: { label: '진행완료', cls: 'border-brand bg-brand text-white' },
+  canceled: { label: '취소됨', cls: 'border-line-strong bg-sunken text-muted line-through' },
+}
+const NEXT: Record<DocStatus, DocStatus> = { pending: 'done', done: 'canceled', canceled: 'pending' }
+const statusOf = (d: Pick<DocEntry, 'status'>): DocStatus => d.status ?? 'pending'
+
+function StatusChip({ status }: { status: DocStatus }) {
+  return <span className={clsx('inline-flex h-6 items-center whitespace-nowrap rounded-full border px-2.5 text-xs font-semibold', STATUS[status].cls)}>{STATUS[status].label}</span>
+}
+
+/** 누를 때마다 견적중 → 진행완료 → 취소됨 → 견적중 */
+function StatusButton({ entry }: { entry: DocEntry }) {
+  const setDocStatus = useTeam((s) => s.setDocStatus)
+  const status = statusOf(entry)
+  const next = NEXT[status]
+  return (
+    <button
+      type="button"
+      onClick={() => setDocStatus(entry.id, next).catch((err) => toast.error(err instanceof Error ? err.message : '바꾸지 못했습니다.'))}
+      title={`누르면 ‘${STATUS[next].label}’(으)로 바뀝니다`}
+      aria-label={`진행 상태 ${STATUS[status].label}, 누르면 ${STATUS[next].label}`}
+      className={clsx('inline-flex h-7 min-w-[4.75rem] items-center justify-center whitespace-nowrap rounded-full border px-3 text-xs font-bold shadow-1 transition-colors duration-150 hover:brightness-95 active:scale-95', STATUS[status].cls)}
+    >
+      {STATUS[status].label}
+    </button>
+  )
+}
 
 type Period = 'month' | 'lastMonth' | 'quarter' | 'year' | 'all' | 'custom'
 const PERIODS: Array<{ value: Period; label: string }> = [
@@ -47,7 +78,10 @@ function dayLabel(iso: string) {
   const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
   return `${m[1]}년 ${Number(m[2])}월 ${Number(m[3])}일 (${WEEK[d.getDay()]})`
 }
-const itemSummary = (e: DocEntry) => (e.items.length ? `${e.items[0].name || '(이름 없음)'}${e.items.length > 1 ? ` 외 ${e.items.length - 1}건` : ''}` : '')
+const itemSummary = (e: DocEntry) => {
+  const named = e.items.filter((i) => i.name)
+  return named.length ? `${named[0].name}${e.items.length > 1 ? ` 외 ${e.items.length - 1}건` : ''}` : ''
+}
 const norm = (s: string) => s.toLowerCase().replace(/\s+/g, '')
 
 function useDownloads() {
@@ -75,6 +109,7 @@ export function DocsBoard({ filter, setFilter, onOpen, onCopy }: { filter: Board
   const getDoc = useTeam((s) => s.getDoc)
   const deleteDoc = useTeam((s) => s.deleteDoc)
   const [type, setType] = useState<'all' | 'quote' | 'statement'>('all')
+  const [stat, setStat] = useState<'all' | DocStatus>('all')
   const [period, setPeriod] = useState<Period>('all')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
@@ -88,11 +123,12 @@ export function DocsBoard({ filter, setFilter, onOpen, onCopy }: { filter: Board
     const query = norm(q)
     return docs
       .filter((d) => (type === 'all' || d.type === type) && d.date >= a && d.date <= b)
+      .filter((d) => stat === 'all' || (d.type === 'quote' && statusOf(d) === stat))
       .filter((d) => !filter.customer || d.customer === filter.customer)
       .filter((d) => !filter.item || d.items.some((i) => i.name === filter.item))
       .filter((d) => !query || norm([d.customer, d.docNo, d.title, d.author, ...d.items.map((i) => `${i.name} ${i.spec}`)].join(' ')).includes(query))
       .sort((x, y) => (x.date === y.date ? y.updatedAt.localeCompare(x.updatedAt) : y.date.localeCompare(x.date)))
-  }, [docs, type, period, from, to, q, filter])
+  }, [docs, type, stat, period, from, to, q, filter])
 
   const shown = rows.slice(0, limit)
   const groups = useMemo(() => {
@@ -135,6 +171,18 @@ export function DocsBoard({ filter, setFilter, onOpen, onCopy }: { filter: Board
               { value: 'all', label: '전체' },
               { value: 'quote', label: '견적서' },
               { value: 'statement', label: '거래명세서' },
+            ]}
+          />
+          <Segmented
+            label="진행 상태"
+            size="sm"
+            value={stat}
+            onValue={setStat}
+            options={[
+              { value: 'all', label: '진행 전체' },
+              { value: 'pending', label: '견적중' },
+              { value: 'done', label: '진행완료' },
+              { value: 'canceled', label: '취소됨' },
             ]}
           />
           <Select<Period> aria-label="기간" value={period} onValue={setPeriod} options={PERIODS} className="h-9! w-36!" />
@@ -181,6 +229,7 @@ export function DocsBoard({ filter, setFilter, onOpen, onCopy }: { filter: Board
               <thead>
                 <tr className="border-b border-line bg-paper text-left text-xs text-muted">
                   <th className="px-3 py-2 font-semibold">구분</th>
+                  <th className="px-3 py-2 font-semibold">진행</th>
                   <th className="px-3 py-2 font-semibold">번호</th>
                   <th className="px-3 py-2 font-semibold">거래처</th>
                   <th className="px-3 py-2 font-semibold">품명·품목</th>
@@ -192,7 +241,7 @@ export function DocsBoard({ filter, setFilter, onOpen, onCopy }: { filter: Board
               {groups.map((g) => (
                 <tbody key={g.date}>
                   <tr className="bg-sunken">
-                    <th colSpan={7} className="px-3 py-1.5 text-left text-xs font-bold text-ink-2">
+                    <th colSpan={8} className="px-3 py-1.5 text-left text-xs font-bold text-ink-2">
                       {dayLabel(g.date)} <span className="font-medium text-muted">· {g.items.length}건 · {won(g.items.reduce((s, r) => s + r.total, 0))}원</span>
                     </th>
                   </tr>
@@ -201,16 +250,17 @@ export function DocsBoard({ filter, setFilter, onOpen, onCopy }: { filter: Board
                       <td className="px-3 py-2">
                         <Badge tone={r.type === 'quote' ? 'brand' : 'neutral'}>{DOC_NAME[r.type]}</Badge>
                       </td>
+                      <td className="px-3 py-2">{r.type === 'quote' ? <StatusButton entry={r} /> : <span className="text-xs text-faint">-</span>}</td>
                       <td className="whitespace-nowrap px-3 py-2 text-xs text-muted">{r.docNo}</td>
                       <td className="max-w-48 px-3 py-2">
                         <button type="button" className="truncate text-left font-semibold text-ink hover:underline" onClick={() => setFilter({ ...filter, customer: r.customer })} title="이 거래처 문서만 보기">
                           {r.customer || '(거래처 없음)'}
                         </button>
                       </td>
-                      <td className="max-w-64 truncate px-3 py-2 text-ink-2" title={r.items.map((i) => i.name).join(', ')}>
-                        {r.title || itemSummary(r)}
+                      <td className="max-w-64 truncate px-3 py-2 text-ink-2" title={r.items.map((i) => i.name).filter(Boolean).join(', ')}>
+                        {[r.title, itemSummary(r)].filter(Boolean).join(' · ')}
                       </td>
-                      <td className="whitespace-nowrap px-3 py-2 text-right font-bold text-ink">{won(r.total)}</td>
+                      <td className={clsx('whitespace-nowrap px-3 py-2 text-right font-bold text-ink', r.type === 'quote' && statusOf(r) === 'canceled' && 'text-faint line-through')}>{won(r.total)}</td>
                       <td className="max-w-28 truncate px-3 py-2 text-ink-2">{r.author}</td>
                       <td className="px-2 py-1.5">
                         <div className="flex justify-end">
@@ -337,6 +387,21 @@ export function CustomersBoard({ onShow }: { onShow: (customer: string) => void 
 }
 
 // ── 품목 ──────────────────────────────────────────────────
+/** 문서 한 장에 쓰인 품목 한 줄 */
+interface ItemUse {
+  docId: string
+  docNo: string
+  type: DocEntry['type']
+  status: DocStatus
+  date: string
+  customer: string
+  title: string
+  name: string
+  spec: string
+  qty: number
+  unitPrice: number
+  total: number
+}
 interface ItemRow {
   key: string
   name: string
@@ -348,43 +413,103 @@ interface ItemRow {
   max: number
   lastCustomer: string
   last: string
+  uses: ItemUse[]
 }
 
-export function ItemsBoard({ onShow }: { onShow: (item: string) => void }) {
+/** 문서들의 품목 줄을 모두 펼친다. 품목 이름이 비었으면 문서의 품명(건명)으로 대신한다 */
+function itemUses(docs: DocEntry[]): ItemUse[] {
+  const out: ItemUse[] = []
+  for (const d of docs) {
+    for (const it of d.items) {
+      const name = it.name || d.title || '(이름 없는 품목)'
+      out.push({ docId: d.id, docNo: d.docNo, type: d.type, status: statusOf(d), date: d.date, customer: d.customer, title: d.title, name, spec: it.spec, qty: it.qty || 0, unitPrice: it.unitPrice || 0, total: it.total || 0 })
+    }
+  }
+  return out
+}
+
+export function ItemsBoard({ onShow, onOpen }: { onShow: (item: string) => void; onOpen: (doc: QuoteDoc, id: string) => void }) {
   const docs = useTeam((s) => s.docs)
+  const getDoc = useTeam((s) => s.getDoc)
   const [q, setQ] = useState('')
   const [sort, setSort] = useState<'recent' | 'count' | 'name'>('recent')
+  const [view, setView] = useState<'sum' | 'lines'>('sum')
+  const [open, setOpen] = useState<string | null>(null)
+  const query = norm(q)
+  const uses = useMemo(() => itemUses(docs ?? []).filter((u) => !query || norm(`${u.name} ${u.spec} ${u.customer} ${u.docNo}`).includes(query)), [docs, query])
   const rows = useMemo(() => {
     const map = new Map<string, ItemRow>()
     // 오래된 문서부터 보아 '최근 단가'가 마지막 값이 되게 한다
-    const ordered = [...(docs ?? [])].sort((a, b) => (a.date === b.date ? a.updatedAt.localeCompare(b.updatedAt) : a.date.localeCompare(b.date)))
-    for (const d of ordered) {
-      for (const it of d.items) {
-        if (!it.name) continue
-        const key = `${it.name}\u0000${it.spec}`
-        const r = map.get(key) ?? { key, name: it.name, spec: it.spec, count: 0, qty: 0, lastPrice: 0, min: Infinity, max: 0, lastCustomer: '', last: '' }
-        r.count++
-        r.qty += it.qty || 0
-        if (it.unitPrice) {
-          r.lastPrice = it.unitPrice
-          r.min = Math.min(r.min, it.unitPrice)
-          r.max = Math.max(r.max, it.unitPrice)
-        }
-        r.lastCustomer = d.customer
-        r.last = d.date
-        map.set(key, r)
+    const ordered = [...uses].sort((a, b) => a.date.localeCompare(b.date))
+    for (const u of ordered) {
+      const key = `${u.name}\u0000${u.spec}`
+      const r = map.get(key) ?? { key, name: u.name, spec: u.spec, count: 0, qty: 0, lastPrice: 0, min: Infinity, max: 0, lastCustomer: '', last: '', uses: [] }
+      r.count++
+      r.qty += u.qty
+      if (u.unitPrice) {
+        r.lastPrice = u.unitPrice
+        r.min = Math.min(r.min, u.unitPrice)
+        r.max = Math.max(r.max, u.unitPrice)
       }
+      r.lastCustomer = u.customer
+      r.last = u.date
+      r.uses.unshift(u)
+      map.set(key, r)
     }
-    const query = norm(q)
-    const list = [...map.values()].filter((r) => !query || norm(`${r.name} ${r.spec}`).includes(query))
+    const list = [...map.values()]
     return list.sort((a, b) => (sort === 'count' ? b.count - a.count : sort === 'name' ? a.name.localeCompare(b.name, 'ko') : b.last.localeCompare(a.last)))
-  }, [docs, q, sort])
+  }, [uses, sort])
+  const lines = useMemo(() => [...uses].sort((a, b) => b.date.localeCompare(a.date) || b.docNo.localeCompare(a.docNo)), [uses])
+  const openDoc = async (id: string) => {
+    try {
+      onOpen(await getDoc(id), id)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '열지 못했습니다.')
+    }
+  }
+
+  const usesTable = (list: ItemUse[], withName: boolean) => (
+    <table className="num w-full text-sm">
+      <thead>
+        <tr className="border-b border-line text-left text-xs text-muted">
+          <th className="px-3 py-1.5 font-semibold">날짜</th>
+          <th className="px-3 py-1.5 font-semibold">문서</th>
+          <th className="px-3 py-1.5 font-semibold">진행</th>
+          <th className="px-3 py-1.5 font-semibold">거래처</th>
+          {withName && <th className="px-3 py-1.5 font-semibold">품목</th>}
+          {withName && <th className="px-3 py-1.5 font-semibold">규격</th>}
+          <th className="px-3 py-1.5 text-right font-semibold">수량</th>
+          <th className="px-3 py-1.5 text-right font-semibold">단가</th>
+          <th className="px-3 py-1.5 text-right font-semibold">금액</th>
+        </tr>
+      </thead>
+      <tbody>
+        {list.map((u, i) => (
+          <tr key={`${u.docId}-${i}`} className={clsx('border-b border-line last:border-b-0', u.status === 'canceled' && 'text-faint')}>
+            <td className="whitespace-nowrap px-3 py-1.5">{u.date}</td>
+            <td className="whitespace-nowrap px-3 py-1.5">
+              <button type="button" className="text-brand-ink hover:underline" onClick={() => void openDoc(u.docId)} title="이 문서 열기">
+                {DOC_NAME[u.type]} {u.docNo}
+              </button>
+            </td>
+            <td className="px-3 py-1.5">{u.type === 'quote' ? <StatusChip status={u.status} /> : <span className="text-xs text-faint">-</span>}</td>
+            <td className="max-w-40 truncate px-3 py-1.5">{u.customer}</td>
+            {withName && <td className="max-w-56 truncate px-3 py-1.5 font-semibold text-ink">{u.name}</td>}
+            {withName && <td className="px-3 py-1.5 text-ink-2">{u.spec}</td>}
+            <td className="px-3 py-1.5 text-right">{won(u.qty)}</td>
+            <td className="px-3 py-1.5 text-right">{u.unitPrice ? won(u.unitPrice) : ''}</td>
+            <td className={clsx('px-3 py-1.5 text-right font-semibold', u.status === 'canceled' && 'line-through')}>{won(u.total)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
 
   return (
     <BoardShell
       q={q}
       setQ={setQ}
-      placeholder="품목·규격 찾기"
+      placeholder="품목·규격·거래처·번호 찾기"
       sort={sort}
       setSort={setSort}
       sorts={[
@@ -392,44 +517,74 @@ export function ItemsBoard({ onShow }: { onShow: (item: string) => void }) {
         { value: 'count', label: '많이 쓴 순' },
         { value: 'name', label: '이름순' },
       ]}
-      count={rows.length}
-      unit="개"
+      count={view === 'sum' ? rows.length : lines.length}
+      unit={view === 'sum' ? '개' : '줄'}
       empty={!docs?.length}
+      extra={
+        <Segmented
+          label="보기"
+          size="sm"
+          value={view}
+          onValue={setView}
+          options={[
+            { value: 'sum', label: '품목별 모아보기' },
+            { value: 'lines', label: '문서별 품목 전체' },
+          ]}
+        />
+      }
     >
-      <table className="num w-full min-w-[820px] text-sm">
-        <thead>
-          <tr className="border-b border-line bg-paper text-left text-xs text-muted">
-            <th className="px-3 py-2 font-semibold">품목</th>
-            <th className="px-3 py-2 font-semibold">규격</th>
-            <th className="px-3 py-2 text-right font-semibold">거래 횟수</th>
-            <th className="px-3 py-2 text-right font-semibold">총 수량</th>
-            <th className="px-3 py-2 text-right font-semibold">최근 단가</th>
-            <th className="px-3 py-2 text-right font-semibold">단가 범위</th>
-            <th className="px-3 py-2 font-semibold">최근 거래처</th>
-            <th className="px-3 py-2 font-semibold">최근 거래</th>
-            <th className="px-3 py-2" />
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.key} className="border-b border-line last:border-b-0 hover:bg-paper">
-              <td className="max-w-56 truncate px-3 py-2 font-semibold text-ink">{r.name}</td>
-              <td className="px-3 py-2 text-ink-2">{r.spec}</td>
-              <td className="px-3 py-2 text-right">{r.count}</td>
-              <td className="px-3 py-2 text-right">{won(r.qty)}</td>
-              <td className="px-3 py-2 text-right font-bold">{r.lastPrice ? won(r.lastPrice) : ''}</td>
-              <td className={clsx('whitespace-nowrap px-3 py-2 text-right text-xs', r.min !== r.max ? 'text-warn' : 'text-muted')}>{r.max ? (r.min === r.max ? '같음' : `${won(r.min)} ~ ${won(r.max)}`) : ''}</td>
-              <td className="max-w-40 truncate px-3 py-2 text-ink-2">{r.lastCustomer}</td>
-              <td className="px-3 py-2 text-ink-2">{r.last}</td>
-              <td className="px-2 py-1.5 text-right">
-                <Button size="sm" variant="ghost" onClick={() => onShow(r.name)}>
-                  문서 보기
-                </Button>
-              </td>
+      {view === 'lines' ? (
+        <div className="min-w-[880px]">{usesTable(lines, true)}</div>
+      ) : (
+        <table className="num w-full min-w-[820px] text-sm">
+          <thead>
+            <tr className="border-b border-line bg-paper text-left text-xs text-muted">
+              <th className="px-3 py-2 font-semibold">품목</th>
+              <th className="px-3 py-2 font-semibold">규격</th>
+              <th className="px-3 py-2 text-right font-semibold">거래 횟수</th>
+              <th className="px-3 py-2 text-right font-semibold">총 수량</th>
+              <th className="px-3 py-2 text-right font-semibold">최근 단가</th>
+              <th className="px-3 py-2 text-right font-semibold">단가 범위</th>
+              <th className="px-3 py-2 font-semibold">최근 거래처</th>
+              <th className="px-3 py-2 font-semibold">최근 거래</th>
+              <th className="px-3 py-2" />
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <Fragment key={r.key}>
+                <tr className={clsx('border-b border-line last:border-b-0 hover:bg-paper', open === r.key && 'bg-paper')}>
+                  <td className="max-w-56 px-3 py-2">
+                    <button type="button" className="flex items-center gap-1 truncate text-left font-semibold text-ink hover:underline" aria-expanded={open === r.key} onClick={() => setOpen(open === r.key ? null : r.key)} title="이 품목이 쓰인 문서 보기">
+                      <ChevronRight className={clsx('size-3.5 shrink-0 transition-transform', open === r.key && 'rotate-90')} aria-hidden />
+                      {r.name}
+                    </button>
+                  </td>
+                  <td className="px-3 py-2 text-ink-2">{r.spec}</td>
+                  <td className="px-3 py-2 text-right">{r.count}</td>
+                  <td className="px-3 py-2 text-right">{won(r.qty)}</td>
+                  <td className="px-3 py-2 text-right font-bold">{r.lastPrice ? won(r.lastPrice) : ''}</td>
+                  <td className={clsx('whitespace-nowrap px-3 py-2 text-right text-xs', r.min !== r.max ? 'text-warn' : 'text-muted')}>{r.max ? (r.min === r.max ? '같음' : `${won(r.min)} ~ ${won(r.max)}`) : ''}</td>
+                  <td className="max-w-40 truncate px-3 py-2 text-ink-2">{r.lastCustomer}</td>
+                  <td className="px-3 py-2 text-ink-2">{r.last}</td>
+                  <td className="px-2 py-1.5 text-right">
+                    <Button size="sm" variant="ghost" onClick={() => onShow(r.name)}>
+                      문서 보기
+                    </Button>
+                  </td>
+                </tr>
+                {open === r.key && (
+                  <tr className="border-b border-line bg-paper">
+                    <td colSpan={9} className="px-6 pb-3 pt-1">
+                      <div className="rounded-md border border-line bg-surface">{usesTable(r.uses, false)}</div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      )}
     </BoardShell>
   )
 }
@@ -444,6 +599,7 @@ function BoardShell<S extends string>({
   count,
   unit,
   empty,
+  extra,
   children,
 }: {
   q: string
@@ -455,12 +611,14 @@ function BoardShell<S extends string>({
   count: number
   unit: string
   empty: boolean
-  children: React.ReactNode
+  extra?: ReactNode
+  children: ReactNode
 }) {
   if (empty) return <EmptyState icon={Inbox} title="아직 저장한 문서가 없습니다">문서함에 문서가 쌓이면 여기서 모아 볼 수 있습니다.</EmptyState>
   return (
     <div className="flex flex-col gap-3">
       <Panel className="flex flex-wrap items-center gap-2 p-3">
+        {extra}
         <Select<S> aria-label="정렬" value={sort} onValue={setSort} options={sorts} className="h-9! w-36!" />
         <span className="num text-sm text-ink-2">
           {count}

@@ -27,9 +27,13 @@ export interface DocEntry {
   total: number
   items: Array<{ name: string; spec: string; qty: number; unitPrice: number; total: number }>
   author: string
+  /** 진행 상태. 예전 문서에는 없다(견적중으로 본다) */
+  status?: DocStatus
   createdAt: string
   updatedAt: string
 }
+
+export type DocStatus = 'pending' | 'done' | 'canceled'
 
 type Phase = 'loading' | 'out' | 'in' | 'offline'
 
@@ -58,6 +62,7 @@ interface TeamState {
   getDoc: (id: string) => Promise<QuoteDoc>
   saveDoc: (doc: QuoteDoc, id: string | null) => Promise<DocEntry>
   deleteDoc: (id: string) => Promise<void>
+  setDocStatus: (id: string, status: DocStatus) => Promise<void>
 }
 
 const withContacts = (kit: CompanyKit, contacts: Contact[]): CompanyKit => ({ ...kit, contacts })
@@ -155,6 +160,18 @@ export const useTeam = create<TeamState>((setState, getState) => {
       const res = await guard(id ? api<{ entry: DocEntry }>(`/quote/docs/${id}`, { method: 'PUT', body: { doc } }).catch((err) => (err instanceof ApiError && err.status === 404 ? create() : Promise.reject(err))) : create())
       setState((s) => ({ docs: [res.entry, ...(s.docs ?? []).filter((d) => d.id !== res.entry.id)] }))
       return res.entry
+    },
+    async setDocStatus(id, status) {
+      // 누르자마자 바뀌어 보이게 먼저 고치고, 실패하면 되돌린다
+      const before = getState().docs
+      setState((s) => ({ docs: (s.docs ?? []).map((d) => (d.id === id ? { ...d, status } : d)) }))
+      try {
+        const res = await guard(api<{ entry: DocEntry }>(`/quote/docs/${id}/status`, { method: 'PATCH', body: { status } }))
+        setState((s) => ({ docs: (s.docs ?? []).map((d) => (d.id === id ? res.entry : d)) }))
+      } catch (err) {
+        setState({ docs: before })
+        throw err
+      }
     },
     async deleteDoc(id) {
       await guard(api(`/quote/docs/${id}`, { method: 'DELETE' }))
