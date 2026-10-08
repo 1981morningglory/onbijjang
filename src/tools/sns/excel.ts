@@ -1,12 +1,10 @@
 /**
- * 선발 결과 엑셀: 인스타그램·블로그 상위 150명, 전체 순위, 확인이 필요한 지원자, 점수 기준.
- * 상위 150명 시트 오른쪽에는 100점 평가표의 '사람이 보고 매기는 항목' 빈칸을 붙인다(합계는 수식).
+ * 수집 결과 엑셀: 인스타그램·블로그 지원자 전체(점수 순), 확인이 필요한 지원자, 점수 기준.
+ * 오른쪽에는 100점 평가표의 '사람이 보고 매기는 항목' 빈칸을 붙인다(합계는 수식).
  */
 import type { Worksheet } from 'exceljs'
 import type { Applicant } from './parse'
 import { igMissingReason, WEIGHTS, type BlogRow, type IgRow } from './score'
-
-export const TOP_N = 150
 
 export interface ProblemRow {
   kind: string
@@ -169,31 +167,26 @@ export async function buildSelectionWorkbook(input: ExportInput): Promise<Blob> 
   wb.created = new Date()
   const blank = (n: number) => Array.from({ length: n }, () => null)
 
-  // 인스타그램
-  const igTop = wb.addWorksheet(`인스타그램 TOP${TOP_N}`)
+  // 인스타그램(지원자 전체, 점수 순)
   const igCols = [...IG_COLS, ...IG_RUBRIC]
   const igFrom = IG_COLS.length + 1
   sheet(
-    igTop,
+    wb.addWorksheet(`인스타그램 (${input.ig.length}명)`),
     igCols,
-    input.ig.slice(0, TOP_N).map((r) => [...igValues(r, input.igPeople), ...blank(IG_RUBRIC.length)]),
+    input.ig.map((r) => [...igValues(r, input.igPeople), ...blank(IG_RUBRIC.length)]),
     { from: igFrom, to: igFrom + IG_RUBRIC.length - 2, at: igFrom + IG_RUBRIC.length - 1 },
   )
 
-  // 블로그
+  // 블로그(지원자 전체, 점수 순)
   const dates = input.blog.find((r) => r.data.visitors.length)?.data.visitors.map((v) => v.date) ?? ['', '', '', '', '']
   const blogCols = BLOG_COLS(dates)
-  const blogTop = wb.addWorksheet(`블로그 TOP${TOP_N}`)
   const bFrom = blogCols.length + 1
   sheet(
-    blogTop,
+    wb.addWorksheet(`블로그 (${input.blog.length}명)`),
     [...blogCols, ...BLOG_RUBRIC],
-    input.blog.slice(0, TOP_N).map((r) => [...blogValues(r, input.blogPeople, dates.length), ...blank(BLOG_RUBRIC.length)]),
+    input.blog.map((r) => [...blogValues(r, input.blogPeople, dates.length), ...blank(BLOG_RUBRIC.length)]),
     { from: bFrom, to: bFrom + BLOG_RUBRIC.length - 2, at: bFrom + BLOG_RUBRIC.length - 1 },
   )
-
-  sheet(wb.addWorksheet('인스타그램 전체'), IG_COLS, input.ig.map((r) => igValues(r, input.igPeople)))
-  sheet(wb.addWorksheet('블로그 전체'), blogCols, input.blog.map((r) => blogValues(r, input.blogPeople, dates.length)))
 
   // 확인 필요
   const prob = wb.addWorksheet('확인 필요')
@@ -214,7 +207,7 @@ export async function buildSelectionWorkbook(input: ExportInput): Promise<Blob> 
   const info = wb.addWorksheet('점수 기준')
   info.getColumn(1).width = 110
   const lines = [
-    input.title || '체험단 SNS 선발',
+    input.title || '체험단 SNS 활동 점수',
     `만든 때: ${new Date().toLocaleString('ko-KR')}`,
     input.pending.ig || input.pending.blog ? `※ 아직 수집 중: 인스타그램 ${input.pending.ig}명 · 블로그 ${input.pending.blog}명 (모두 끝난 뒤 다시 내려받으면 순위가 바뀔 수 있습니다)` : '모든 계정 수집 완료',
     '',

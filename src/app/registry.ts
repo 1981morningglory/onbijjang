@@ -250,7 +250,7 @@ export const TOOLS: ToolDef[] = [
   // ── 마케팅 ──────────────────────────────────────────────
   {
     id: 'sns', group: 'marketing', title: '체험단 SNS 선발',
-    summary: '지원자 인스타그램·블로그를 방문해 팔로워·반응·방문자·이웃을 모으고 상위 150명을 엑셀로',
+    summary: '지원자 인스타그램·블로그를 방문해 팔로워·반응·방문자·이웃을 모아 지원자 전체의 활동 점수를 엑셀로',
     keywords: ['체험단', '인플루언서', '인스타그램', '인스타', '블로그', '네이버', '팔로워', '방문자', '이웃', '서포터즈', '선발', '순위'],
     icon: Trophy, art: 'sns', local: false, wide: true, roles: ['member', 'staff', 'admin'],
     component: lazy(() => import('@/tools/sns')),

@@ -6,8 +6,8 @@ import { Link } from 'react-router'
 import { useLoginDialog } from '@/app/LoginDialog'
 import { api, ApiError } from '@/lib/api'
 import { downloadBlob } from '@/lib/files'
-import { Badge, Button, Callout, Dropzone, EmptyState, Field, Panel, Progress, Spinner, Tabs, Textarea, TextInput, toast } from '@/ui'
-import { buildSelectionWorkbook, TOP_N, type ProblemRow } from './excel'
+import { Badge, Button, Callout, Dialog, Dropzone, EmptyState, Field, Panel, Progress, Spinner, Tabs, Textarea, TextInput, toast } from '@/ui'
+import { buildSelectionWorkbook, type ProblemRow } from './excel'
 import { linesToApplicants, parseList, readApplicantsXlsx, type Applicant, type SnsKind } from './parse'
 import { igMissingReason, MISSING_LABEL, rankBlog, rankIg, type BlogData, type IgData, type JobItem } from './score'
 
@@ -40,6 +40,45 @@ interface LocalMeta {
   problems: ProblemRow[]
 }
 const metaKey = (id: string) => `onbijjang:sns:job:${id}`
+
+/** 한 계정에 걸리는 시간(초): 인스타그램은 API 연결 시 Meta 한도(시간당 약 200번) 때문에 19초, 연결 전 6초. 블로그 약 1.2초 */
+const IG_SEC = (connected: boolean) => (connected ? 19 : 6)
+const BLOG_SEC = 1.2
+/** 블로그와 인스타그램은 서버에서 동시에 돌므로 둘 중 긴 쪽이 전체 시간 */
+const estimateSec = (ig: number, blog: number, connected: boolean) => Math.max(ig * IG_SEC(connected), blog * BLOG_SEC)
+function fmtDuration(sec: number) {
+  const m = Math.max(1, Math.ceil(sec / 60))
+  if (m < 60) return `약 ${m}분`
+  const h = Math.floor(m / 60)
+  return m % 60 ? `약 ${h}시간 ${m % 60}분` : `약 ${h}시간`
+}
+const LONG_SEC = 5 * 60
+
+/** 5분 이상 걸리는 수집을 시작하기 전에 묻는다 */
+function ConfirmLong({ open, seconds, detail, onYes, onNo }: { open: boolean; seconds: number; detail: string; onYes: () => void; onNo: () => void }) {
+  return (
+    <Dialog
+      open={open}
+      onClose={onNo}
+      size="sm"
+      title="시간이 오래 걸리는 작업입니다"
+      footer={
+        <>
+          <Button onClick={onNo}>아니오</Button>
+          <Button variant="primary" onClick={onYes}>
+            예, 진행합니다
+          </Button>
+        </>
+      }
+    >
+      <Callout tone="warn" title={`예상 소요시간 ${fmtDuration(seconds)}`}>
+        {detail}
+      </Callout>
+      <p className="mt-3 text-sm text-ink-2">수집은 서버에서 진행되므로 이 창을 닫거나 컴퓨터를 꺼도 계속됩니다. 중간에 ‘엑셀 내려받기’로 그때까지 모은 결과를 받을 수 있고, ‘멈추기’로 언제든 멈출 수 있습니다.</p>
+      <p className="mt-3 font-semibold text-ink">진행하시겠습니까?</p>
+    </Dialog>
+  )
+}
 
 export default function SnsTool() {
   const [status, setStatus] = useState<Status | null>(null)
@@ -141,6 +180,7 @@ function Workspace({ status }: { status: Status }) {
       )}
 
       <NewJob
+        connected={Boolean(ig?.connected)}
         onCreated={(id) => {
           setOpenId(id)
           void refresh()
@@ -185,12 +225,13 @@ function Workspace({ status }: { status: Status }) {
 }
 
 // ── 새 작업 ───────────────────────────────────────────────
-function NewJob({ onCreated }: { onCreated: (id: string) => void }) {
+function NewJob({ connected, onCreated }: { connected: boolean; onCreated: (id: string) => void }) {
   const [title, setTitle] = useState('')
   const [igText, setIgText] = useState('')
   const [blogText, setBlogText] = useState('')
   const [fromFile, setFromFile] = useState<{ ig: Applicant[]; blog: Applicant[]; other: Applicant[]; total: number; name: string } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [asking, setAsking] = useState(false)
 
   /** 칸의 줄에 엑셀에서 읽은 이름·연락처를 붙인다(같은 줄 글자로 맞춤) */
   const enrich = (kind: SnsKind, text: string) => {
@@ -271,11 +312,20 @@ function NewJob({ onCreated }: { onCreated: (id: string) => void }) {
   )
 
   const total = igParsed.keys.size + blogParsed.keys.size
-  const igMinutes = Math.ceil((igParsed.keys.size * 19) / 60)
+  const igN = igParsed.keys.size
+  const blogN = blogParsed.keys.size
+  const est = estimateSec(igN, blogN, connected)
+  const detail = [
+    igN ? `인스타그램 ${igN}명 × 약 ${IG_SEC(connected)}초${connected ? '(Meta 공식 API 한도: 시간당 약 200번)' : ''} = ${fmtDuration(igN * IG_SEC(connected))}` : '',
+    blogN ? `블로그 ${blogN}명 = ${fmtDuration(blogN * BLOG_SEC)}` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  const onStart = () => (est >= LONG_SEC ? setAsking(true) : void start())
   return (
     <Panel className="flex flex-col gap-4 p-4">
       <div className="flex flex-wrap items-end gap-3">
-        <h3 className="mr-auto text-base font-bold text-ink">새 선발 작업</h3>
+        <h3 className="mr-auto text-base font-bold text-ink">새 수집 작업</h3>
         <Field label="작업 이름" className="w-full max-w-sm">
           {(id) => <TextInput id={id} value={title} onChange={(e) => setTitle(e.target.value)} maxLength={80} placeholder="예: 5겹 화장지 체험단 10월" />}
         </Field>
@@ -294,16 +344,25 @@ function NewJob({ onCreated }: { onCreated: (id: string) => void }) {
         {box('blog', blogText, setBlogText, blogParsed)}
       </div>
       <div className="flex flex-wrap items-center gap-3">
-        <Button variant="primary" icon={Rocket} loading={busy} disabled={!total} onClick={start}>
+        <Button variant="primary" icon={Rocket} loading={busy} disabled={!total} onClick={onStart}>
           {total ? `${total}개 계정 수집 시작` : '수집 시작'}
         </Button>
         {total > 0 && (
-          <span className="text-sm text-muted">
-            예상 시간: 블로그 약 {Math.max(1, Math.ceil((blogParsed.keys.size * 1.2) / 60))}분
-            {igParsed.keys.size > 0 && ` · 인스타그램 약 ${igMinutes >= 60 ? `${Math.floor(igMinutes / 60)}시간 ${igMinutes % 60}분` : `${igMinutes}분`}`} (창을 닫아도 계속됩니다)
+          <span className={clsx('text-sm', est >= LONG_SEC ? 'font-semibold text-warn' : 'text-muted')}>
+            예상 소요시간 {fmtDuration(est)} <span className="font-normal text-muted">({detail}, 블로그와 인스타그램은 함께 진행)</span>
           </span>
         )}
       </div>
+      <ConfirmLong
+        open={asking}
+        seconds={est}
+        detail={detail}
+        onNo={() => setAsking(false)}
+        onYes={() => {
+          setAsking(false)
+          void start()
+        }}
+      />
     </Panel>
   )
 }
@@ -314,6 +373,7 @@ function JobView({ id, lanes, connected, onChanged, onDeleted }: { id: string; l
   const [meta, setMeta] = useState<LocalMeta | null>(null)
   const [tab, setTab] = useState<'ig' | 'blog'>('ig')
   const [busy, setBusy] = useState<string | null>(null)
+  const [askRecheck, setAskRecheck] = useState(false)
   const timer = useRef<number | null>(null)
 
   const load = useCallback(async () => {
@@ -465,9 +525,25 @@ function JobView({ id, lanes, connected, onChanged, onDeleted }: { id: string; l
           인스타그램 API 가 연결되기 전에 모아서 팔로워만 읽었습니다. 그래서 이 사람들의 반응 점수(40)는 실제 반응이 아니라 팔로워 순위로 대신 채운 값입니다(표에서 회색).
           {connected ? (
             <div className="mt-2">
-              <Button size="sm" variant="primary" icon={RefreshCw} loading={busy === 'recheck'} onClick={() => act('recheck', () => api(`/sns/jobs/${id}/recheck`, { method: 'POST' }))}>
-                API 로 최근 10개 게시물 반응 다시 읽기 ({noApi}명 · 약 {Math.ceil((noApi * 19) / 60)}분)
+              <Button
+                size="sm"
+                variant="primary"
+                icon={RefreshCw}
+                loading={busy === 'recheck'}
+                onClick={() => (noApi * IG_SEC(true) >= LONG_SEC ? setAskRecheck(true) : void act('recheck', () => api(`/sns/jobs/${id}/recheck`, { method: 'POST' })))}
+              >
+                API 로 최근 10개 게시물 반응 다시 읽기 ({noApi}명 · {fmtDuration(noApi * IG_SEC(true))})
               </Button>
+              <ConfirmLong
+                open={askRecheck}
+                seconds={noApi * IG_SEC(true)}
+                detail={`인스타그램 ${noApi}명 × 약 ${IG_SEC(true)}초(Meta 공식 API 한도: 시간당 약 200번)`}
+                onNo={() => setAskRecheck(false)}
+                onYes={() => {
+                  setAskRecheck(false)
+                  void act('recheck', () => api(`/sns/jobs/${id}/recheck`, { method: 'POST' }))
+                }}
+              />
             </div>
           ) : (
             <div className="mt-1">
@@ -506,7 +582,7 @@ function JobView({ id, lanes, connected, onChanged, onDeleted }: { id: string; l
                 </tr>
               </thead>
               <tbody>
-                {ranked.ig.slice(0, TOP_N).map((r) => (
+                {ranked.ig.map((r) => (
                   <tr key={r.key} className="border-t border-line">
                     <td className="px-3 py-1.5 font-bold">{r.rank}</td>
                     <td className="px-3 py-1.5">{[...new Set((people.ig.get(r.key) ?? []).map((p) => p.name).filter(Boolean))].join(', ')}</td>
@@ -554,7 +630,7 @@ function JobView({ id, lanes, connected, onChanged, onDeleted }: { id: string; l
               </tr>
             </thead>
             <tbody>
-              {ranked.blog.slice(0, TOP_N).map((r) => (
+              {ranked.blog.map((r) => (
                 <tr key={r.key} className="border-t border-line">
                   <td className="px-3 py-1.5 font-bold">{r.rank}</td>
                   <td className="px-3 py-1.5">{[...new Set((people.blog.get(r.key) ?? []).map((p) => p.name).filter(Boolean))].join(', ')}</td>
@@ -580,7 +656,7 @@ function JobView({ id, lanes, connected, onChanged, onDeleted }: { id: string; l
         <EmptyState title="아직 읽은 블로그가 없습니다">수집이 진행되면 여기에 순위가 쌓입니다.</EmptyState>
       )}
       <p className="text-xs text-muted">
-        점수는 지원자들 사이에서의 위치(백분위)로 매기므로, 수집이 끝나기 전에는 순위가 조금씩 바뀝니다. 엑셀에는 상위 {TOP_N}명 시트(평가표 빈칸 포함), 전체 순위, 확인이 필요한 지원자, 점수 기준이 들어갑니다.
+        점수는 지원자들 사이에서의 위치(백분위)로 매기므로, 수집이 끝나기 전에는 순위가 조금씩 바뀝니다. 엑셀에는 인스타그램·블로그 지원자 전체의 점수와 순위(평가표 빈칸 포함), 확인이 필요한 지원자, 점수 기준이 들어갑니다.
       </p>
     </div>
   )
