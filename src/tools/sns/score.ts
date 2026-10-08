@@ -10,6 +10,9 @@
 export interface IgData {
   source: 'api' | 'page'
   personal?: boolean
+  /** 반응을 못 읽은 까닭: API 연결 전에 모음 · 개인 계정 */
+  reason?: 'no-api' | 'personal'
+  apiError?: string
   name: string
   followers: number | null
   following: number | null
@@ -64,6 +67,13 @@ export function percentiles(values: number[]): number[] {
 }
 
 const r1 = (v: number) => Math.round(v * 10) / 10
+
+/** 반응(좋아요·댓글)을 못 읽은 까닭. 예전 작업은 reason 이 없어 source 로 짐작한다 */
+export function igMissingReason(d: IgData): 'no-api' | 'personal' | null {
+  if (d.source === 'api') return null
+  return d.reason ?? (d.personal ? 'personal' : 'no-api')
+}
+export const MISSING_LABEL = { 'no-api': 'API 연결 전 수집', personal: '개인 계정' } as const
 
 export interface IgRow {
   key: string

@@ -9,7 +9,7 @@ import { downloadBlob } from '@/lib/files'
 import { Badge, Button, Callout, Dropzone, EmptyState, Field, Panel, Progress, Spinner, Tabs, Textarea, TextInput, toast } from '@/ui'
 import { buildSelectionWorkbook, TOP_N, type ProblemRow } from './excel'
 import { linesToApplicants, parseList, readApplicantsXlsx, type Applicant, type SnsKind } from './parse'
-import { rankBlog, rankIg, type BlogData, type IgData, type JobItem } from './score'
+import { igMissingReason, MISSING_LABEL, rankBlog, rankIg, type BlogData, type IgData, type JobItem } from './score'
 
 interface Status {
   allowed: boolean
@@ -174,7 +174,7 @@ function Workspace({ status }: { status: Status }) {
                   </span>
                   <Badge tone={j.status === 'done' ? 'brand' : j.status === 'running' ? 'mark' : 'neutral'}>{j.status === 'done' ? '완료' : j.status === 'running' ? '수집 중' : '멈춤'}</Badge>
                 </button>
-                {openId === j.id && <JobView id={j.id} lanes={lanes} onChanged={refresh} onDeleted={() => setOpenId(null)} />}
+                {openId === j.id && <JobView id={j.id} lanes={lanes} connected={Boolean(ig?.connected)} onChanged={refresh} onDeleted={() => setOpenId(null)} />}
               </li>
             ))}
           </ul>
@@ -309,7 +309,7 @@ function NewJob({ onCreated }: { onCreated: (id: string) => void }) {
 }
 
 // ── 작업 보기 ─────────────────────────────────────────────
-function JobView({ id, lanes, onChanged, onDeleted }: { id: string; lanes: Lanes | null; onChanged: () => void; onDeleted: () => void }) {
+function JobView({ id, lanes, connected, onChanged, onDeleted }: { id: string; lanes: Lanes | null; connected: boolean; onChanged: () => void; onDeleted: () => void }) {
   const [job, setJob] = useState<(JobBrief & { items: JobItem[] }) | null>(null)
   const [meta, setMeta] = useState<LocalMeta | null>(null)
   const [tab, setTab] = useState<'ig' | 'blog'>('ig')
@@ -405,6 +405,9 @@ function JobView({ id, lanes, onChanged, onDeleted }: { id: string; lanes: Lanes
     }
   }
   const failCount = job.ig.fail + job.blog.fail
+  const noApi = ranked.ig.filter((r) => igMissingReason(r.data) === 'no-api').length
+  const personal = ranked.ig.filter((r) => igMissingReason(r.data) === 'personal').length
+  const withApi = ranked.ig.length - noApi - personal
 
   return (
     <div className="mt-2 flex flex-col gap-4 rounded-md border border-line bg-surface p-4">
@@ -457,6 +460,29 @@ function JobView({ id, lanes, onChanged, onDeleted }: { id: string; lanes: Lanes
         </Button>
       </div>
 
+      {noApi > 0 && (
+        <Callout tone="warn" title={`인스타그램 ${noApi}명은 반응(좋아요·댓글)을 아직 못 읽었습니다`}>
+          인스타그램 API 가 연결되기 전에 모아서 팔로워만 읽었습니다. 그래서 이 사람들의 반응 점수(40)는 실제 반응이 아니라 팔로워 순위로 대신 채운 값입니다(표에서 회색).
+          {connected ? (
+            <div className="mt-2">
+              <Button size="sm" variant="primary" icon={RefreshCw} loading={busy === 'recheck'} onClick={() => act('recheck', () => api(`/sns/jobs/${id}/recheck`, { method: 'POST' }))}>
+                API 로 최근 10개 게시물 반응 다시 읽기 ({noApi}명 · 약 {Math.ceil((noApi * 19) / 60)}분)
+              </Button>
+            </div>
+          ) : (
+            <div className="mt-1">
+              지금도 API 가 연결되어 있지 않습니다. 관리자 화면 → ‘SNS 연결’에서 연결하면 여기서 다시 읽을 수 있습니다.
+            </div>
+          )}
+        </Callout>
+      )}
+      {ranked.ig.length > 0 && noApi === 0 && (
+        <p className="text-sm text-ink-2">
+          인스타그램: 최근 게시물 10개의 좋아요·댓글을 읽은 계정 <b>{withApi}</b>명
+          {personal > 0 && <> · 개인 계정이라 팔로워만 읽은 계정 <b>{personal}</b>명(반응 점수는 팔로워 순위로 대신)</>}
+        </p>
+      )}
+
       <Tabs
         label="결과"
         value={tab}
@@ -469,10 +495,10 @@ function JobView({ id, lanes, onChanged, onDeleted }: { id: string; lanes: Lanes
       {tab === 'ig' ? (
         ranked.ig.length ? (
           <div className="max-h-[560px] overflow-auto rounded-md border border-line">
-            <table className="num w-full min-w-[820px] text-sm">
+            <table className="num w-full min-w-[980px] text-sm">
               <thead className="sticky top-0 bg-paper text-left text-xs text-muted">
                 <tr>
-                  {['순위', '이름', '아이디', '팔로워', '평균 반응', '참여율', '팔로워(60)', '반응(40)', '총점'].map((h) => (
+                  {['순위', '이름', '아이디', '팔로워', '평균 좋아요', '평균 댓글', '평균 반응', '참여율', '팔로워(60)', '반응(40)', '총점'].map((h) => (
                     <th key={h} className="px-3 py-2 font-semibold">
                       {h}
                     </th>
@@ -490,7 +516,19 @@ function JobView({ id, lanes, onChanged, onDeleted }: { id: string; lanes: Lanes
                       </a>
                     </td>
                     <td className="px-3 py-1.5 text-right">{r.data.followers?.toLocaleString('ko-KR')}</td>
-                    <td className="px-3 py-1.5 text-right">{r.data.avgEngagement != null ? r.data.avgEngagement.toLocaleString('ko-KR') : <span className="text-xs text-faint">개인 계정</span>}</td>
+                    {r.data.avgEngagement != null ? (
+                      <>
+                        <td className="px-3 py-1.5 text-right">{r.data.avgLikes?.toLocaleString('ko-KR')}</td>
+                        <td className="px-3 py-1.5 text-right">{r.data.avgComments?.toLocaleString('ko-KR')}</td>
+                        <td className="px-3 py-1.5 text-right font-semibold" title={`최근 게시물 ${r.data.postsRead}개 평균`}>
+                          {r.data.avgEngagement.toLocaleString('ko-KR')}
+                        </td>
+                      </>
+                    ) : (
+                      <td colSpan={3} className="px-3 py-1.5 text-center text-xs text-faint" title={r.data.apiError ?? ''}>
+                        {MISSING_LABEL[igMissingReason(r.data) ?? 'no-api']} · 반응 없음
+                      </td>
+                    )}
                     <td className="px-3 py-1.5 text-right">{r.engagementRate != null ? `${r.engagementRate}%` : ''}</td>
                     <td className="px-3 py-1.5 text-right">{r.followerScore}</td>
                     <td className={clsx('px-3 py-1.5 text-right', r.substituted && 'text-faint')}>{r.engagementScore}</td>

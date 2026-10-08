@@ -4,7 +4,7 @@
  */
 import type { Worksheet } from 'exceljs'
 import type { Applicant } from './parse'
-import { WEIGHTS, type BlogRow, type IgRow } from './score'
+import { igMissingReason, WEIGHTS, type BlogRow, type IgRow } from './score'
 
 export const TOP_N = 150
 
@@ -108,8 +108,9 @@ const IG_RUBRIC: Col[] = [
 
 function igValues(r: IgRow, people: Map<string, Applicant[]>) {
   const d = r.data
-  const kind = d.source === 'api' ? '비즈니스·크리에이터' : '개인(팔로워만)'
-  const notes = [r.substituted ? '반응을 못 읽어 팔로워 위치로 대신' : '', d.hiddenLikes ? '좋아요 숨김 게시물 있음' : ''].filter(Boolean).join(' · ')
+  const missing = igMissingReason(d)
+  const kind = missing === null ? '비즈니스·크리에이터' : missing === 'personal' ? '개인 계정(팔로워만)' : 'API 연결 전 수집(팔로워만)'
+  const notes = [r.substituted ? '반응을 못 읽어 반응 점수를 팔로워 위치로 대신' : '', d.hiddenLikes ? '좋아요 숨김 게시물 있음' : '', d.apiError ? `API: ${d.apiError}` : ''].filter(Boolean).join(' · ')
   return [
     r.rank,
     names(people.get(r.key)),

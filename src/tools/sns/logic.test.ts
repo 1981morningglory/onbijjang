@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 // 서버 쪽 순수 함수도 여기서 함께 확인한다
 import { blogIdFromUrl, classifyGraphError, parseCount, parseIgOg, parseVisitors, summarizeIg } from '../../../server/lib/sns.mjs'
 import { blogKey, guessKind, igKey, linesToApplicants, parseList } from './parse'
-import { percentiles, rankBlog, rankIg, type BlogData, type IgData } from './score'
+import { igMissingReason, percentiles, rankBlog, rankIg, type BlogData, type IgData } from './score'
 
 describe('인스타그램 주소 읽기', () => {
   it.each([
@@ -94,6 +94,9 @@ describe('서버: SNS 숫자 읽기', () => {
     expect(classifyGraphError(400, { error: { code: 4 } }).kind).toBe('rate')
     expect(classifyGraphError(400, { error: { code: 190, message: 'expired' } }).kind).toBe('token')
     expect(classifyGraphError(400, { error: { code: 110 } }).kind).toBe('personal')
+    expect(classifyGraphError(400, { error: { code: 100, error_subcode: 2207013, message: 'x' } }).kind).toBe('personal')
+    // 필드 이름이 틀린 것 같은 일반 오류는 '개인 계정'으로 숨기지 않는다
+    expect(classifyGraphError(400, { error: { code: 100, message: 'Tried accessing nonexisting field' } }).kind).toBe('fail')
   })
 })
 
@@ -131,5 +134,14 @@ describe('순위', () => {
       ['z', 35],
       ['y', 30],
     ])
+  })
+})
+
+describe('반응을 못 읽은 까닭', () => {
+  it('API 로 읽음 · 개인 계정 · API 연결 전(예전 작업은 reason 없음)', () => {
+    expect(igMissingReason(ig(100, 5))).toBeNull()
+    expect(igMissingReason({ ...ig(100, null), personal: true })).toBe('personal')
+    expect(igMissingReason(ig(100, null))).toBe('no-api')
+    expect(igMissingReason({ ...ig(100, null), reason: 'personal' })).toBe('personal')
   })
 })

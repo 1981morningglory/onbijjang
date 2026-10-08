@@ -155,8 +155,8 @@ export default async function snsRoutes(app, ctx) {
       }
       const { job, item } = next
       const cached = fromCache(`ig:${item.key}`)
-      // 캐시에 개인 계정(페이지) 결과만 있는데 지금 토큰이 있으면 API 로 다시 본다
-      if (cached && !(cached.source === 'page' && config?.token && !cached.personal)) {
+      // 캐시에 API 없이 읽은 결과만 있는데 지금 토큰이 있으면 API 로 다시 본다
+      if (cached && !(cached.source === 'page' && config?.token && !cached.personal) && !item.fresh) {
         Object.assign(item, { state: 'done', data: cached, error: null, at: new Date().toISOString() })
         finishIfDone(job)
         continue
@@ -171,9 +171,10 @@ export default async function snsRoutes(app, ctx) {
           } catch (err) {
             if (err.kind !== 'personal') throw err
             await sleep(1500)
-            data = { ...(await fetchIgPage(item.key)), personal: true }
+            data = { ...(await fetchIgPage(item.key)), personal: true, reason: 'personal', apiError: err.message }
           }
-        } else data = await fetchIgPage(item.key)
+        } else data = { ...(await fetchIgPage(item.key)), reason: 'no-api' }
+        delete item.fresh
         cache.set(`ig:${item.key}`, { at: Date.now(), data })
         cacheDirty = true
         Object.assign(item, { state: 'done', data, error: null, at: new Date().toISOString() })
@@ -266,6 +267,28 @@ export default async function snsRoutes(app, ctx) {
     delete j.finishedAt
     finishIfDone(j)
     res.json({ job: brief(j) })
+  })
+  /** API 연결 전에 팔로워만 읽은 인스타그램 계정을 API 로 다시 읽는다(반응까지) */
+  app.post('/api/sns/jobs/:id/recheck', requireAllowed, (req, res) => {
+    const j = JOB_ID_RE.test(req.params.id) ? jobs.get(req.params.id) : null
+    if (!j) return res.status(404).json({ error: '없는 작업입니다.' })
+    if (!config?.token) return res.status(400).json({ error: '인스타그램 API 가 아직 연결되지 않았습니다. 관리자 화면 ‘SNS 연결’에서 먼저 연결해 주세요.' })
+    let n = 0
+    for (const it of j.items) {
+      if (it.kind !== 'ig' || it.state === 'wait') continue
+      if (it.state === 'fail' || (it.data?.source === 'page' && !it.data?.personal)) {
+        Object.assign(it, { state: 'wait', error: null, tries: 0, fresh: true })
+        cache.delete(`ig:${it.key}`)
+        n++
+      }
+    }
+    cacheDirty = true
+    if (n) {
+      j.status = 'running'
+      delete j.finishedAt
+    }
+    dirty.add(j.id)
+    res.json({ job: brief(j), count: n })
   })
   app.delete('/api/sns/jobs/:id', requireAllowed, async (req, res) => {
     const id = req.params.id

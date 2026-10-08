@@ -144,7 +144,8 @@ export function classifyGraphError(status, body) {
   if (status === 429 || [4, 17, 32, 613, 80002].includes(code)) return new SnsError('인스타그램 API 사용 한도에 닿아 잠시 쉼', 'rate')
   if (code === 190 || code === 102 || (code === 10 && /permission/i.test(e.message ?? '')) || code === 200) return new SnsError(`토큰 문제: ${e.message ?? '확인 필요'}`, 'token')
   // 110 / 100(2207013 등): 비즈니스·크리에이터 계정이 아니거나 없는 아이디
-  if (code === 110 || code === 100 || code === 24) return new SnsError('비즈니스·크리에이터 계정이 아님', 'personal')
+  if (code === 110 || code === 24 || (code === 100 && (Number(e.error_subcode) === 2207013 || /cannot be found|not.*(business|professional)|does not exist/i.test(e.message ?? ''))))
+    return new SnsError('비즈니스·크리에이터 계정이 아님', 'personal')
   return new SnsError(e.message ? `인스타그램 API: ${e.message}` : `인스타그램 API 응답 ${status}`)
 }
 
