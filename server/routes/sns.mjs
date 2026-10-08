@@ -7,7 +7,7 @@
 import crypto from 'node:crypto'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
-import { BLOG_ID_RE, discoverIgAccount, fetchBlog, fetchIgApi, fetchIgPage, IG_USER_RE, resolveNaverMe, SnsError, tokenExpiry } from '../lib/sns.mjs'
+import { BLOG_ID_RE, connectInstagram, fetchBlog, fetchIgApi, fetchIgPage, IG_USER_RE, resolveNaverMe, SnsError } from '../lib/sns.mjs'
 
 const IG_API_GAP_MS = 19_000 // 시간당 약 190번
 const IG_PAGE_GAP_MS = 6_000
@@ -277,20 +277,36 @@ export default async function snsRoutes(app, ctx) {
   })
 
   // ── 관리자: 인스타그램 API 연결 ──────────────────────────
-  app.get('/api/admin/sns', requireAdmin, (_req, res) => {
-    res.json({ connected: Boolean(config?.token), igUsername: config?.igUsername ?? '', pageName: config?.pageName ?? '', savedAt: config?.savedAt ?? null, expiresAt: config?.expiresAt ?? null })
+  // 토큰·시크릿은 화면에 다시 보내지 않는다
+  const adminView = () => ({
+    connected: Boolean(config?.token),
+    igUsername: config?.igUsername ?? '',
+    igUserId: config?.igUserId ?? '',
+    pageName: config?.pageName ?? '',
+    appId: config?.appId ?? '',
+    hasAppSecret: Boolean(config?.appSecret),
+    savedAt: config?.savedAt ?? null,
+    expiresAt: config?.expiresAt ?? null,
   })
+  app.get('/api/admin/sns', requireAdmin, (_req, res) => res.json(adminView()))
   app.put('/api/admin/sns', requireAdmin, async (req, res) => {
-    const token = typeof req.body?.token === 'string' ? req.body.token.trim() : ''
+    const field = (k, max) => (typeof req.body?.[k] === 'string' ? req.body[k].trim().slice(0, max) : '')
+    const token = field('token', 2000)
+    const igUserId = field('igUserId', 40)
+    const appId = field('appId', 40)
+    // 시크릿을 비워 두면 전에 저장한 것을 그대로 쓴다(같은 앱일 때)
+    const appSecret = field('appSecret', 200) || (appId && appId === config?.appId ? config?.appSecret ?? '' : '')
     if (token.length < 20) return res.status(400).json({ error: '액세스 토큰을 붙여 넣어 주세요.' })
+    if (igUserId && !/^\d{5,30}$/.test(igUserId)) return res.status(400).json({ error: 'IG 계정 ID 는 숫자로만 된 값입니다(예: 17841400000000000).' })
+    if (appId && !/^\d{5,30}$/.test(appId)) return res.status(400).json({ error: '앱 ID 는 숫자로만 된 값입니다.' })
+    if (appSecret && !appId) return res.status(400).json({ error: '앱 시크릿을 쓰려면 앱 ID 도 넣어 주세요.' })
     try {
-      const acc = await discoverIgAccount(token)
-      const expiresAt = await tokenExpiry(token)
-      config = { token, ...acc, expiresAt, savedAt: new Date().toISOString() }
+      const { exchanged, ...next } = await connectInstagram({ token, igUserId, appId, appSecret })
+      config = { ...next, savedAt: new Date().toISOString() }
       await writeJson(CONFIG, config)
       lane.ig.pauseUntil = 0
       lane.ig.note = ''
-      res.json({ connected: true, igUsername: acc.igUsername, pageName: acc.pageName, expiresAt, savedAt: config.savedAt })
+      res.json({ ...adminView(), exchanged })
     } catch (err) {
       res.status(400).json({ error: err instanceof SnsError ? err.message : `확인하지 못했습니다: ${err.message}` })
     }

@@ -605,7 +605,11 @@ function CommonKitEditor() {
 interface SnsAdmin {
   connected: boolean
   igUsername: string
+  igUserId: string
   pageName: string
+  appId: string
+  hasAppSecret: boolean
+  exchanged?: boolean
   savedAt: string | null
   expiresAt: string | null
 }
@@ -614,8 +618,17 @@ interface SnsAdmin {
 function SnsConnect() {
   const [state, setState] = useState<SnsAdmin | null>(null)
   const [token, setToken] = useState('')
+  const [igUserId, setIgUserId] = useState('')
+  const [appId, setAppId] = useState('')
+  const [appSecret, setAppSecret] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
-  const refresh = async () => setState(await api<SnsAdmin>('/admin/sns'))
+  const refresh = async () => {
+    const r = await api<SnsAdmin>('/admin/sns')
+    setState(r)
+    // 전에 넣은 ID 는 다시 채워 둔다(토큰·시크릿은 서버가 돌려주지 않는다)
+    setIgUserId((v) => v || r.igUserId)
+    setAppId((v) => v || r.appId)
+  }
   useEffect(() => {
     refresh().catch(() => {})
   }, [])
@@ -637,7 +650,9 @@ function SnsConnect() {
         </div>
         {state?.connected ? (
           <Callout tone={soon ? 'warn' : 'success'} title={`연결됨 · @${state.igUsername || '(이름 없음)'}`}>
-            페이스북 페이지: {state.pageName || '-'} · {expiry}
+            계정 ID {state.igUserId || '-'} · {state.pageName ? `${state.pageName} · ` : ''}
+            {expiry}
+            {state.appId && ` · 앱 ${state.appId}${state.hasAppSecret ? '(시크릿 저장됨)' : ''}`}
             {state.savedAt && <> · {new Date(state.savedAt).toLocaleString('ko-KR')} 저장</>}
             {soon && <div className="mt-1 font-semibold">곧 만료됩니다. 아래 순서로 새 토큰을 받아 다시 넣어 주세요.</div>}
           </Callout>
@@ -651,16 +666,27 @@ function SnsConnect() {
           onSubmit={(e) => {
             e.preventDefault()
             run('save', async () => {
-              const r = await api<SnsAdmin>('/admin/sns', { method: 'PUT', body: { token } })
+              const r = await api<SnsAdmin>('/admin/sns', { method: 'PUT', body: { token: token.trim(), igUserId: igUserId.trim(), appId: appId.trim(), appSecret: appSecret.trim() } })
               setToken('')
+              setAppSecret('')
               setState(r)
-              toast.success(`@${r.igUsername} 계정으로 연결했습니다.`)
+              toast.success(`@${r.igUsername || r.igUserId} 계정으로 연결했습니다.${r.exchanged ? ' 토큰을 60일짜리로 바꿔 저장했습니다.' : ''}`)
             })
           }}
         >
           <Field label="액세스 토큰" hint="붙여 넣으면 서버가 바로 확인해서 연결된 인스타그램 비즈니스 계정을 찾습니다.">
-            {(id) => <TextInput id={id} type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} placeholder="EAAG…로 시작하는 긴 글자" />}
+            {(id) => <TextInput id={id} type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} placeholder="EAA…로 시작하는 긴 글자" />}
           </Field>
+          <Field label="IG 계정 ID (선택)" hint="회사 인스타그램 비즈니스 계정의 숫자 ID(보통 1784…로 시작). 비워 두면 토큰으로 찾습니다.">
+            {(id) => <TextInput id={id} inputMode="numeric" autoComplete="off" value={igUserId} onChange={(e) => setIgUserId(e.target.value.replace(/\D/g, ''))} placeholder="17841400000000000" />}
+          </Field>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Field label="앱 ID (선택)">{(id) => <TextInput id={id} inputMode="numeric" autoComplete="off" value={appId} onChange={(e) => setAppId(e.target.value.replace(/\D/g, ''))} />}</Field>
+            <Field label="앱 시크릿 (선택)" hint={state?.hasAppSecret ? '저장되어 있습니다. 바꿀 때만 넣으세요.' : undefined}>
+              {(id) => <TextInput id={id} type="password" autoComplete="off" value={appSecret} onChange={(e) => setAppSecret(e.target.value)} />}
+            </Field>
+          </div>
+          <p className="text-xs text-muted">앱 ID·시크릿을 함께 넣으면 짧은 토큰도 서버가 60일 토큰으로 바꿔 저장하고, 앱에 ‘앱 시크릿 필요’가 켜져 있어도 연결됩니다. 시크릿은 서버에만 저장하고 다시 보여 주지 않습니다.</p>
           <div className="flex flex-wrap gap-2">
             <Button type="submit" variant="primary" icon={KeyRound} loading={busy === 'save'} disabled={token.trim().length < 20}>
               {state?.connected ? '새 토큰으로 바꾸기' : '연결하기'}

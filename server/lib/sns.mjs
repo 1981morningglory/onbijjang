@@ -3,6 +3,8 @@
 // - 인스타그램: Meta 공식 Graph API 의 Business Discovery(비즈니스·크리에이터 계정만).
 //   개인 계정은 공개 프로필 페이지의 소개 문구에서 팔로워 수만 읽는다.
 
+import crypto from 'node:crypto'
+
 export const GRAPH = 'https://graph.facebook.com/v23.0'
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36'
 
@@ -148,10 +150,13 @@ export function classifyGraphError(status, body) {
 
 const BD_FIELDS = 'username,name,followers_count,follows_count,media_count,media.limit(10){like_count,comments_count,timestamp,media_type,media_product_type}'
 
-/** Business Discovery 로 한 계정 읽기 */
-export async function fetchIgApi(username, { token, igUserId }) {
-  const url = `${GRAPH}/${igUserId}?fields=${encodeURIComponent(`business_discovery.username(${username}){${BD_FIELDS}}`)}&access_token=${encodeURIComponent(token)}`
-  const { res, text } = await fetchText(url, {}, 20000)
+/** 앱 시크릿이 있으면 appsecret_proof 를 붙인다(앱 설정 '앱 시크릿 필요'가 켜져 있어도 되도록) */
+function authQuery(token, appSecret) {
+  const proof = appSecret ? `&appsecret_proof=${crypto.createHmac('sha256', appSecret).update(token).digest('hex')}` : ''
+  return `access_token=${encodeURIComponent(token)}${proof}`
+}
+async function graphGet(pathQuery, { token, appSecret }, timeoutMs = 20000) {
+  const { res, text } = await fetchText(`${GRAPH}/${pathQuery}${pathQuery.includes('?') ? '&' : '?'}${authQuery(token, appSecret)}`, {}, timeoutMs)
   let body = null
   try {
     body = JSON.parse(text)
@@ -159,6 +164,12 @@ export async function fetchIgApi(username, { token, igUserId }) {
     // 아래에서 처리
   }
   if (!res.ok || body?.error) throw classifyGraphError(res.status, body)
+  return body
+}
+
+/** Business Discovery 로 한 계정 읽기 */
+export async function fetchIgApi(username, cred) {
+  const body = await graphGet(`${cred.igUserId}?fields=${encodeURIComponent(`business_discovery.username(${username}){${BD_FIELDS}}`)}`, cred)
   if (!body?.business_discovery) throw new SnsError('비즈니스·크리에이터 계정이 아님', 'personal')
   return summarizeIg(body.business_discovery)
 }
@@ -174,36 +185,39 @@ export async function fetchIgPage(username) {
 }
 
 /** 토큰으로 연결된 인스타그램 비즈니스 계정 찾기 */
-export async function discoverIgAccount(token) {
-  const get = async (pathQuery) => {
-    const { res, text } = await fetchText(`${GRAPH}/${pathQuery}${pathQuery.includes('?') ? '&' : '?'}access_token=${encodeURIComponent(token)}`)
-    let body = null
-    try {
-      body = JSON.parse(text)
-    } catch {
-      // 아래에서 처리
-    }
-    if (!res.ok || body?.error) throw classifyGraphError(res.status, body)
-    return body
-  }
+export async function discoverIgAccount(cred) {
   // 사용자 토큰: 관리하는 페이지들 중 인스타그램이 연결된 것
   try {
-    const pages = await get('me/accounts?fields=name,instagram_business_account{id,username}&limit=100')
+    const pages = await graphGet('me/accounts?fields=name,instagram_business_account{id,username}&limit=100', cred)
     const hit = (pages.data ?? []).find((p) => p.instagram_business_account?.id)
     if (hit) return { igUserId: hit.instagram_business_account.id, igUsername: hit.instagram_business_account.username ?? '', pageName: hit.name ?? '' }
   } catch (err) {
     if (err.kind === 'token') throw err
   }
   // 페이지 토큰
-  const me = await get('me?fields=name,instagram_business_account{id,username}')
+  const me = await graphGet('me?fields=name,instagram_business_account{id,username}', cred)
   if (me.instagram_business_account?.id) return { igUserId: me.instagram_business_account.id, igUsername: me.instagram_business_account.username ?? '', pageName: me.name ?? '' }
-  throw new SnsError('이 토큰으로는 연결된 인스타그램 비즈니스 계정을 찾지 못했습니다. 인스타그램을 비즈니스 계정으로 바꾸고 페이스북 페이지에 연결했는지, 토큰 권한(instagram_basic, pages_show_list, pages_read_engagement, business_management)을 확인해 주세요.', 'token')
+  throw new SnsError('이 토큰으로는 연결된 인스타그램 비즈니스 계정을 찾지 못했습니다. ‘IG 계정 ID’ 칸에 계정 ID 를 넣거나, 토큰 권한(instagram_basic, pages_show_list, pages_read_engagement, business_management)을 확인해 주세요.', 'token')
 }
 
-/** 토큰 만료일(알 수 있으면) */
-export async function tokenExpiry(token) {
+/** 짧은 토큰(1시간) → 60일 토큰. 앱 ID·시크릿이 있어야 한다 */
+export async function exchangeLongLived(token, appId, appSecret) {
+  const { res, text } = await fetchText(`${GRAPH}/oauth/access_token?grant_type=fb_exchange_token&client_id=${encodeURIComponent(appId)}&client_secret=${encodeURIComponent(appSecret)}&fb_exchange_token=${encodeURIComponent(token)}`)
+  let body = null
   try {
-    const { text } = await fetchText(`${GRAPH}/debug_token?input_token=${encodeURIComponent(token)}&access_token=${encodeURIComponent(token)}`)
+    body = JSON.parse(text)
+  } catch {
+    // 아래에서 처리
+  }
+  if (!res.ok || body?.error || !body?.access_token) throw classifyGraphError(res.status, body)
+  return body.access_token
+}
+
+/** 토큰 만료일(알 수 있으면). 앱 ID·시크릿이 있으면 앱 토큰으로 확인한다 */
+export async function tokenExpiry(token, appId, appSecret) {
+  try {
+    const checker = appId && appSecret ? `${appId}|${appSecret}` : token
+    const { text } = await fetchText(`${GRAPH}/debug_token?input_token=${encodeURIComponent(token)}&access_token=${encodeURIComponent(checker)}`)
     const d = JSON.parse(text)?.data
     if (!d) return null
     if (d.expires_at === 0) return 'never'
@@ -211,4 +225,41 @@ export async function tokenExpiry(token) {
   } catch {
     return null
   }
+}
+
+/**
+ * 관리자가 넣은 값으로 연결을 확인하고 저장할 설정을 만든다.
+ * - IG… 로 시작하는 토큰(인스타그램 로그인 방식)은 다른 계정 조회(Business Discovery)를 못 한다.
+ * - 앱 ID·시크릿이 있으면 60일 토큰으로 바꾸고, 모든 호출에 appsecret_proof 를 붙인다.
+ * - IG 계정 ID 가 있으면 그대로 쓰고, 없으면 토큰으로 찾는다.
+ * - 끝으로 우리 계정을 Business Discovery 로 한 번 읽어 실제로 되는지 본다.
+ */
+export async function connectInstagram({ token, igUserId, appId, appSecret }) {
+  if (/^IG/i.test(token)) throw new SnsError('IG… 로 시작하는 토큰은 ‘인스타그램 로그인’ 방식이라 다른 사람 계정을 읽을 수 없습니다. 페이스북 로그인 방식(EAA… 로 시작) 토큰을 넣어 주세요(관리자 화면 오른쪽 순서 4~5번).', 'token')
+  let tok = token
+  let exchanged = false
+  if (appId && appSecret) {
+    try {
+      tok = await exchangeLongLived(token, appId, appSecret)
+      exchanged = tok !== token
+    } catch (err) {
+      if (err.kind === 'token' && /secret|client_id|app/i.test(err.message)) throw new SnsError(`앱 ID·앱 시크릿을 확인해 주세요: ${err.message}`, 'token')
+      // 이미 바꿀 수 없는 토큰이면 그대로 쓴다
+    }
+  }
+  const cred = { token: tok, appSecret: appSecret || undefined }
+  let acc
+  if (igUserId) {
+    const b = await graphGet(`${encodeURIComponent(igUserId)}?fields=id,username,name`, cred)
+    acc = { igUserId: String(b.id ?? igUserId), igUsername: b.username ?? '', pageName: b.name ?? '' }
+  } else acc = await discoverIgAccount(cred)
+  if (acc.igUsername) {
+    try {
+      await fetchIgApi(acc.igUsername, { ...cred, igUserId: acc.igUserId })
+    } catch (err) {
+      if (err.kind === 'token' || err.kind === 'personal') throw new SnsError(`계정은 찾았지만 다른 계정 조회(Business Discovery)가 막혀 있습니다: ${err.message}. 토큰 권한과 계정이 비즈니스·크리에이터인지 확인해 주세요.`, 'token')
+    }
+  }
+  const expiresAt = await tokenExpiry(tok, appId, appSecret)
+  return { token: tok, appId: appId || '', appSecret: appSecret || '', ...acc, expiresAt, exchanged }
 }
