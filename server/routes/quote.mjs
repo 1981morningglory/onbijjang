@@ -121,7 +121,8 @@ function summarize(doc, id, prev) {
   }
 }
 
-export default async function quoteRoutes(app, { requireAdmin, isAdmin, DATA_DIR }) {
+export default async function quoteRoutes(app, ctx) {
+  const { requireAdmin, isAdmin, DATA_DIR } = ctx
   const TEAMS_FILE = path.join(DATA_DIR, 'teams.json')
   const COMPANY_KIT = path.join(DATA_DIR, 'company-kit.json')
   // 회사 공통 자료를 바꾸거나 지울 때 직전 것을 한 벌 남겨 되돌릴 수 있게 한다(직인을 잃지 않도록)
@@ -167,6 +168,9 @@ export default async function quoteRoutes(app, { requireAdmin, isAdmin, DATA_DIR
   const setSession = (req, res, team) =>
     res.setHeader('Set-Cookie', `${COOKIE}=${team.id}.${team.version}.${mac(team.id, team.version)}; Path=/; HttpOnly; SameSite=Lax${req.secure ? '; Secure' : ''}; Max-Age=${TTL_S}`)
   const clearSession = (req, res) => res.setHeader('Set-Cookie', `${COOKIE}=; Path=/; HttpOnly; SameSite=Lax${req.secure ? '; Secure' : ''}; Max-Age=0`)
+
+  // 다른 기능(체험단 선발 등)도 '팀 코드로 들어온 사람'을 알아볼 수 있게 나눠 준다
+  ctx.sessionTeam = sessionTeam
 
   async function requireTeam(req, res, next) {
     const team = await sessionTeam(req)

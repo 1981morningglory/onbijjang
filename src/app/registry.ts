@@ -2,11 +2,11 @@ import { lazy, type ComponentType, type LazyExoticComponent } from 'react'
 import {
   Barcode, Blend, Calculator, Camera, Clapperboard, ClipboardCheck, Crop, Download, Eraser, FileText, Files, Film, Gavel,
   Grid3x3, Image as ImageIcon, Images, LayoutTemplate, MonitorPlay, NotebookPen, Package, PenLine, QrCode,
-  ReceiptText, Rocket, Scale, Scissors, ShoppingBag, ShoppingCart, Signature, Store, Tags, FilePenLine,
+  ReceiptText, Rocket, Scale, Scissors, ShoppingBag, ShoppingCart, Signature, Store, Tags, FilePenLine, Megaphone, Trophy,
   type LucideIcon,
 } from 'lucide-react'
 
-export type GroupId = 'image' | 'video' | 'doc' | 'fees' | 'blog'
+export type GroupId = 'image' | 'video' | 'doc' | 'fees' | 'blog' | 'marketing'
 
 export interface ToolGroup {
   id: GroupId
@@ -44,6 +44,7 @@ export const GROUPS: ToolGroup[] = [
   { id: 'image', title: '이미지', blurb: '자르고, 지우고, 가리고, 꾸미기', icon: ImageIcon },
   { id: 'blog', title: '블로그', blurb: '붙여넣기 전에 글 다듬기', icon: PenLine },
   { id: 'fees', title: '마켓 수수료', blurb: '남는 돈을 먼저 계산', icon: Calculator },
+  { id: 'marketing', title: '마케팅', blurb: '체험단·인플루언서 고르기', icon: Megaphone },
 ]
 
 export const TOOLS: ToolDef[] = [
@@ -244,6 +245,15 @@ export const TOOLS: ToolDef[] = [
     keywords: ['네이버', '줄바꿈', '해시태그', '글자수', '키워드', '금칙어'],
     icon: NotebookPen, art: 'blog', local: false,
     component: lazy(() => import('@/tools/blog')),
+  },
+
+  // ── 마케팅 ──────────────────────────────────────────────
+  {
+    id: 'sns', group: 'marketing', title: '체험단 SNS 선발',
+    summary: '지원자 인스타그램·블로그를 방문해 팔로워·반응·방문자·이웃을 모으고 상위 150명을 엑셀로',
+    keywords: ['체험단', '인플루언서', '인스타그램', '인스타', '블로그', '네이버', '팔로워', '방문자', '이웃', '서포터즈', '선발', '순위'],
+    icon: Trophy, art: 'sns', local: false, wide: true, roles: ['member', 'staff', 'admin'],
+    component: lazy(() => import('@/tools/sns')),
   },
 ]
 

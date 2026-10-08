@@ -407,10 +407,12 @@ app.delete('/api/library/:kind/:id', requireAdmin, async (req, res) => {
 app.use('/api/convert', (req, res, next) => (req.method === 'GET' ? next() : requireMember(req, res, next)))
 const routesDir = path.join(__dirname, 'routes')
 if (fs.existsSync(routesDir)) {
+  // 라우트끼리 나눠 쓰는 도구(예: quote.mjs 가 넣는 sessionTeam)를 담는 한 객체. 파일 이름 순서로 불러온다.
+  const ctx = { requireAdmin, isAdmin, currentUser, DATA_DIR, ROOT, TRUSTED }
   for (const file of fs.readdirSync(routesDir).filter((f) => f.endsWith('.mjs')).sort()) {
     const mod = await import(pathToFileURL(path.join(routesDir, file)).href)
     if (typeof mod.default === 'function') {
-      await mod.default(app, { requireAdmin, isAdmin, currentUser, DATA_DIR, ROOT, TRUSTED })
+      await mod.default(app, ctx)
       console.log(`[온비짱] 라우트 로드: ${file}`)
     }
   }

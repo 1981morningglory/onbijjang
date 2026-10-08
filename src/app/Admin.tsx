@@ -602,6 +602,125 @@ function CommonKitEditor() {
   )
 }
 
+interface SnsAdmin {
+  connected: boolean
+  igUsername: string
+  pageName: string
+  savedAt: string | null
+  expiresAt: string | null
+}
+
+/** 체험단 선발에 쓰는 인스타그램 공식 API(Business Discovery) 토큰 */
+function SnsConnect() {
+  const [state, setState] = useState<SnsAdmin | null>(null)
+  const [token, setToken] = useState('')
+  const [busy, setBusy] = useState<string | null>(null)
+  const refresh = async () => setState(await api<SnsAdmin>('/admin/sns'))
+  useEffect(() => {
+    refresh().catch(() => {})
+  }, [])
+  const run = (label: string, fn: () => Promise<void>) => {
+    setBusy(label)
+    fn()
+      .catch((err) => toast.error(err instanceof Error ? err.message : '처리하지 못했습니다.'))
+      .finally(() => setBusy(null))
+  }
+  const expiry = state?.expiresAt === 'never' ? '만료 없음' : state?.expiresAt ? `${new Date(state.expiresAt).toLocaleDateString('ko-KR')} 만료` : '만료일 확인 못 함'
+  const soon = state?.expiresAt && state.expiresAt !== 'never' && Date.parse(state.expiresAt) - Date.now() < 10 * 86400_000
+
+  return (
+    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+      <Panel className="flex flex-col gap-4 p-5">
+        <div>
+          <h3 className="text-base">인스타그램 공식 API 연결</h3>
+          <p className="text-sm text-muted">‘체험단 SNS 선발’에서 지원자 인스타그램의 팔로워와 최근 게시물 좋아요·댓글을 읽을 때 씁니다. 무료이며, 토큰은 이 서버에만 저장되고 화면에 다시 보여 주지 않습니다.</p>
+        </div>
+        {state?.connected ? (
+          <Callout tone={soon ? 'warn' : 'success'} title={`연결됨 · @${state.igUsername || '(이름 없음)'}`}>
+            페이스북 페이지: {state.pageName || '-'} · {expiry}
+            {state.savedAt && <> · {new Date(state.savedAt).toLocaleString('ko-KR')} 저장</>}
+            {soon && <div className="mt-1 font-semibold">곧 만료됩니다. 아래 순서로 새 토큰을 받아 다시 넣어 주세요.</div>}
+          </Callout>
+        ) : (
+          <Callout tone="info" title="아직 연결되지 않았습니다">
+            연결 전에는 인스타그램 팔로워 수만 공개 프로필에서 읽습니다. 블로그는 연결 없이도 모두 읽습니다.
+          </Callout>
+        )}
+        <form
+          className="flex flex-col gap-2"
+          onSubmit={(e) => {
+            e.preventDefault()
+            run('save', async () => {
+              const r = await api<SnsAdmin>('/admin/sns', { method: 'PUT', body: { token } })
+              setToken('')
+              setState(r)
+              toast.success(`@${r.igUsername} 계정으로 연결했습니다.`)
+            })
+          }}
+        >
+          <Field label="액세스 토큰" hint="붙여 넣으면 서버가 바로 확인해서 연결된 인스타그램 비즈니스 계정을 찾습니다.">
+            {(id) => <TextInput id={id} type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} placeholder="EAAG…로 시작하는 긴 글자" />}
+          </Field>
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" variant="primary" icon={KeyRound} loading={busy === 'save'} disabled={token.trim().length < 20}>
+              {state?.connected ? '새 토큰으로 바꾸기' : '연결하기'}
+            </Button>
+            {state?.connected && (
+              <Button
+                variant="ghost"
+                icon={Trash2}
+                loading={busy === 'del'}
+                onClick={() => {
+                  if (!confirm('인스타그램 API 연결을 끊을까요?')) return
+                  run('del', async () => {
+                    await api('/admin/sns', { method: 'DELETE' })
+                    await refresh()
+                  })
+                }}
+              >
+                연결 끊기
+              </Button>
+            )}
+          </div>
+        </form>
+      </Panel>
+
+      <Panel className="flex flex-col gap-3 p-5 text-sm leading-relaxed text-ink-2">
+        <h3 className="text-base text-ink">토큰 받는 순서 (처음 한 번, 모두 무료)</h3>
+        <ol className="flex list-decimal flex-col gap-2 pl-5">
+          <li>
+            회사 인스타그램 앱 → 설정 → <b>계정 유형 및 도구</b> → <b>프로페셔널 계정으로 전환</b>(비즈니스 또는 크리에이터).
+          </li>
+          <li>
+            회사 <b>페이스북 페이지</b>에 그 인스타그램을 연결합니다(페이스북 페이지 → 설정 → 연결된 계정 → Instagram). 페이지가 없으면 하나 만듭니다.
+          </li>
+          <li>
+            <a className="text-brand-ink underline" href="https://developers.facebook.com/apps" target="_blank" rel="noreferrer">
+              developers.facebook.com/apps
+            </a>
+            에서 페이스북 계정으로 로그인 → <b>앱 만들기</b> → 이름 아무거나(예: 온비짱) → 유형은 <b>비즈니스</b>(또는 ‘기타’)로 만듭니다.
+          </li>
+          <li>
+            <a className="text-brand-ink underline" href="https://developers.facebook.com/tools/explorer" target="_blank" rel="noreferrer">
+              Graph API 탐색기
+            </a>
+            를 열고 오른쪽에서 방금 만든 앱을 고른 뒤, 권한에 <code>instagram_basic</code> · <code>pages_show_list</code> · <code>pages_read_engagement</code> · <code>business_management</code> 를 넣고 <b>Generate Access Token</b> → 회사 페이지를 골라 허용합니다.
+          </li>
+          <li>
+            나온 토큰을 복사해{' '}
+            <a className="text-brand-ink underline" href="https://developers.facebook.com/tools/debug/accesstoken" target="_blank" rel="noreferrer">
+              액세스 토큰 디버거
+            </a>
+            에 붙여 넣고 아래쪽 <b>액세스 토큰 연장</b>을 눌러 <b>60일짜리 토큰</b>을 받습니다(그냥 쓰면 1시간 뒤 끊깁니다).
+          </li>
+          <li>그 긴 토큰을 왼쪽 칸에 붙여 넣고 ‘연결하기’를 누르면 끝입니다. 60일마다 4~5번만 다시 하면 됩니다.</li>
+        </ol>
+        <p className="text-xs text-muted">한도: Meta 가 시간당 약 200번까지 허용해, 인스타그램 지원자 한 명에 약 19초씩 걸립니다(500명이면 약 2시간 40분). 비즈니스·크리에이터 계정인 지원자만 좋아요·댓글이 나오고, 개인 계정은 팔로워만 나옵니다.</p>
+      </Panel>
+    </div>
+  )
+}
+
 function AccountEditor({ onLogout }: { onLogout: () => void }) {
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
@@ -645,7 +764,7 @@ export function Admin() {
   const config = useSite((s) => s.config)
   const save = useSite((s) => s.save)
   const [draft, setDraft] = useState<SiteConfig>(config)
-  const [tab, setTab] = useState<'menu' | 'accounts' | 'presets' | 'company' | 'account'>('menu')
+  const [tab, setTab] = useState<'menu' | 'accounts' | 'presets' | 'company' | 'sns' | 'account'>('menu')
   const reloadViewer = useViewerStore((s) => s.load)
   const viewerUser = useViewerStore((s) => s.user)
   const showLogin = useLoginDialog((s) => s.show)
@@ -748,6 +867,7 @@ export function Admin() {
           { value: 'accounts', label: '계정·권한' },
           { value: 'presets', label: '공지·팀 프리셋' },
           { value: 'company', label: '팀·회사 자료' },
+          { value: 'sns', label: 'SNS 연결' },
           { value: 'account', label: '관리자 비밀번호' },
         ]}
       />
@@ -755,6 +875,7 @@ export function Admin() {
       {tab === 'presets' && <PresetEditor draft={draft} setDraft={setDraft} />}
       {tab === 'accounts' && <AccountsEditor />}
       {tab === 'company' && <TeamsEditor />}
+      {tab === 'sns' && <SnsConnect />}
       {tab === 'account' && <AccountEditor onLogout={logout} />}
 
       {(tab === 'menu' || tab === 'presets') && (

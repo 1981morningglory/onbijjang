@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { normalizeConfig } from './config'
 
 describe('신상앱', () => {
-  it('설정이 없던 서버: 출시 뒤 추가한 앱(바코드·SNS 영상 받기)이 신상앱', () => {
-    expect(normalizeConfig({ version: 1, tools: {} }).newApps.items.sort()).toEqual(['barcode', 'saver'])
+  it('설정이 없던 서버: 출시 뒤 추가한 앱(바코드·SNS 영상 받기·체험단 SNS 선발)이 신상앱', () => {
+    expect(normalizeConfig({ version: 1, tools: {} }).newApps.items.sort()).toEqual(['barcode', 'saver', 'sns'])
   })
   it('SNS 영상 받기는 처음엔 직원등급 이상만', () => {
     expect(normalizeConfig({ version: 1, tools: {} }).tools.saver.roles.sort()).toEqual(['admin', 'member', 'staff'])
@@ -47,10 +47,10 @@ describe('카테고리 옮기기', () => {
 })
 
 describe('카테고리 순서', () => {
-  it('기본은 문서·영상·이미지·블로그·마켓 수수료', () => {
-    expect(normalizeConfig({ version: 1, tools: {} }).groupOrder).toEqual(['doc', 'video', 'image', 'blog', 'fees'])
+  it('기본은 문서·영상·이미지·블로그·마켓 수수료·마케팅', () => {
+    expect(normalizeConfig({ version: 1, tools: {} }).groupOrder).toEqual(['doc', 'video', 'image', 'blog', 'fees', 'marketing'])
   })
   it('저장된 순서를 따르고, 빠진 카테고리는 뒤에 붙인다', () => {
-    expect(normalizeConfig({ version: 1, tools: {}, groupOrder: ['fees', 'image', 'bad'] }).groupOrder).toEqual(['fees', 'image', 'doc', 'video', 'blog'])
+    expect(normalizeConfig({ version: 1, tools: {}, groupOrder: ['fees', 'image', 'bad'] }).groupOrder).toEqual(['fees', 'image', 'doc', 'video', 'blog', 'marketing'])
   })
 })
