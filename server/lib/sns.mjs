@@ -197,7 +197,7 @@ export async function discoverIgAccount(cred) {
   // 페이지 토큰
   const me = await graphGet('me?fields=name,instagram_business_account{id,username}', cred)
   if (me.instagram_business_account?.id) return { igUserId: me.instagram_business_account.id, igUsername: me.instagram_business_account.username ?? '', pageName: me.name ?? '' }
-  throw new SnsError('이 토큰으로는 연결된 인스타그램 비즈니스 계정을 찾지 못했습니다. ‘IG 계정 ID’ 칸에 계정 ID 를 넣거나, 토큰 권한(instagram_basic, pages_show_list, pages_read_engagement, business_management)을 확인해 주세요.', 'token')
+  throw new SnsError('이 토큰으로는 연결된 인스타그램 비즈니스 계정을 찾지 못했습니다. ‘IG 계정 ID’ 칸에 계정 ID 를 넣거나, 토큰 권한(instagram_basic, instagram_manage_insights, pages_show_list, pages_read_engagement, business_management, ads_read)을 확인해 주세요.', 'token')
 }
 
 /** 짧은 토큰(1시간) → 60일 토큰. 앱 ID·시크릿이 있어야 한다 */
@@ -257,6 +257,11 @@ export async function connectInstagram({ token, igUserId, appId, appSecret }) {
     try {
       await fetchIgApi(acc.igUsername, { ...cred, igUserId: acc.igUserId })
     } catch (err) {
+      if (/#10\b|permission/i.test(err.message))
+        throw new SnsError(
+          '계정은 찾았지만 다른 계정 조회(Business Discovery) 권한이 없습니다. Graph API 탐색기에서 권한에 instagram_manage_insights 와 ads_read 를 추가해 토큰을 새로 만든 뒤 다시 넣어 주세요(앱 ID·시크릿을 함께 넣으면 60일 토큰으로 자동으로 바꿉니다).',
+          'token',
+        )
       if (err.kind === 'token' || err.kind === 'personal') throw new SnsError(`계정은 찾았지만 다른 계정 조회(Business Discovery)가 막혀 있습니다: ${err.message}. 토큰 권한과 계정이 비즈니스·크리에이터인지 확인해 주세요.`, 'token')
     }
   }

@@ -730,7 +730,7 @@ function SnsConnect() {
             <a className="text-brand-ink underline" href="https://developers.facebook.com/tools/explorer" target="_blank" rel="noreferrer">
               Graph API 탐색기
             </a>
-            를 열고 오른쪽에서 방금 만든 앱을 고른 뒤, 권한에 <code>instagram_basic</code> · <code>pages_show_list</code> · <code>pages_read_engagement</code> · <code>business_management</code> 를 넣고 <b>Generate Access Token</b> → 회사 페이지를 골라 허용합니다.
+            를 열고 오른쪽에서 방금 만든 앱을 고른 뒤, 권한에 <code>instagram_basic</code> · <b><code>instagram_manage_insights</code></b> · <code>pages_show_list</code> · <code>pages_read_engagement</code> · <code>business_management</code> · <code>ads_read</code> 를 모두 넣고 <b>Generate Access Token</b> → 회사 페이지와 인스타그램 계정을 골라 허용합니다. (<code>instagram_manage_insights</code> 가 빠지면 다른 계정 조회가 막힙니다. 페이지 권한을 비즈니스 관리자로 받았다면 <code>ads_read</code> 도 필요합니다.)
           </li>
           <li>
             나온 토큰을 복사해{' '}
