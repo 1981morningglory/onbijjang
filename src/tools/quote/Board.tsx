@@ -11,18 +11,14 @@ export type BoardFilter = { customer?: string; item?: string }
 
 // ── 진행 상태(견적서) ─────────────────────────────────────
 const STATUS: Record<DocStatus, { label: string; cls: string }> = {
-  pending: { label: '견적중', cls: 'border-warn/40 bg-mark-soft text-ink' },
-  done: { label: '진행완료', cls: 'border-brand bg-brand text-white' },
-  canceled: { label: '취소됨', cls: 'border-line-strong bg-sunken text-muted line-through' },
+  pending: { label: '견적중', cls: 'bg-mark-soft text-ink ring-1 ring-inset ring-warn/30' },
+  done: { label: '거래완료', cls: 'bg-brand text-white' },
+  canceled: { label: '취소됨', cls: 'bg-danger-soft text-danger ring-1 ring-inset ring-danger/20' },
 }
 const NEXT: Record<DocStatus, DocStatus> = { pending: 'done', done: 'canceled', canceled: 'pending' }
 const statusOf = (d: Pick<DocEntry, 'status'>): DocStatus => d.status ?? 'pending'
 
-function StatusChip({ status }: { status: DocStatus }) {
-  return <span className={clsx('inline-flex h-6 items-center whitespace-nowrap rounded-full border px-2.5 text-xs font-semibold', STATUS[status].cls)}>{STATUS[status].label}</span>
-}
-
-/** 누를 때마다 견적중 → 진행완료 → 취소됨 → 견적중 */
+/** 누를 때마다 견적중 → 거래완료 → 취소됨 → 견적중 */
 function StatusButton({ entry }: { entry: DocEntry }) {
   const setDocStatus = useTeam((s) => s.setDocStatus)
   const status = statusOf(entry)
@@ -33,7 +29,7 @@ function StatusButton({ entry }: { entry: DocEntry }) {
       onClick={() => setDocStatus(entry.id, next).catch((err) => toast.error(err instanceof Error ? err.message : '바꾸지 못했습니다.'))}
       title={`누르면 ‘${STATUS[next].label}’(으)로 바뀝니다`}
       aria-label={`진행 상태 ${STATUS[status].label}, 누르면 ${STATUS[next].label}`}
-      className={clsx('inline-flex h-7 min-w-[4.75rem] items-center justify-center whitespace-nowrap rounded-full border px-3 text-xs font-bold shadow-1 transition-colors duration-150 hover:brightness-95 active:scale-95', STATUS[status].cls)}
+      className={clsx('inline-flex h-5 items-center justify-center whitespace-nowrap rounded-full px-2 text-2xs font-bold tracking-wide transition-colors duration-150 hover:brightness-95 active:scale-95', STATUS[status].cls)}
     >
       {STATUS[status].label}
     </button>
@@ -181,7 +177,7 @@ export function DocsBoard({ filter, setFilter, onOpen, onCopy }: { filter: Board
             options={[
               { value: 'all', label: '진행 전체' },
               { value: 'pending', label: '견적중' },
-              { value: 'done', label: '진행완료' },
+              { value: 'done', label: '거래완료' },
               { value: 'canceled', label: '취소됨' },
             ]}
           />
@@ -414,6 +410,8 @@ interface ItemRow {
   lastCustomer: string
   last: string
   uses: ItemUse[]
+  /** 이 품목이 쓰인 가장 최근 견적서 */
+  lastQuoteId: string | null
 }
 
 /** 문서들의 품목 줄을 모두 펼친다. 품목 이름이 비었으면 문서의 품명(건명)으로 대신한다 */
@@ -443,7 +441,7 @@ export function ItemsBoard({ onShow, onOpen }: { onShow: (item: string) => void;
     const ordered = [...uses].sort((a, b) => a.date.localeCompare(b.date))
     for (const u of ordered) {
       const key = `${u.name}\u0000${u.spec}`
-      const r = map.get(key) ?? { key, name: u.name, spec: u.spec, count: 0, qty: 0, lastPrice: 0, min: Infinity, max: 0, lastCustomer: '', last: '', uses: [] }
+      const r = map.get(key) ?? { key, name: u.name, spec: u.spec, count: 0, qty: 0, lastPrice: 0, min: Infinity, max: 0, lastCustomer: '', last: '', uses: [], lastQuoteId: null }
       r.count++
       r.qty += u.qty
       if (u.unitPrice) {
@@ -453,6 +451,7 @@ export function ItemsBoard({ onShow, onOpen }: { onShow: (item: string) => void;
       }
       r.lastCustomer = u.customer
       r.last = u.date
+      if (u.type === 'quote') r.lastQuoteId = u.docId
       r.uses.unshift(u)
       map.set(key, r)
     }
@@ -460,6 +459,7 @@ export function ItemsBoard({ onShow, onOpen }: { onShow: (item: string) => void;
     return list.sort((a, b) => (sort === 'count' ? b.count - a.count : sort === 'name' ? a.name.localeCompare(b.name, 'ko') : b.last.localeCompare(a.last)))
   }, [uses, sort])
   const lines = useMemo(() => [...uses].sort((a, b) => b.date.localeCompare(a.date) || b.docNo.localeCompare(a.docNo)), [uses])
+  const byId = useMemo(() => new Map((docs ?? []).map((d) => [d.id, d])), [docs])
   const openDoc = async (id: string) => {
     try {
       onOpen(await getDoc(id), id)
@@ -492,7 +492,7 @@ export function ItemsBoard({ onShow, onOpen }: { onShow: (item: string) => void;
                 {DOC_NAME[u.type]} {u.docNo}
               </button>
             </td>
-            <td className="px-3 py-1.5">{u.type === 'quote' ? <StatusChip status={u.status} /> : <span className="text-xs text-faint">-</span>}</td>
+            <td className="px-3 py-1.5">{u.type === 'quote' && byId.get(u.docId) ? <StatusButton entry={byId.get(u.docId)!} /> : <span className="text-xs text-faint">-</span>}</td>
             <td className="max-w-40 truncate px-3 py-1.5">{u.customer}</td>
             {withName && <td className="max-w-56 truncate px-3 py-1.5 font-semibold text-ink">{u.name}</td>}
             {withName && <td className="px-3 py-1.5 text-ink-2">{u.spec}</td>}
@@ -547,6 +547,7 @@ export function ItemsBoard({ onShow, onOpen }: { onShow: (item: string) => void;
               <th className="px-3 py-2 text-right font-semibold">단가 범위</th>
               <th className="px-3 py-2 font-semibold">최근 거래처</th>
               <th className="px-3 py-2 font-semibold">최근 거래</th>
+              <th className="px-3 py-2 font-semibold" title="이 품목이 쓰인 가장 최근 견적서의 진행 상태(누르면 바뀝니다)">진행</th>
               <th className="px-3 py-2" />
             </tr>
           </thead>
@@ -567,6 +568,10 @@ export function ItemsBoard({ onShow, onOpen }: { onShow: (item: string) => void;
                   <td className={clsx('whitespace-nowrap px-3 py-2 text-right text-xs', r.min !== r.max ? 'text-warn' : 'text-muted')}>{r.max ? (r.min === r.max ? '같음' : `${won(r.min)} ~ ${won(r.max)}`) : ''}</td>
                   <td className="max-w-40 truncate px-3 py-2 text-ink-2">{r.lastCustomer}</td>
                   <td className="px-3 py-2 text-ink-2">{r.last}</td>
+                  <td className="px-3 py-2">{(() => {
+                    const entry = r.lastQuoteId ? byId.get(r.lastQuoteId) : undefined
+                    return entry ? <StatusButton entry={entry} /> : <span className="text-xs text-faint">-</span>
+                  })()}</td>
                   <td className="px-2 py-1.5 text-right">
                     <Button size="sm" variant="ghost" onClick={() => onShow(r.name)}>
                       문서 보기
@@ -575,7 +580,7 @@ export function ItemsBoard({ onShow, onOpen }: { onShow: (item: string) => void;
                 </tr>
                 {open === r.key && (
                   <tr className="border-b border-line bg-paper">
-                    <td colSpan={9} className="px-6 pb-3 pt-1">
+                    <td colSpan={10} className="px-6 pb-3 pt-1">
                       <div className="rounded-md border border-line bg-surface">{usesTable(r.uses, false)}</div>
                     </td>
                   </tr>
