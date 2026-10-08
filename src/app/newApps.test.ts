@@ -47,10 +47,30 @@ describe('카테고리 옮기기', () => {
 })
 
 describe('카테고리 순서', () => {
-  it('기본은 문서·영상·이미지·블로그·마켓 수수료·마케팅', () => {
-    expect(normalizeConfig({ version: 1, tools: {} }).groupOrder).toEqual(['doc', 'video', 'image', 'blog', 'fees', 'marketing'])
+  it('기본은 문서·영상·이미지·SNS·마켓 수수료', () => {
+    expect(normalizeConfig({ version: 1, tools: {} }).groupOrder).toEqual(['doc', 'video', 'image', 'sns', 'fees'])
   })
   it('저장된 순서를 따르고, 빠진 카테고리는 뒤에 붙인다', () => {
-    expect(normalizeConfig({ version: 1, tools: {}, groupOrder: ['fees', 'image', 'bad'] }).groupOrder).toEqual(['fees', 'image', 'doc', 'video', 'blog', 'marketing'])
+    expect(normalizeConfig({ version: 1, tools: {}, groupOrder: ['fees', 'image', 'bad'] }).groupOrder).toEqual(['fees', 'image', 'doc', 'video', 'sns'])
+  })
+})
+
+describe('블로그·마케팅 → SNS 카테고리', () => {
+  it('예전 저장분의 순서·켜짐·옮긴 도구·바로가기를 SNS 로 옮긴다', async () => {
+    const { groupOf } = await import('./config')
+    const { TOOL_BY_ID } = await import('./registry')
+    const c = normalizeConfig({
+      version: 1,
+      groupOrder: ['doc', 'video', 'image', 'blog', 'fees', 'marketing'],
+      groups: { blog: { enabled: false }, marketing: { enabled: true } },
+      tools: { qr: { enabled: true, badge: null, roles: ['guest'], deleted: false, group: 'blog' } },
+      links: [{ id: 'l1', title: '링크', summary: '', url: 'https://example.com', group: 'marketing', enabled: true, badge: null, roles: ['guest'], deleted: false }],
+    })
+    expect(c.groupOrder).toEqual(['doc', 'video', 'image', 'sns', 'fees'])
+    expect(c.groups.sns.enabled).toBe(true)
+    expect(groupOf(c, TOOL_BY_ID.qr)).toBe('sns')
+    expect(groupOf(c, TOOL_BY_ID.blog)).toBe('sns')
+    expect(groupOf(c, TOOL_BY_ID.sns)).toBe('sns')
+    expect(c.links[0].group).toBe('sns')
   })
 })

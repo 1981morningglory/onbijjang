@@ -133,6 +133,10 @@ export function defaultConfig(): SiteConfig {
   }
 }
 
+/** 없어진 카테고리 → 합쳐진 카테고리 (2026-10: 블로그·마케팅 → SNS) */
+const LEGACY_GROUP: Record<string, GroupId> = { blog: 'sns', marketing: 'sns' }
+const upgradeGroup = (id: unknown) => (typeof id === 'string' ? (LEGACY_GROUP[id] ?? id) : id)
+
 /** 서버에 저장된 설정을 현재 도구 목록에 맞춘다. 새로 추가된 도구는 켜진 상태로 끝에 붙는다. */
 export function normalizeConfig(raw: unknown): SiteConfig {
   const base = defaultConfig()
@@ -152,17 +156,20 @@ export function normalizeConfig(raw: unknown): SiteConfig {
     const saved = r.tools?.[t.id]
     if (saved) {
       base.tools[t.id] = { enabled: saved.enabled !== false, badge: saved.badge === 'new' ? 'new' : null, roles: cleanRoles(saved.roles), deleted: saved.deleted === true }
-      if (saved.group && saved.group !== t.group && GROUPS.some((g) => g.id === saved.group)) base.tools[t.id].group = saved.group
+      const savedGroup = upgradeGroup(saved.group) as GroupId | undefined
+      if (savedGroup && savedGroup !== t.group && GROUPS.some((g) => g.id === savedGroup)) base.tools[t.id].group = savedGroup
     }
   }
   if (Array.isArray(r.groupOrder)) {
     const ids = GROUPS.map((g) => g.id)
-    const saved = r.groupOrder.filter((id): id is GroupId => ids.includes(id as GroupId))
+    const saved = r.groupOrder.map(upgradeGroup).filter((id): id is GroupId => ids.includes(id as GroupId))
     base.groupOrder = [...new Set(saved), ...ids.filter((id) => !saved.includes(id))]
   }
   for (const g of GROUPS) {
-    const saved = r.groups?.[g.id]
-    if (saved) base.groups[g.id] = { enabled: saved.enabled !== false }
+    // 합쳐진 카테고리는 예전 카테고리 중 하나라도 켜져 있으면 켠다
+    const olds = [g.id, ...Object.keys(LEGACY_GROUP).filter((k) => LEGACY_GROUP[k] === g.id)]
+    const saved = olds.map((k) => (r.groups as Record<string, { enabled?: boolean }> | undefined)?.[k]).filter(Boolean)
+    if (saved.length) base.groups[g.id] = { enabled: saved.some((x) => x!.enabled !== false) }
   }
   if (Array.isArray(r.toolOrder)) {
     const known = new Set(TOOLS.map((t) => t.id))
@@ -173,6 +180,7 @@ export function normalizeConfig(raw: unknown): SiteConfig {
   if (Array.isArray(r.links)) {
     const groupIds = new Set(GROUPS.map((g) => g.id))
     base.links = r.links
+      .map((l) => (l && typeof l === 'object' ? { ...l, group: upgradeGroup(l.group) as GroupId } : l))
       .filter((l): l is LinkApp => Boolean(l) && typeof l.id === 'string' && typeof l.title === 'string' && typeof l.url === 'string' && groupIds.has(l.group))
       .slice(0, 60)
       .map((l) => ({

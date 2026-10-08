@@ -6,7 +6,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 
-export type GroupId = 'image' | 'video' | 'doc' | 'fees' | 'blog' | 'marketing'
+export type GroupId = 'image' | 'video' | 'doc' | 'fees' | 'sns'
 
 export interface ToolGroup {
   id: GroupId
@@ -42,9 +42,8 @@ export const GROUPS: ToolGroup[] = [
   { id: 'doc', title: '문서', blurb: 'PDF와 라벨 인쇄', icon: FileText },
   { id: 'video', title: '영상', blurb: '필요한 순간만 GIF·MP4로', icon: Film },
   { id: 'image', title: '이미지', blurb: '자르고, 지우고, 가리고, 꾸미기', icon: ImageIcon },
-  { id: 'blog', title: '블로그', blurb: '붙여넣기 전에 글 다듬기', icon: PenLine },
+  { id: 'sns', title: 'SNS', blurb: '블로그 글 다듬기·체험단 선발', icon: Megaphone },
   { id: 'fees', title: '마켓 수수료', blurb: '남는 돈을 먼저 계산', icon: Calculator },
-  { id: 'marketing', title: '마케팅', blurb: '체험단·인플루언서 고르기', icon: Megaphone },
 ]
 
 export const TOOLS: ToolDef[] = [
@@ -238,18 +237,17 @@ export const TOOLS: ToolDef[] = [
     component: lazy(() => import('@/tools/fees/elevenst')),
   },
 
-  // ── 블로그 ──────────────────────────────────────────────
+  // ── SNS ─────────────────────────────────────────────────
   {
-    id: 'blog', group: 'blog', title: '블로그 본문 정리',
+    id: 'blog', group: 'sns', title: '블로그 본문 정리',
     summary: '줄바꿈 정리, 글자 수·키워드 횟수·금칙어 확인',
     keywords: ['네이버', '줄바꿈', '해시태그', '글자수', '키워드', '금칙어'],
     icon: NotebookPen, art: 'blog', local: false,
     component: lazy(() => import('@/tools/blog')),
   },
 
-  // ── 마케팅 ──────────────────────────────────────────────
   {
-    id: 'sns', group: 'marketing', title: '체험단 SNS 선발',
+    id: 'sns', group: 'sns', title: '체험단 SNS 선발',
     summary: '지원자 인스타그램·블로그를 방문해 팔로워·반응·방문자·이웃을 모아 지원자 전체의 활동 점수를 엑셀로',
     keywords: ['체험단', '인플루언서', '인스타그램', '인스타', '블로그', '네이버', '팔로워', '방문자', '이웃', '서포터즈', '선발', '순위'],
     icon: Trophy, art: 'sns', local: false, wide: true, roles: ['member', 'staff', 'admin'],
