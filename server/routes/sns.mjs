@@ -7,6 +7,7 @@
 import crypto from 'node:crypto'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
+import { AI_MODEL, AiError, blogEvidence, checkKey, draftScores, igEvidence, makeClient } from '../lib/ai.mjs'
 import { BLOG_ID_RE, connectInstagram, fetchBlog, fetchIgApi, fetchIgPage, IG_USER_RE, resolveNaverMe, SnsError } from '../lib/sns.mjs'
 
 const IG_API_GAP_MS = 19_000 // 시간당 약 190번
@@ -41,6 +42,10 @@ export default async function snsRoutes(app, ctx) {
   const jobFile = (id) => path.join(DIR, 'jobs', `${id}.json`)
 
   let config = await readJson(CONFIG, null)
+  // AI 점수 초안: Railway 변수 ANTHROPIC_API_KEY 가 있으면 그것, 없으면 관리자 화면에서 넣은 키
+  const AI_FILE = path.join(DIR, 'ai.json')
+  let aiSaved = await readJson(AI_FILE, null)
+  const aiKey = () => process.env.ANTHROPIC_API_KEY || aiSaved?.apiKey || ''
   const cache = new Map(Object.entries(await readJson(CACHE, {})))
   const jobs = new Map()
   try {
@@ -195,8 +200,67 @@ export default async function snsRoutes(app, ctx) {
       await sleep(gap)
     }
   }
+  // ── AI 점수 초안 일꾼(동시에 2명씩) ──
+  const aiLane = { pauseUntil: 0, note: '' }
+  const aiBusy = new Set()
+  function nextAi() {
+    for (const j of [...jobs.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+      const q = j.aiQueue ?? []
+      const i = q.findIndex((t) => !aiBusy.has(`${j.id}:${t.kind}:${t.key}`))
+      if (i >= 0) return { job: j, target: q[i] }
+    }
+    return null
+  }
+  async function runAiOne(job, target) {
+    const tag = `${job.id}:${target.kind}:${target.key}`
+    aiBusy.add(tag)
+    try {
+      const it = job.items.find((x) => x.kind === target.kind && x.key === target.key)
+      const now = Date.now()
+      const evidence =
+        target.kind === 'ig' ? await igEvidence(target.key, it?.data, now) : await blogEvidence(it?.id ?? target.key, it?.data, now)
+      const draft = await draftScores(makeClient(aiKey()), { kind: target.kind, evidence, motive: target.motive })
+      job.evals ??= {}
+      const id = `${target.kind}:${target.key}`
+      job.evals[id] = { ...(job.evals[id] ?? {}), ai: draft }
+      job.aiStats = { ...(job.aiStats ?? {}), done: (job.aiStats?.done ?? 0) + 1, cost: Math.round(((job.aiStats?.cost ?? 0) + draft.cost) * 10000) / 10000 }
+      job.aiQueue = (job.aiQueue ?? []).filter((t) => !(t.kind === target.kind && t.key === target.key))
+      aiLane.note = ''
+    } catch (err) {
+      if (err instanceof AiError && (err.kind === 'rate' || err.kind === 'auth')) {
+        aiLane.pauseUntil = Date.now() + (err.kind === 'auth' ? 10 * 60_000 : 60_000)
+        aiLane.note = err.message
+      } else {
+        job.evals ??= {}
+        const id = `${target.kind}:${target.key}`
+        job.evals[id] = { ...(job.evals[id] ?? {}), ai: { error: err.message ?? String(err), at: new Date().toISOString() } }
+        job.aiStats = { ...(job.aiStats ?? {}), fail: (job.aiStats?.fail ?? 0) + 1 }
+        job.aiQueue = (job.aiQueue ?? []).filter((t) => !(t.kind === target.kind && t.key === target.key))
+      }
+    } finally {
+      aiBusy.delete(tag)
+      dirty.add(job.id)
+    }
+  }
+  async function runAi() {
+    for (;;) {
+      if (aiLane.pauseUntil > Date.now() || !aiKey() || aiBusy.size >= 2) {
+        await sleep(1500)
+        continue
+      }
+      const next = nextAi()
+      if (!next) {
+        await sleep(2000)
+        continue
+      }
+      void runAiOne(next.job, next.target)
+      await sleep(300)
+    }
+  }
+
   void runBlog()
   void runIg()
+  void runAi()
 
   // ── 작업 API ────────────────────────────────────────────
   const brief = (j) => {
@@ -211,6 +275,7 @@ export default async function snsRoutes(app, ctx) {
       blog: { total: count('blog'), done: count('blog', 'done'), fail: count('blog', 'fail') },
     }
   }
+  const aiInfo = (j) => ({ queued: (j.aiQueue ?? []).length, done: j.aiStats?.done ?? 0, fail: j.aiStats?.fail ?? 0, cost: j.aiStats?.cost ?? 0, note: aiLane.pauseUntil > Date.now() ? aiLane.note : '' })
   const laneInfo = () => ({
     ig: { paused: lane.ig.pauseUntil > Date.now(), note: lane.ig.note, gapMs: config?.token ? IG_API_GAP_MS : IG_PAGE_GAP_MS },
     blog: { paused: lane.blog.pauseUntil > Date.now(), note: lane.blog.note, gapMs: BLOG_GAP_MS },
@@ -218,7 +283,7 @@ export default async function snsRoutes(app, ctx) {
 
   app.get('/api/sns/status', async (req, res) => {
     const ok = await allowed(req)
-    res.json({ allowed: ok, instagram: ok ? { connected: Boolean(config?.token), username: config?.igUsername ?? '', expiresAt: config?.expiresAt ?? null } : null })
+    res.json({ allowed: ok, instagram: ok ? { connected: Boolean(config?.token), username: config?.igUsername ?? '', expiresAt: config?.expiresAt ?? null } : null, ai: ok ? { connected: Boolean(aiKey()), model: AI_MODEL } : null })
   })
 
   app.post('/api/sns/jobs', requireAllowed, async (req, res) => {
@@ -248,7 +313,7 @@ export default async function snsRoutes(app, ctx) {
   app.get('/api/sns/jobs/:id', requireAllowed, (req, res) => {
     const j = JOB_ID_RE.test(req.params.id) ? jobs.get(req.params.id) : null
     if (!j) return res.status(404).json({ error: '없는 작업입니다.' })
-    res.json({ job: { ...brief(j), items: j.items, evals: j.evals ?? {} }, lanes: laneInfo() })
+    res.json({ job: { ...brief(j), items: j.items, evals: j.evals ?? {}, ai: aiInfo(j) }, lanes: laneInfo() })
   })
 
   app.post('/api/sns/jobs/:id/stop', requireAllowed, (req, res) => {
@@ -311,6 +376,7 @@ export default async function snsRoutes(app, ctx) {
       reviewFallback: bool(p.reviewFallback),
       memo: text(p.memo, 500),
       hold: bool(p.hold),
+      aiApplied: bool(p.aiApplied),
       followers: count(p.followers),
       followersRaw: text(p.followersRaw, 20),
       visitors: count(p.visitors),
@@ -324,6 +390,34 @@ export default async function snsRoutes(app, ctx) {
     j.evals[id] = next
     dirty.add(j.id)
     res.json({ eval: next })
+  })
+
+  /** AI 점수 초안 맡기기: targets = [{ kind, key, motive? }] (지원동기는 브라우저가 보낸다) */
+  app.post('/api/sns/jobs/:id/ai', requireAllowed, (req, res) => {
+    const j = JOB_ID_RE.test(req.params.id) ? jobs.get(req.params.id) : null
+    if (!j) return res.status(404).json({ error: '없는 작업입니다.' })
+    if (!aiKey()) return res.status(400).json({ error: 'AI 키가 아직 없습니다. 관리자 화면 → ‘SNS 연결’에서 AI 키를 넣어 주세요.' })
+    const list = Array.isArray(req.body?.targets) ? req.body.targets.slice(0, 3000) : []
+    j.aiQueue ??= []
+    const queued = new Set(j.aiQueue.map((t) => `${t.kind}:${t.key}`))
+    let n = 0
+    for (const t of list) {
+      const kind = t?.kind === 'blog' ? 'blog' : t?.kind === 'ig' ? 'ig' : null
+      const key = typeof t?.key === 'string' ? t.key : ''
+      if (!kind || queued.has(`${kind}:${key}`) || !j.items.some((x) => x.kind === kind && x.key === key && x.state === 'done')) continue
+      j.aiQueue.push({ kind, key, motive: typeof t.motive === 'string' ? t.motive.slice(0, 3000) : undefined })
+      queued.add(`${kind}:${key}`)
+      n++
+    }
+    dirty.add(j.id)
+    res.json({ queued: n, ai: aiInfo(j) })
+  })
+  app.post('/api/sns/jobs/:id/ai/stop', requireAllowed, (req, res) => {
+    const j = JOB_ID_RE.test(req.params.id) ? jobs.get(req.params.id) : null
+    if (!j) return res.status(404).json({ error: '없는 작업입니다.' })
+    j.aiQueue = []
+    dirty.add(j.id)
+    res.json({ ai: aiInfo(j) })
   })
 
   app.delete('/api/sns/jobs/:id', requireAllowed, async (req, res) => {
@@ -370,6 +464,30 @@ export default async function snsRoutes(app, ctx) {
       res.status(400).json({ error: err instanceof SnsError ? err.message : `확인하지 못했습니다: ${err.message}` })
     }
   })
+  // ── 관리자: AI 키(점수 초안) ──
+  app.get('/api/admin/ai', requireAdmin, (_req, res) => {
+    res.json({ connected: Boolean(aiKey()), fromEnv: Boolean(process.env.ANTHROPIC_API_KEY), model: AI_MODEL, savedAt: aiSaved?.savedAt ?? null, hint: aiKey() ? `…${aiKey().slice(-4)}` : '' })
+  })
+  app.put('/api/admin/ai', requireAdmin, async (req, res) => {
+    const apiKey = typeof req.body?.apiKey === 'string' ? req.body.apiKey.trim() : ''
+    if (apiKey.length < 20) return res.status(400).json({ error: 'AI 키를 붙여 넣어 주세요.' })
+    try {
+      await checkKey(apiKey)
+    } catch (err) {
+      return res.status(400).json({ error: err.message })
+    }
+    aiSaved = { apiKey, savedAt: new Date().toISOString() }
+    await writeJson(AI_FILE, aiSaved)
+    aiLane.pauseUntil = 0
+    aiLane.note = ''
+    res.json({ connected: true, fromEnv: Boolean(process.env.ANTHROPIC_API_KEY), model: AI_MODEL, savedAt: aiSaved.savedAt, hint: `…${apiKey.slice(-4)}` })
+  })
+  app.delete('/api/admin/ai', requireAdmin, async (_req, res) => {
+    aiSaved = null
+    await fsp.rm(AI_FILE, { force: true })
+    res.json({ ok: true })
+  })
+
   app.delete('/api/admin/sns', requireAdmin, async (_req, res) => {
     config = null
     await fsp.rm(CONFIG, { force: true })

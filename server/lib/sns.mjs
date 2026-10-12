@@ -75,7 +75,10 @@ export function summarizeIg(bd, now = Date.now()) {
       permalink: typeof m.permalink === 'string' ? m.permalink : '',
       timestamp: typeof m.timestamp === 'string' ? m.timestamp : '',
       mediaType: m.media_product_type === 'REELS' ? 'REELS' : String(m.media_type ?? ''),
+      // AI 점수 초안이 볼 사진(영상은 미리보기). 화면에는 쓰지 않는다
+      imageUrl: typeof m.media_url === 'string' && m.media_type !== 'VIDEO' ? m.media_url : typeof m.thumbnail_url === 'string' ? m.thumbnail_url : '',
     })),
+    biography: typeof bd?.biography === 'string' ? bd.biography.slice(0, 500) : '',
   }
 }
 
@@ -161,7 +164,7 @@ export function classifyGraphError(status, body) {
   return new SnsError(e.message ? `인스타그램 API: ${e.message}` : `인스타그램 API 응답 ${status}`)
 }
 
-const BD_FIELDS = 'username,name,followers_count,follows_count,media_count,media.limit(12){caption,permalink,like_count,comments_count,timestamp,media_type,media_product_type}'
+const BD_FIELDS = 'username,name,biography,followers_count,follows_count,media_count,media.limit(12){caption,permalink,media_url,thumbnail_url,like_count,comments_count,timestamp,media_type,media_product_type}'
 
 /** 앱 시크릿이 있으면 appsecret_proof 를 붙인다(앱 설정 '앱 시크릿 필요'가 켜져 있어도 되도록) */
 function authQuery(token, appSecret) {

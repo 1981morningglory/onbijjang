@@ -57,8 +57,24 @@ export interface JobItem {
   at?: string
 }
 
+/** AI 점수 초안(담당자가 적용해야 점수로 쓰인다). score 가 null 이면 AI 도 판단하지 못한 항목 */
+export interface AiDraft {
+  fit?: { score: number | null; reason: string }
+  review?: { score: number | null; reason: string; url?: string; date?: string; recent?: boolean }
+  motive?: { score: number | null; reason: string; keywords?: string[] }
+  note?: string
+  model?: string
+  cost?: number
+  at?: string
+  error?: string
+}
+
 /** 사람이 확인해 적는 평가(서버에 저장, 팀이 함께 본다) */
 export interface Eval {
+  /** AI 점수 초안 */
+  ai?: AiDraft
+  /** 담당자가 AI 초안을 확인하고 적용했는지 */
+  aiApplied?: boolean
   /** 살림·리빙·육아 콘텐츠 적합성 0~25 */
   fit?: number | null
   /** 리뷰 표현력(인스타 0~20) · 리뷰 품질(블로그 0~30) */
@@ -371,3 +387,20 @@ export function recommend(kind: 'ig' | 'blog', ranked: Candidate[], target: numb
 }
 
 export const STATUS_LABEL: Record<EvalStatus, string> = { complete: '평가 완료', partial: '일부 미확인', hold: '보류', failed: '확인 실패' }
+
+/** AI 초안 중 아직 빈 항목만 채우는 수정분(담당자가 적은 점수는 덮어쓰지 않는다) */
+export function aiPatch(c: Pick<Candidate, 'ev' | 'motiveAuto'>): Eval | null {
+  const ai = c.ev.ai
+  if (!ai || ai.error) return null
+  const p: Eval = {}
+  if (c.ev.fit == null && ai.fit?.score != null) p.fit = ai.fit.score
+  if (c.ev.review == null && ai.review?.score != null) {
+    p.review = ai.review.score
+    if (!c.ev.reviewUrl && ai.review.url) p.reviewUrl = ai.review.url
+    if (!c.ev.reviewDate && ai.review.date) p.reviewDate = ai.review.date
+    if (ai.review.recent) p.reviewFallback = true
+  }
+  if (c.ev.motive == null && ai.motive?.score != null) p.motive = ai.motive.score
+  if (!Object.keys(p).length) return null
+  return { ...p, aiApplied: true }
+}

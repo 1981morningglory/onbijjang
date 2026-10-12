@@ -14,6 +14,7 @@ import { BLOG_SEC, ConfirmLong, estimateSec, fmtDuration, IG_SEC, LONG_SEC, meta
 interface Status {
   allowed: boolean
   instagram: { connected: boolean; username: string; expiresAt: string | null } | null
+  ai?: { connected: boolean; model: string } | null
 }
 
 export default function SnsTool() {
@@ -150,7 +151,7 @@ function Workspace({ status }: { status: Status }) {
                   </span>
                   <Badge tone={j.status === 'done' ? 'brand' : j.status === 'running' ? 'mark' : 'neutral'}>{j.status === 'done' ? '완료' : j.status === 'running' ? '수집 중' : '멈춤'}</Badge>
                 </button>
-                {openId === j.id && <JobView id={j.id} lanes={lanes} connected={Boolean(ig?.connected)} onChanged={refresh} onDeleted={() => setOpenId(null)} />}
+                {openId === j.id && <JobView id={j.id} lanes={lanes} connected={Boolean(ig?.connected)} aiConnected={Boolean(status.ai?.connected)} onChanged={refresh} onDeleted={() => setOpenId(null)} />}
               </li>
             ))}
           </ul>

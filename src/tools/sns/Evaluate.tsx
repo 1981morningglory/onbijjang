@@ -4,14 +4,15 @@
  */
 import clsx from 'clsx'
 import { del, get } from 'idb-keyval'
-import { Camera, ChevronRight, CirclePause, CirclePlay, Download, ExternalLink, ListChecks, NotebookPen, RefreshCw, Search, Trash2 } from 'lucide-react'
+import { Camera, ChevronRight, CirclePause, CirclePlay, Download, ExternalLink, ListChecks, NotebookPen, RefreshCw, Search, Sparkles, Trash2 } from 'lucide-react'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '@/lib/api'
 import { downloadBlob } from '@/lib/files'
-import { Badge, Button, Callout, Checkbox, EmptyState, NumberInput, Progress, Segmented, Spinner, Tabs, Textarea, TextInput, toast } from '@/ui'
+import { Badge, Button, Callout, Checkbox, Dialog, EmptyState, NumberInput, Progress, Segmented, Spinner, Tabs, Textarea, TextInput, toast } from '@/ui'
 import { buildSelectionWorkbook, type ProblemRow } from './excel'
 import type { Applicant } from './parse'
 import {
+  aiPatch,
   buildCandidate,
   MAX,
   rankCandidates,
@@ -29,7 +30,19 @@ import {
 import { ConfirmLong, fmtDuration, IG_SEC, LONG_SEC, metaFileKey, metaKey, type Count, type JobBrief, type Lanes, type LocalMeta } from './shared'
 
 type Kind = 'ig' | 'blog'
-type Job = JobBrief & { items: JobItem[]; evals: Record<string, Eval> }
+interface AiInfo {
+  queued: number
+  done: number
+  fail: number
+  cost: number
+  note: string
+}
+type Job = JobBrief & { items: JobItem[]; evals: Record<string, Eval>; ai?: AiInfo }
+
+/** AI 초안 한 명당 어림값(사진 몇 장 + 글, Claude Opus 5.5 기준) — 실제 비용은 쌓이는 대로 화면에 보인다 */
+const AI_WON_PER = 90
+const AI_SEC_PER = 13 // 동시에 2명씩, 한 명 약 25초
+const WON_PER_USD = 1400
 
 const STATUS_TONE: Record<EvalStatus, string> = {
   complete: 'bg-brand-soft text-brand-ink',
@@ -40,7 +53,7 @@ const STATUS_TONE: Record<EvalStatus, string> = {
 const fmt = (n: number | null | undefined) => (n == null ? '' : n.toLocaleString('ko-KR'))
 const accountUrl = (kind: Kind, key: string) => (kind === 'ig' ? `https://www.instagram.com/${key}/` : `https://blog.naver.com/${key}`)
 
-export function JobView({ id, lanes, connected, onChanged, onDeleted }: { id: string; lanes: Lanes | null; connected: boolean; onChanged: () => void; onDeleted: () => void }) {
+export function JobView({ id, lanes, connected, aiConnected, onChanged, onDeleted }: { id: string; lanes: Lanes | null; connected: boolean; aiConnected: boolean; onChanged: () => void; onDeleted: () => void }) {
   const [job, setJob] = useState<Job | null>(null)
   const [meta, setMeta] = useState<LocalMeta | null>(null)
   const [tab, setTab] = useState<Kind | 'rec'>('ig')
@@ -62,7 +75,7 @@ export function JobView({ id, lanes, connected, onChanged, onDeleted }: { id: st
     const tick = async () => {
       try {
         const j = await load()
-        if (alive) timer.current = window.setTimeout(tick, j.status === 'running' ? 5000 : 20000)
+        if (alive) timer.current = window.setTimeout(tick, j.status === 'running' || (j.ai?.queued ?? 0) > 0 ? 5000 : 20000)
       } catch {
         if (alive) timer.current = window.setTimeout(tick, 10000)
       }
@@ -241,6 +254,15 @@ export function JobView({ id, lanes, connected, onChanged, onDeleted }: { id: st
         </Button>
       </div>
 
+      <AiPanel
+        jobId={id}
+        aiConnected={aiConnected}
+        info={job.ai}
+        lists={lists}
+        motives={(kind, key) => (kind === 'ig' ? people.ig : people.blog).get(key)?.slice().sort((a, b) => (a.submittedAt ?? '').localeCompare(b.submittedAt ?? ''))[0]?.motive}
+        onQueued={() => void load()}
+      />
+
       <Tabs
         label="평가"
         value={tab}
@@ -286,6 +308,15 @@ function EvalTable({ kind, list, setEval }: { kind: Kind; list: Row[]; setEval: 
     const next = [...shown.slice(i + 1), ...shown.slice(0, i)].find((c) => c.status === 'partial')
     setOpen(next ? next.key : null)
   }
+  const applicable = shown.map((c) => [c, aiPatch(c)] as const).filter(([, p]) => p)
+  const applyAll = () => {
+    if (!applicable.length) return
+    if (!confirm(`지금 보이는 지원자 중 AI 초안이 있는 ${applicable.length}명의 빈 항목에 AI 초안 점수를 적용할까요?\n담당자가 이미 적은 점수는 바꾸지 않습니다. 적용한 점수는 ‘AI 초안 적용’으로 기록됩니다.`)) return
+    for (const [c, patch] of applicable) setEval(kind, c.evalKey, patch!)
+    toast.success(`${applicable.length}명에 AI 초안을 적용했습니다.`)
+  }
+  const aiCell = (confirmed: number | null, draft: number | null | undefined) =>
+    confirmed != null ? confirmed : draft != null ? <span className="text-xs font-semibold text-accent" title="AI 초안(아직 적용 전)">AI {draft}</span> : ''
   if (!list.length) return <EmptyState title="아직 이 채널 지원자가 없습니다">수집 작업에 주소가 들어 있으면 여기에 쌓입니다.</EmptyState>
   return (
     <div className="flex flex-col gap-3">
@@ -308,6 +339,11 @@ function EvalTable({ kind, list, setEval }: { kind: Kind; list: Row[]; setEval: 
           <Search className="size-4 text-muted" aria-hidden />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="계정·이름·키워드 찾기" aria-label="찾기" className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-faint" />
         </label>
+        {applicable.length > 0 && (
+          <Button size="sm" icon={Sparkles} onClick={applyAll}>
+            AI 초안 적용(빈칸만 · {applicable.length}명)
+          </Button>
+        )}
       </div>
       <div className="max-h-[640px] overflow-auto rounded-md border border-line">
         <table className="num w-full min-w-[1040px] text-sm">
@@ -338,6 +374,7 @@ function EvalTable({ kind, list, setEval }: { kind: Kind; list: Row[]; setEval: 
                   </td>
                   <td className="px-3 py-1.5">
                     <span className={clsx('inline-flex h-5 items-center whitespace-nowrap rounded-full px-2 text-2xs font-bold', STATUS_TONE[c.status])}>{c.waiting ? '자동 확인 중' : STATUS_LABEL[c.status]}</span>
+                    {c.ev.aiApplied && <span className="ml-1 text-2xs font-semibold text-accent">AI 적용</span>}
                     {c.dupes.length > 0 && <span className="ml-1 text-2xs text-warn">중복 {c.dupes.length}</span>}
                   </td>
                   <td className="max-w-24 truncate px-3 py-1.5">{c.rep?.name}</td>
@@ -359,11 +396,19 @@ function EvalTable({ kind, list, setEval }: { kind: Kind; list: Row[]; setEval: 
                     )}
                   </td>
                   <td className="px-3 py-1.5 text-right">{c.scores.base ?? ''}</td>
-                  <td className="px-3 py-1.5 text-right">{c.scores.fit ?? ''}</td>
-                  <td className="px-3 py-1.5 text-right">{c.scores.review ?? ''}</td>
+                  <td className="px-3 py-1.5 text-right">{aiCell(c.scores.fit, c.ev.ai?.fit?.score)}</td>
+                  <td className="px-3 py-1.5 text-right">{aiCell(c.scores.review, c.ev.ai?.review?.score)}</td>
                   <td className={clsx('px-3 py-1.5 text-right', c.motiveAuto && 'text-ink-2')} title={c.motiveAuto ? '자동 판단(수정 가능)' : undefined}>
-                    {c.scores.motive ?? ''}
-                    {c.motiveAuto && <span className="ml-0.5 text-2xs text-faint">자동</span>}
+                    {c.motiveAuto && c.ev.ai?.motive?.score != null ? (
+                      <span className="text-xs font-semibold text-accent" title="AI 초안(아직 적용 전). 지금 점수는 자동 판단">
+                        AI {c.ev.ai.motive.score}
+                      </span>
+                    ) : (
+                      <>
+                        {aiCell(c.scores.motive, c.ev.ai?.motive?.score)}
+                        {c.motiveAuto && <span className="ml-0.5 text-2xs text-faint">자동</span>}
+                      </>
+                    )}
                   </td>
                   <td className="px-3 py-1.5 text-right font-bold">{c.total != null ? c.total : <span className="font-normal text-ink-2">{c.subtotal}/{c.confirmedMax}</span>}</td>
                   <td className="max-w-40 truncate px-3 py-1.5 text-xs text-muted">{c.missing.join(', ')}</td>
@@ -512,6 +557,7 @@ function Editor({ kind, c, onPatch, onNext }: { kind: Kind; c: Row; onPatch: (p:
 
       {/* 오른쪽: 담당자 평가 */}
       <div className="flex min-w-0 flex-col gap-3 rounded-md border border-line bg-surface p-3">
+        <AiCard kind={kind} c={c} onApply={(p) => onPatch(p)} />
         {kind === 'ig' && (c.followers == null || (d as IgData | undefined)?.followersApprox) && (
           <div className="flex flex-wrap items-end gap-2">
             <label className="flex flex-col gap-1 text-sm">
@@ -634,6 +680,171 @@ function RecommendView({
       {section('ig', lists.recIg)}
       {section('blog', lists.recBlog)}
       {problems.length > 0 && <p className="text-sm text-muted">주소가 불분명해 보류한 신청서 {problems.length}건은 엑셀 ‘보류·확인 필요’ 시트에 들어갑니다.</p>}
+    </div>
+  )
+}
+
+// ── AI 점수 초안 ──────────────────────────────────────────
+function AiCard({ kind, c, onApply }: { kind: Kind; c: Row; onApply: (p: Eval) => void }) {
+  const ai = c.ev.ai
+  if (!ai) return null
+  if (ai.error) return <Callout tone="warn" title="AI 초안을 만들지 못했습니다">{ai.error}</Callout>
+  const patch = aiPatch(c)
+  const row = (label: string, max: number, d?: { score: number | null; reason: string }) => (
+    <li className="flex gap-2">
+      <span className="w-24 shrink-0 text-ink-2">{label}</span>
+      <span className="num w-14 shrink-0 font-bold text-accent">{d?.score != null ? `${d.score}/${max}` : '판단 못 함'}</span>
+      <span className="min-w-0 text-ink-2">{d?.reason}</span>
+    </li>
+  )
+  return (
+    <div className="rounded-md border border-accent/30 bg-accent-soft/40 p-2.5 text-xs">
+      <div className="mb-1.5 flex flex-wrap items-center gap-2">
+        <span className="flex items-center gap-1 font-bold text-accent">
+          <Sparkles className="size-3.5" aria-hidden /> AI 점수 초안
+        </span>
+        <span className="text-faint">확인한 뒤 적용하세요 · 적용 전에는 점수로 치지 않습니다</span>
+        {patch && (
+          <Button size="sm" variant="secondary" className="ml-auto" onClick={() => onApply(patch)}>
+            빈칸에 초안 적용
+          </Button>
+        )}
+      </div>
+      <ul className="flex flex-col gap-1">
+        {row('콘텐츠 적합성', MAX[kind].fit, ai.fit)}
+        {row(kind === 'ig' ? '리뷰 표현력' : '리뷰 품질', MAX[kind].review, ai.review)}
+        {row('지원동기', MAX[kind].motive, ai.motive)}
+      </ul>
+      {ai.review?.url && (
+        <p className="mt-1">
+          AI 가 본 리뷰:{' '}
+          <a href={ai.review.url} target="_blank" rel="noreferrer" className="text-brand-ink underline">
+            {ai.review.date || '게시물'}
+          </a>
+          {ai.review.recent && ' (제품 리뷰가 없어 최근 게시물로 평가)'}
+        </p>
+      )}
+      {ai.motive?.keywords?.length ? <p className="mt-1 text-ink-2">지원동기 키워드: {ai.motive.keywords.join(', ')}</p> : null}
+      {ai.note && <p className="mt-1 text-ink-2">메모: {ai.note}</p>}
+    </div>
+  )
+}
+
+function AiPanel({
+  jobId,
+  aiConnected,
+  info,
+  lists,
+  motives,
+  onQueued,
+}: {
+  jobId: string
+  aiConnected: boolean
+  info?: AiInfo
+  lists: { ig: Row[]; blog: Row[] }
+  motives: (kind: Kind, key: string) => string | undefined
+  onQueued: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [scope, setScope] = useState<'todo' | 'all'>('todo')
+  const [channel, setChannel] = useState<'both' | Kind>('both')
+  const [busy, setBusy] = useState(false)
+  const pick = (l: Row[]) => l.filter((c) => !c.waiting && c.status !== 'hold' && (scope === 'all' ? true : c.status === 'partial' || c.status === 'failed') && (scope === 'all' || !c.ev.ai || Boolean(c.ev.ai.error)))
+  const targets = [...(channel !== 'blog' ? pick(lists.ig) : []), ...(channel !== 'ig' ? pick(lists.blog) : [])]
+  const n = targets.length
+  const start = async () => {
+    setBusy(true)
+    try {
+      const r = await api<{ queued: number }>(`/sns/jobs/${jobId}/ai`, {
+        method: 'POST',
+        body: { targets: targets.map((c) => ({ kind: c.kind, key: c.evalKey, motive: motives(c.kind, c.evalKey) })) },
+      })
+      toast.success(`${r.queued}명의 AI 초안을 만들기 시작했습니다. 창을 닫아도 서버에서 계속합니다.`)
+      setOpen(false)
+      onQueued()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '시작하지 못했습니다.')
+    } finally {
+      setBusy(false)
+    }
+  }
+  const queued = info?.queued ?? 0
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-md border border-line bg-paper px-3 py-2 text-sm">
+      <Sparkles className="size-4 text-accent" aria-hidden />
+      <span className="font-semibold text-ink">AI 점수 초안</span>
+      {!aiConnected ? (
+        <span className="text-muted">AI 키가 아직 없습니다 — 관리자 화면 → ‘SNS 연결’에서 AI 키를 넣으면 쓸 수 있습니다.</span>
+      ) : queued > 0 ? (
+        <>
+          <span className="text-ink-2">
+            만드는 중 · 남은 {queued}명 · 약 {fmtDuration(queued * AI_SEC_PER)}
+          </span>
+          {info?.note && <span className="text-warn">{info.note}</span>}
+          <Button size="sm" variant="ghost" onClick={() => void api(`/sns/jobs/${jobId}/ai/stop`, { method: 'POST' }).then(onQueued)}>
+            멈추기
+          </Button>
+        </>
+      ) : (
+        <Button size="sm" variant="primary" icon={Sparkles} onClick={() => setOpen(true)}>
+          AI 초안 만들기
+        </Button>
+      )}
+      {(info?.done ?? 0) + (info?.fail ?? 0) > 0 && (
+        <span className="ml-auto text-xs text-muted">
+          완료 {info?.done ?? 0}명{info?.fail ? ` · 실패 ${info.fail}` : ''} · 지금까지 비용 약 ₩{Math.round((info?.cost ?? 0) * WON_PER_USD).toLocaleString('ko-KR')} (${(info?.cost ?? 0).toFixed(2)})
+        </span>
+      )}
+      <Dialog
+        open={open}
+        onClose={() => setOpen(false)}
+        size="md"
+        title="AI 점수 초안 만들기"
+        footer={
+          <>
+            <Button onClick={() => setOpen(false)}>아니오</Button>
+            <Button variant="primary" icon={Sparkles} loading={busy} disabled={!n} onClick={start}>
+              예, {n}명 진행합니다
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-3 text-sm">
+          <p className="text-ink-2">
+            Claude(Opus 5.5)가 공개 게시물(인스타그램 최근 게시물 캡션·사진, 블로그 최근 글 목록과 리뷰 글 본문·사진)과 신청서 지원동기를 보고 콘텐츠 적합성·리뷰·지원동기의 <b>초안 점수와 근거</b>를 적습니다. 초안은 담당자가 확인하고 ‘적용’해야 점수로 쓰입니다.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Segmented<'todo' | 'all'>
+              label="대상"
+              size="sm"
+              value={scope}
+              onValue={setScope}
+              options={[
+                { value: 'todo', label: '확인할 것(초안 없는 미확인자)' },
+                { value: 'all', label: '전체(다시 만들기 포함)' },
+              ]}
+            />
+            <Segmented<'both' | Kind>
+              label="채널"
+              size="sm"
+              value={channel}
+              onValue={setChannel}
+              options={[
+                { value: 'both', label: '둘 다' },
+                { value: 'ig', label: '인스타그램' },
+                { value: 'blog', label: '블로그' },
+              ]}
+            />
+          </div>
+          <Callout tone={n * AI_SEC_PER >= LONG_SEC ? 'warn' : 'info'} title={`${n}명 · 예상 비용 약 ₩${(n * AI_WON_PER).toLocaleString('ko-KR')} · 예상 시간 ${fmtDuration(n * AI_SEC_PER)}`}>
+            비용은 한 명에 약 ₩{AI_WON_PER}(사진·글 양에 따라 달라짐)으로 어림했고, 실제로 쓴 금액은 진행하면서 화면에 쌓여 보입니다. 서버에서 진행되므로 창을 닫아도 계속됩니다.
+          </Callout>
+          <p className="text-xs text-muted">
+            보내는 자료: 공개 SNS 게시물과 신청서 ‘지원동기’ 글(이름·연락처·주소는 보내지 않음). 개인 계정 인스타그램은 게시물을 볼 수 없어 적합성·리뷰가 ‘판단 못 함’으로 남을 수 있습니다.
+          </p>
+          <p className="font-semibold text-ink">진행하시겠습니까?</p>
+        </div>
+      </Dialog>
     </div>
   )
 }

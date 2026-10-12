@@ -12,6 +12,7 @@
     "check": "tsc --noEmit && vitest run"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.133.0",
     "@cantoo/pdf-lib": "^2.11.1",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@ffprobe-installer/ffprobe": "^2.1.2",

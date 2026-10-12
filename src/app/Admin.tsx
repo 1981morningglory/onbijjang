@@ -747,6 +747,93 @@ function SnsConnect() {
   )
 }
 
+/** 체험단 선발의 AI 점수 초안에 쓰는 Claude API 키 */
+function AiConnect() {
+  const [state, setState] = useState<{ connected: boolean; fromEnv: boolean; model: string; savedAt: string | null; hint: string } | null>(null)
+  const [key, setKey] = useState('')
+  const [busy, setBusy] = useState<string | null>(null)
+  const refresh = async () => setState(await api('/admin/ai'))
+  useEffect(() => {
+    refresh().catch(() => {})
+  }, [])
+  const run = (label: string, fn: () => Promise<void>) => {
+    setBusy(label)
+    fn()
+      .catch((err) => toast.error(err instanceof Error ? err.message : '처리하지 못했습니다.'))
+      .finally(() => setBusy(null))
+  }
+  return (
+    <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+      <Panel className="flex flex-col gap-4 p-5">
+        <div>
+          <h3 className="text-base">AI 점수 초안 연결 (Claude)</h3>
+          <p className="text-sm text-muted">‘체험단 SNS 선발’에서 콘텐츠 적합성·리뷰·지원동기의 점수 초안을 만들 때 씁니다. 키는 이 서버에만 저장하고 화면에 다시 보여 주지 않습니다.</p>
+        </div>
+        {state?.connected ? (
+          <Callout tone="success" title={`연결됨 · ${state.model}`}>
+            {state.fromEnv ? 'Railway 변수 ANTHROPIC_API_KEY 를 쓰는 중입니다.' : `저장된 키 ${state.hint}`}
+            {state.savedAt && !state.fromEnv && <> · {new Date(state.savedAt).toLocaleString('ko-KR')} 저장</>}
+          </Callout>
+        ) : (
+          <Callout tone="info" title="아직 연결되지 않았습니다">AI 키를 넣으면 체험단 선발 화면에 ‘AI 초안 만들기’ 버튼이 켜집니다.</Callout>
+        )}
+        <form
+          className="flex flex-col gap-2"
+          onSubmit={(e) => {
+            e.preventDefault()
+            run('save', async () => {
+              const r = await api<typeof state>('/admin/ai', { method: 'PUT', body: { apiKey: key.trim() } })
+              setKey('')
+              setState(r)
+              toast.success('AI 키를 확인하고 저장했습니다.')
+            })
+          }}
+        >
+          <Field label="Claude API 키" hint="sk-ant- 로 시작하는 키. 넣으면 서버가 바로 확인합니다(확인에는 비용이 들지 않습니다).">
+            {(id) => <TextInput id={id} type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} placeholder="sk-ant-…" />}
+          </Field>
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" variant="primary" icon={KeyRound} loading={busy === 'save'} disabled={key.trim().length < 20}>
+              {state?.connected && !state.fromEnv ? '새 키로 바꾸기' : '연결하기'}
+            </Button>
+            {state?.connected && !state.fromEnv && (
+              <Button
+                variant="ghost"
+                icon={Trash2}
+                loading={busy === 'del'}
+                onClick={() => {
+                  if (!confirm('AI 키를 지울까요?')) return
+                  run('del', async () => {
+                    await api('/admin/ai', { method: 'DELETE' })
+                    await refresh()
+                  })
+                }}
+              >
+                연결 끊기
+              </Button>
+            )}
+          </div>
+        </form>
+      </Panel>
+      <Panel className="flex flex-col gap-3 p-5 text-sm leading-relaxed text-ink-2">
+        <h3 className="text-base text-ink">AI 키 받는 순서</h3>
+        <ol className="flex list-decimal flex-col gap-2 pl-5">
+          <li>
+            <a className="text-brand-ink underline" href="https://platform.claude.com/" target="_blank" rel="noreferrer">
+              platform.claude.com
+            </a>
+            에 회사 계정으로 로그인합니다(없으면 가입).
+          </li>
+          <li>결제 → 크레딧을 충전합니다(쓴 만큼 차감되는 선불 방식).</li>
+          <li>API Keys → Create Key 로 키를 만들어 복사합니다.</li>
+          <li>왼쪽 칸에 붙여 넣고 ‘연결하기’를 누릅니다.</li>
+        </ol>
+        <p className="text-xs text-muted">비용 어림: 지원자 한 명 초안에 약 ₩90(사진 몇 장과 글을 함께 보므로 계정마다 다름). 인스타그램 550명 + 블로그 220명이면 약 ₩7만. 실제 쓴 금액은 체험단 선발 화면에 쌓여 보입니다.</p>
+      </Panel>
+    </div>
+  )
+}
+
 function AccountEditor({ onLogout }: { onLogout: () => void }) {
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
@@ -901,7 +988,12 @@ export function Admin() {
       {tab === 'presets' && <PresetEditor draft={draft} setDraft={setDraft} />}
       {tab === 'accounts' && <AccountsEditor />}
       {tab === 'company' && <TeamsEditor />}
-      {tab === 'sns' && <SnsConnect />}
+      {tab === 'sns' && (
+        <>
+          <SnsConnect />
+          <AiConnect />
+        </>
+      )}
       {tab === 'account' && <AccountEditor onLogout={logout} />}
 
       {(tab === 'menu' || tab === 'presets') && (

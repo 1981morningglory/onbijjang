@@ -97,7 +97,22 @@ const tail = (c: Candidate) => [
   c.missing.join(', '),
   c.dupes.length ? c.dupes.map((d) => `${d.name ?? ''}${d.row ? `(${d.row}행)` : ''}`).join(', ') : '',
   c.notes.join(' / '),
+  c.ev.aiApplied ? 'AI 초안 확인·적용' : c.subtotal || c.scores.base != null ? '담당자·자동' : '',
+  aiReasons(c),
 ]
+/** AI 초안 근거(있으면) */
+const aiReasons = (c: Candidate) => {
+  const a = c.ev.ai
+  if (!a) return ''
+  if (a.error) return `AI 실패: ${a.error}`
+  return [
+    a.fit && `적합성 ${a.fit.score ?? '판단 못 함'}: ${a.fit.reason}`,
+    a.review && `리뷰 ${a.review.score ?? '판단 못 함'}${a.review.date ? `(${a.review.date})` : ''}: ${a.review.reason}`,
+    a.motive && `동기 ${a.motive.score ?? '판단 못 함'}: ${a.motive.reason}`,
+  ]
+    .filter(Boolean)
+    .join(' / ')
+}
 const TAIL_COLS: Col[] = [
   { header: '총점\n(100)', width: 8 },
   { header: '확인 항목\n소계', width: 8 },
@@ -105,6 +120,8 @@ const TAIL_COLS: Col[] = [
   { header: '미확인 항목', width: 16 },
   { header: '중복 지원\n(대표 외)', width: 16 },
   { header: '특이사항', width: 36 },
+  { header: '점수 출처', width: 12 },
+  { header: 'AI 초안 근거', width: 48 },
 ]
 const HEAD_COLS: Col[] = [
   { header: '정식\n순위', width: 6 },
@@ -295,6 +312,7 @@ export async function buildSelectionWorkbook(input: ExportInput): Promise<Blob> 
     `[추천] 평가 완료자 우선 인스타그램 ${input.recIg.target}명, 블로그 ${input.recBlog.target}명. 부족하면 부족 인원과 이유를 적고, 블로그는 방문자 미확인 후보(70점 소계 순) 상위를 ‘조건부 추천—방문자 미확인’으로 제시(최종 결정은 담당자).`,
     '※ 팔로워 구간은 빠른 선발을 위한 운영 기준이며, 팔로워 수만으로 실제 도달력이나 판매 효과를 보장하지 않습니다.',
     '※ 노란 칸은 담당자가 확인해 적는 칸입니다(온비짱 화면에서 적으면 함께 들어갑니다).',
+    '※ AI 초안(Claude)은 담당자가 확인하고 적용한 것만 점수로 썼습니다. ‘점수 출처’가 ‘AI 초안 확인·적용’인 줄은 초안을 적용한 지원자입니다.',
   ]
   lines.forEach((t, i) => {
     const c = info.getCell(i + 1, 1)
