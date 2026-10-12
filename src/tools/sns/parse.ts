@@ -17,6 +17,8 @@ export interface Applicant {
   motive?: string
   /** 신청서에 적은 최근 제품 리뷰 게시물 링크(칸이 있을 때) */
   reviewLink?: string
+  /** 주소를 고쳐 읽었으면 어떻게 고쳤는지(엑셀 ‘특이사항’에 남긴다) */
+  fixed?: string
 }
 
 export interface ParsedList {
@@ -30,6 +32,36 @@ export interface ParsedList {
 const IG_RESERVED = new Set(['p', 'reel', 'reels', 'stories', 'explore', 'accounts', 'direct', 'tv', 'about', 'developer', 'legal', 'web', 'share', 'com', 'con', 'co', 'www'])
 const IG_USER = /^[a-z0-9._]{1,30}$/
 const okUser = (u: string) => IG_USER.test(u) && /[a-z]/.test(u) && !IG_RESERVED.has(u)
+
+/** 아이디 대신 게시물 주소를 적은 경우: 서버가 게시물 주인을 찾아 읽는다 */
+export const IG_POST_PREFIX = 'igpost:'
+const IG_POST = /inst[a-z]*g[a-z]*[mn]\.?(?:com|con|co)?\/+(?:[A-Za-z0-9._]+\/+)?(?:p|reels?|tv)\/+([A-Za-z0-9_-]{5,40})/i
+
+/** 인스타그램 주소·아이디 → 아이디(소문자)와 고쳐 읽은 내용. 못 읽으면 null */
+export function igKeyInfo(input: string): { key: string; fixed?: string } | null {
+  const s0 = input.trim().replace(/\s+/g, '').replace(/[)\]>,]+$/, '')
+  if (!s0) return null
+  // 게시물·릴스 주소 → 게시물 주인(서버가 찾는다)
+  const post = IG_POST.exec(s0)
+  if (post) return { key: `${IG_POST_PREFIX}${post[1]}`, fixed: '계정 대신 게시물 주소를 적음 → 게시물 주인 계정으로 평가' }
+  // 스레드 아이디는 같은 사람의 인스타그램 아이디와 같다
+  const th = /threads\.(?:net|com)\/@?([A-Za-z0-9._]{1,30})/i.exec(s0)
+  if (th) {
+    const u = th[1].toLowerCase().replace(/\.+$/, '')
+    return okUser(u) ? { key: u, fixed: '스레드 주소 → 같은 아이디의 인스타그램으로 평가' } : null
+  }
+  // 아이디 속 마침표를 쉼표로 잘못 친 경우(baby,jiwon_0)
+  if (/^@?[A-Za-z0-9._]+(?:,[A-Za-z0-9._]+)+$/.test(s0)) {
+    const k = igKey(s0.replace(/,/g, '.'))
+    return k ? { key: k, fixed: `쉼표를 마침표로 고쳐 읽음(${s0})` } : null
+  }
+  const k = igKey(s0)
+  if (k) return { key: k }
+  // instagram.com/ 뒤에 숫자·마침표만 있는 아이디(10001001.0) — 주소로 분명히 적었으면 그대로 확인해 본다
+  const num = /inst[a-z]*g[a-z]*[mn]\.?(?:com|con|co)\/+([0-9._]{2,30})\/?(?:[?#]|$)/i.exec(s0)
+  if (num && /\d/.test(num[1]) && !/^[._]|\.$/.test(num[1])) return { key: num[1], fixed: '숫자로만 된 아이디(주소로 적어 그대로 확인)' }
+  return null
+}
 
 /** 인스타그램 주소·아이디 → 아이디(소문자). 못 읽으면 null */
 export function igKey(input: string): string | null {
@@ -85,12 +117,14 @@ export function blogKey(input: string): string | null {
   return BLOG_ID.test(id) && /[a-z]/.test(id) ? id : null
 }
 
-export const keyOf = (kind: SnsKind, input: string) => (kind === 'ig' ? igKey(input) : blogKey(input))
+export const keyOf = (kind: SnsKind, input: string) => (kind === 'ig' ? igKeyInfo(input)?.key ?? null : blogKey(input))
 
 /** 어느 SNS 주소인지 주소만 보고 짐작 */
 export function guessKind(input: string): SnsKind | null {
   const s = input.replace(/\s+/g, '')
   if (/inst[a-z]{0,3}gr+[a-z]{0,2}m/i.test(s)) return 'ig'
+  // 스레드는 인스타그램 아이디로 쓰는 서비스라 인스타그램으로 평가한다
+  if (/threads\.(?:net|com)\/@?[A-Za-z0-9._]/i.test(s)) return 'ig'
   if (/blog\.naver|\.blog\.me|naver\.me\//i.test(s)) return 'blog'
   return null
 }
@@ -108,12 +142,16 @@ export function parseList(kind: SnsKind, people: Applicant[]): ParsedList {
   const keys = new Map<string, Applicant[]>()
   const invalid: Applicant[] = []
   let duplicates = 0
-  for (const p of people) {
-    const k = keyOf(kind, p.raw)
+  for (const p0 of people) {
+    const info = kind === 'ig' ? igKeyInfo(p0.raw) : null
+    const k = kind === 'ig' ? info?.key ?? null : blogKey(p0.raw)
     if (!k) {
-      invalid.push(p)
+      invalid.push(p0)
       continue
     }
+    // 게시물 주소를 적었으면 그 게시물을 리뷰 링크로도 쓴다
+    const post = k.startsWith(IG_POST_PREFIX) ? `https://www.instagram.com/p/${k.slice(IG_POST_PREFIX.length)}/` : undefined
+    const p: Applicant = info?.fixed ? { ...p0, fixed: info.fixed, ...(post && !p0.reviewLink ? { reviewLink: post } : {}) } : p0
     const list = keys.get(k)
     if (list) {
       list.push(p)

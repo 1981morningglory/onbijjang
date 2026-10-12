@@ -129,7 +129,8 @@ export function JobView({ id, lanes, connected, aiConnected, onChanged, onDelete
         job.items
           .filter((x) => x.kind === kind)
           .map((x) => {
-            const shown = kind === 'blog' ? x.id ?? x.key : x.key
+            // 블로그 짧은 주소·인스타그램 게시물 주소는 서버가 찾은 진짜 아이디로 보여 준다
+            const shown = x.id ?? x.key
             const c = buildCandidate(kind, shown, x, (kind === 'ig' ? people.ig : people.blog).get(x.key) ?? [], job.evals[`${kind}:${x.key}`] ?? {})
             return Object.assign(c, { evalKey: x.key, waiting: x.state === 'wait' })
           }),

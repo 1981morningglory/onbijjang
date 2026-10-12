@@ -312,6 +312,7 @@ export function buildCandidate(kind: 'ig' | 'blog', key: string, item: JobItem |
   const subtotal = labels.reduce((s, [k]) => s + (scores[k] ?? 0), 0)
   const confirmedMax = labels.reduce((s, [k, , mx]) => s + (scores[k] == null ? 0 : mx), 0)
   if (ev.reviewFallback) notes.push('제품 리뷰가 없어 최근 30일 게시물로 평가')
+  if (rep?.fixed) notes.push(`주소 보정: ${rep.fixed}`)
   if (dupes.length) notes.push(`중복 지원 ${dupes.length}건(대표: ${rep?.row ? `${rep.row}행` : '첫 신청'})`)
   if (ev.memo?.trim()) notes.push(ev.memo.trim())
 
