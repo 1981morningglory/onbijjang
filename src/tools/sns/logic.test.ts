@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 // 서버 쪽 순수 함수도 여기서 함께 확인한다
 import { blogIdFromUrl, classifyGraphError, parseCount, parseIgOg, parseVisitors, summarizeIg } from '../../../server/lib/sns.mjs'
 import { blogKey, guessKind, igKey, linesToApplicants, parseList, type Applicant } from './parse'
-import { buildCandidate, completedVisitors, followerScore, motiveKeywords, rankCandidates, recommend, suggestMotive, visitorScore, type BlogData, type IgData, type JobItem } from './score'
+import { aiPatch, breakdownText, buildCandidate, completedVisitors, followerScore, motiveKeywords, rankCandidates, recommend, suggestMotive, visitorScore, type BlogData, type IgData, type JobItem } from './score'
 
 describe('인스타그램 주소 읽기', () => {
   it.each([
@@ -209,5 +209,17 @@ describe('지원동기', () => {
     expect(suggestMotive(t).score).toBe(15)
     expect(suggestMotive('').score).toBe(0)
     expect(suggestMotive('좋아요').score).toBe(3)
+  })
+  it('AI 채점이 있으면 적용하지 않아도 그 점수를 쓰고, 담당자 점수가 가장 앞선다', () => {
+    const ai = { motive: { score: 11, reason: '', keywords: ['5겹', '육아'], breakdown: { product: 4, life: 3, plan: 2, sincerity: 2 } }, fit: { score: 20, reason: '' } }
+    const c = buildCandidate('ig', 'a', item('ig', 'a', igData(10)), [{ ...person(2, ''), motive: '좋아요' }], { ai })
+    expect([c.scores.motive, c.motiveSource, c.motiveAuto, c.keywords]).toEqual([11, 'ai', true, ['5겹', '육아']])
+    expect(c.scores.fit).toBeNull()
+    expect(breakdownText(ai.motive.breakdown)).toBe('제품관심 4/4 · 생활맥락 3/3 · 리뷰계획 2/4 · 진정성 2/4')
+    expect(aiPatch(c)).toEqual({ fit: 20, aiApplied: true })
+    const s = buildCandidate('ig', 'a', item('ig', 'a', igData(10)), [{ ...person(2, ''), motive: '좋아요' }], { ai, motive: 5 })
+    expect([s.scores.motive, s.motiveSource]).toEqual([5, 'staff'])
+    const f = buildCandidate('ig', 'a', item('ig', 'a', igData(10)), [{ ...person(2, ''), motive: '좋아요' }], { ai: { error: '실패' } })
+    expect([f.scores.motive, f.motiveSource]).toEqual([3, 'auto'])
   })
 })

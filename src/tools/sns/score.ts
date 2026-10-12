@@ -57,11 +57,22 @@ export interface JobItem {
   at?: string
 }
 
+/** 지원동기 AI 기준(합 15) — 서버 server/lib/ai.mjs 의 MOTIVE_CRITERIA 와 같게 */
+export const MOTIVE_CRITERIA = [
+  { key: 'product', label: '제품관심', max: 4 },
+  { key: 'life', label: '생활맥락', max: 3 },
+  { key: 'plan', label: '리뷰계획', max: 4 },
+  { key: 'sincerity', label: '진정성', max: 4 },
+] as const
+export type MotiveBreakdown = Record<(typeof MOTIVE_CRITERIA)[number]['key'], number>
+/** '제품관심 3/4 · 생활맥락 2/3 · …' */
+export const breakdownText = (b: MotiveBreakdown | undefined) => (b ? MOTIVE_CRITERIA.map((c) => `${c.label} ${b[c.key]}/${c.max}`).join(' · ') : '')
+
 /** AI 점수 초안(담당자가 적용해야 점수로 쓰인다). score 가 null 이면 AI 도 판단하지 못한 항목 */
 export interface AiDraft {
   fit?: { score: number | null; reason: string }
   review?: { score: number | null; reason: string; url?: string; date?: string; recent?: boolean }
-  motive?: { score: number | null; reason: string; keywords?: string[] }
+  motive?: { score: number | null; reason: string; keywords?: string[]; breakdown?: MotiveBreakdown }
   note?: string
   model?: string
   cost?: number
@@ -188,6 +199,10 @@ export function suggestMotive(text: string | undefined): { score: number; reason
 }
 
 // ── 지원자 한 명(계정 하나)의 평가 ─────────────────────────
+/** 지원동기 점수 출처 */
+export type MotiveSource = 'staff' | 'ai' | 'auto' | null
+export const MOTIVE_SOURCE_LABEL = { staff: '담당자', ai: 'AI', auto: '자동' } as const
+
 export type EvalStatus = 'complete' | 'partial' | 'hold' | 'failed'
 
 export interface Candidate {
@@ -210,7 +225,9 @@ export interface Candidate {
   visitorsHidden: boolean
   /** 항목 점수(null = 미확인) */
   scores: { base: number | null; fit: number | null; review: number | null; motive: number | null }
+  /** 지원동기 점수를 담당자가 적지 않았는지(AI·자동 판단) */
   motiveAuto: boolean
+  motiveSource: MotiveSource
   keywords: string[]
   status: EvalStatus
   missing: string[]
@@ -275,12 +292,14 @@ export function buildCandidate(kind: 'ig' | 'blog', key: string, item: JobItem |
 
   const auto = suggestMotive(rep?.motive)
   const motiveSet = num(ev.motive) != null
+  const aiMotive = ev.ai && !ev.ai.error ? num(ev.ai.motive?.score) : null
+  // 지원동기 점수: 담당자 > AI(기준별 채점) > 자동 판단(신청서 글이 있을 때)
+  const motiveSource: MotiveSource = motiveSet ? 'staff' : aiMotive != null ? 'ai' : rep?.motive !== undefined ? 'auto' : null
   const scores = {
     base,
     fit: clamp(num(ev.fit), m.fit),
     review: clamp(num(ev.review), m.review),
-    // 지원동기는 신청서 글이 있으면 자동 판단으로 채우고, 담당자가 적으면 그 점수
-    motive: motiveSet ? clamp(num(ev.motive), m.motive) : rep?.motive !== undefined ? auto.score : null,
+    motive: motiveSource === 'staff' ? clamp(num(ev.motive), m.motive) : motiveSource === 'ai' ? clamp(aiMotive, m.motive) : motiveSource === 'auto' ? auto.score : null,
   }
   const baseLabel = kind === 'ig' ? '팔로워' : '방문자'
   const labels: Array<[keyof typeof scores, string, number]> = [
@@ -315,8 +334,9 @@ export function buildCandidate(kind: 'ig' | 'blog', key: string, item: JobItem |
     visitorDays,
     visitorsHidden,
     scores,
-    motiveAuto: !motiveSet && rep?.motive !== undefined,
-    keywords: motiveKeywords(rep?.motive),
+    motiveAuto: motiveSource === 'ai' || motiveSource === 'auto',
+    motiveSource,
+    keywords: ev.ai?.motive?.keywords?.length ? ev.ai.motive.keywords : motiveKeywords(rep?.motive),
     status,
     missing,
     subtotal,
@@ -388,7 +408,7 @@ export function recommend(kind: 'ig' | 'blog', ranked: Candidate[], target: numb
 
 export const STATUS_LABEL: Record<EvalStatus, string> = { complete: '평가 완료', partial: '일부 미확인', hold: '보류', failed: '확인 실패' }
 
-/** AI 초안 중 아직 빈 항목만 채우는 수정분(담당자가 적은 점수는 덮어쓰지 않는다) */
+/** AI 초안(적합성·리뷰) 중 아직 빈 항목만 채우는 수정분(담당자가 적은 점수는 덮어쓰지 않는다) */
 export function aiPatch(c: Pick<Candidate, 'ev' | 'motiveAuto'>): Eval | null {
   const ai = c.ev.ai
   if (!ai || ai.error) return null
@@ -400,7 +420,7 @@ export function aiPatch(c: Pick<Candidate, 'ev' | 'motiveAuto'>): Eval | null {
     if (!c.ev.reviewDate && ai.review.date) p.reviewDate = ai.review.date
     if (ai.review.recent) p.reviewFallback = true
   }
-  if (c.ev.motive == null && ai.motive?.score != null) p.motive = ai.motive.score
+  // 지원동기 AI 점수는 적용하지 않아도 바로 쓰인다(buildCandidate)
   if (!Object.keys(p).length) return null
   return { ...p, aiApplied: true }
 }

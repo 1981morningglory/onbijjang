@@ -13,8 +13,10 @@ import { buildSelectionWorkbook, type ProblemRow } from './excel'
 import type { Applicant } from './parse'
 import {
   aiPatch,
+  breakdownText,
   buildCandidate,
   MAX,
+  MOTIVE_SOURCE_LABEL,
   rankCandidates,
   recommend,
   STATUS_LABEL,
@@ -399,17 +401,12 @@ function EvalTable({ kind, list, setEval }: { kind: Kind; list: Row[]; setEval: 
                   <td className="px-3 py-1.5 text-right">{c.scores.base ?? ''}</td>
                   <td className="px-3 py-1.5 text-right">{aiCell(c.scores.fit, c.ev.ai?.fit?.score)}</td>
                   <td className="px-3 py-1.5 text-right">{aiCell(c.scores.review, c.ev.ai?.review?.score)}</td>
-                  <td className={clsx('px-3 py-1.5 text-right', c.motiveAuto && 'text-ink-2')} title={c.motiveAuto ? '자동 판단(수정 가능)' : undefined}>
-                    {c.motiveAuto && c.ev.ai?.motive?.score != null ? (
-                      <span className="text-xs font-semibold text-accent" title="AI 초안(아직 적용 전). 지금 점수는 자동 판단">
-                        AI {c.ev.ai.motive.score}
-                      </span>
-                    ) : (
-                      <>
-                        {aiCell(c.scores.motive, c.ev.ai?.motive?.score)}
-                        {c.motiveAuto && <span className="ml-0.5 text-2xs text-faint">자동</span>}
-                      </>
-                    )}
+                  <td
+                    className={clsx('px-3 py-1.5 text-right', c.motiveAuto && 'text-ink-2')}
+                    title={c.motiveSource === 'ai' ? `AI 채점(수정 가능) · ${breakdownText(c.ev.ai?.motive?.breakdown)}` : c.motiveAuto ? '자동 판단(수정 가능)' : undefined}
+                  >
+                    {c.scores.motive ?? ''}
+                    {c.motiveAuto && <span className={clsx('ml-0.5 text-2xs', c.motiveSource === 'ai' ? 'font-semibold text-accent' : 'text-faint')}>{MOTIVE_SOURCE_LABEL[c.motiveSource ?? 'auto']}</span>}
                   </td>
                   <td className="px-3 py-1.5 text-right font-bold">{c.total != null ? c.total : <span className="font-normal text-ink-2">{c.subtotal}/{c.confirmedMax}</span>}</td>
                   <td className="max-w-40 truncate px-3 py-1.5 text-xs text-muted">{c.missing.join(', ')}</td>
@@ -472,6 +469,7 @@ function Editor({ kind, c, onPatch, onNext }: { kind: Kind; c: Row; onPatch: (p:
   const m = MAX[kind]
   const ev = c.ev
   const auto = suggestMotive(c.rep?.motive)
+  const aiMotive = ev.ai && !ev.ai.error ? ev.ai.motive?.score ?? null : null
   const d = c.data as (IgData & BlogData) | undefined
   const posts = kind === 'ig' ? (d as IgData | undefined)?.posts ?? [] : []
   const since90 = Date.now() - 90 * 86400_000
@@ -591,13 +589,22 @@ function Editor({ kind, c, onPatch, onNext }: { kind: Kind; c: Row; onPatch: (p:
         </div>
         <Checkbox checked={Boolean(ev.reviewFallback)} onChange={(reviewFallback) => onPatch({ reviewFallback })} label="제품 리뷰가 없어 최근 30일 게시물로 평가함" />
         <div className="flex flex-col gap-1.5">
-          <ScoreInput label="지원동기" value={ev.motive ?? (c.motiveAuto ? auto.score : null)} max={m.motive} onValue={(motive) => onPatch({ motive })} />
-          {c.rep?.motive !== undefined && (
+          <ScoreInput label="지원동기" value={ev.motive ?? c.scores.motive} max={m.motive} onValue={(motive) => onPatch({ motive })} />
+          {(c.rep?.motive !== undefined || aiMotive != null) && (
             <p className="text-2xs text-muted">
-              자동 판단 {auto.score}점 ({auto.reasons.join(' · ') || '근거 적음'}){ev.motive != null && ' · 지금은 담당자 점수를 씁니다 '}
+              {aiMotive != null ? (
+                <>
+                  AI 채점 {aiMotive}점 ({breakdownText(ev.ai?.motive?.breakdown) || '기준별 점수 없음'})
+                </>
+              ) : (
+                <>
+                  자동 판단 {auto.score}점 ({auto.reasons.join(' · ') || '근거 적음'})
+                </>
+              )}
+              {ev.motive != null && ' · 지금은 담당자 점수를 씁니다 '}
               {ev.motive != null && (
                 <button type="button" className="underline" onClick={() => onPatch({ motive: null })}>
-                  자동 점수로 되돌리기
+                  {aiMotive != null ? 'AI 점수로 되돌리기' : '자동 점수로 되돌리기'}
                 </button>
               )}
             </p>
@@ -704,7 +711,7 @@ function AiCard({ kind, c, onApply }: { kind: Kind; c: Row; onApply: (p: Eval) =
         <span className="flex items-center gap-1 font-bold text-accent">
           <Sparkles className="size-3.5" aria-hidden /> AI 점수 초안
         </span>
-        <span className="text-faint">확인한 뒤 적용하세요 · 적용 전에는 점수로 치지 않습니다</span>
+        <span className="text-faint">적합성·리뷰는 확인한 뒤 적용해야 점수로 칩니다 · 지원동기는 AI 점수가 바로 쓰입니다(고치면 담당자 점수)</span>
         {patch && (
           <Button size="sm" variant="secondary" className="ml-auto" onClick={() => onApply(patch)}>
             빈칸에 초안 적용
@@ -725,6 +732,7 @@ function AiCard({ kind, c, onApply }: { kind: Kind; c: Row; onApply: (p: Eval) =
           {ai.review.recent && ' (제품 리뷰가 없어 최근 게시물로 평가)'}
         </p>
       )}
+      {ai.motive?.breakdown && <p className="mt-1 text-ink-2">지원동기 기준별: {breakdownText(ai.motive.breakdown)}</p>}
       {ai.motive?.keywords?.length ? <p className="mt-1 text-ink-2">지원동기 키워드: {ai.motive.keywords.join(', ')}</p> : null}
       {ai.note && <p className="mt-1 text-ink-2">메모: {ai.note}</p>}
     </div>
@@ -752,6 +760,7 @@ function AiPanel({
   const [scope, setScope] = useState<'todo' | 'all'>('todo')
   const [channel, setChannel] = useState<'both' | Kind>('both')
   const [busy, setBusy] = useState<string | null>(null)
+  const [autoApply, setAutoApply] = useState(true)
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const pick = (l: Row[]) => l.filter((c) => !c.waiting && c.status !== 'hold' && (scope === 'all' ? true : c.status === 'partial' || c.status === 'failed') && (scope === 'all' || !c.ev.ai || Boolean(c.ev.ai.error)))
@@ -784,7 +793,7 @@ function AiPanel({
         guide,
         output: {
           format: 'onbijjang-sns-ai-drafts',
-          howto: '각 item 에 대해 { kind, key, fit: { score: 0~25 | null, reason }, review: { score: 인스타 0~20 · 블로그 0~30 | null, reason, url, date, recent }, motive: { score: 0~15 | null, reason, keywords: [] }, note } 를 items 배열로. 판단할 근거가 없으면 score 는 null.',
+          howto: '각 item 에 대해 { kind, key, fit: { score: 0~25 | null, reason }, review: { score: 인스타 0~20 · 블로그 0~30 | null, reason, url, date, recent }, motive: { score: 0~15 | null, reason, keywords: [], breakdown: { product: 0~4, life: 0~3, plan: 0~4, sincerity: 0~4 } }, note } 를 items 배열로. 판단할 근거가 없으면 score 는 null.',
         },
         items,
       }
@@ -823,9 +832,9 @@ function AiPanel({
     try {
       const r = await api<{ queued: number }>(`/sns/jobs/${jobId}/ai`, {
         method: 'POST',
-        body: { targets: targets.map((c) => ({ kind: c.kind, key: c.evalKey, motive: motives(c.kind, c.evalKey) })) },
+        body: { targets: targets.map((c) => ({ kind: c.kind, key: c.evalKey, motive: motives(c.kind, c.evalKey) })), autoApply },
       })
-      toast.success(`${r.queued}명의 AI 초안을 만들기 시작했습니다. 창을 닫아도 서버에서 계속합니다.`)
+      toast.success(`${r.queued}명 AI 채점을 시작했습니다. 창을 닫아도 서버에서 계속합니다.`)
       setOpen(null)
       onQueued()
     } catch (err) {
@@ -860,33 +869,38 @@ function AiPanel({
       />
     </div>
   )
+  /** API 없이(Max 대화) 하는 방법: 평가 자료 내보내기 → 대화 → 초안 가져오기 */
+  const manual = (
+    <>
+      <Button size="sm" variant={aiConnected ? 'ghost' : 'primary'} icon={Download} loading={busy === 'export'} onClick={() => setOpen('export')}>
+        평가 자료 내보내기
+      </Button>
+      <Button size="sm" variant={aiConnected ? 'ghost' : 'secondary'} icon={FileUp} loading={busy === 'import'} onClick={() => fileRef.current?.click()}>
+        AI 초안 가져오기
+      </Button>
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".json,application/json"
+        hidden
+        onChange={(e) => {
+          const f = e.target.files?.[0]
+          e.target.value = ''
+          if (f) void importDrafts(f)
+        }}
+      />
+    </>
+  )
   return (
     <div className="flex flex-col gap-2 rounded-md border border-line bg-paper px-3 py-2 text-sm">
       <div className="flex flex-wrap items-center gap-2">
         <Sparkles className="size-4 text-accent" aria-hidden />
         <span className="font-semibold text-ink">AI 점수 초안</span>
-        <Button size="sm" variant="primary" icon={Download} loading={busy === 'export'} onClick={() => setOpen('export')}>
-          평가 자료 내보내기
-        </Button>
-        <Button size="sm" icon={FileUp} loading={busy === 'import'} onClick={() => fileRef.current?.click()}>
-          AI 초안 가져오기
-        </Button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".json,application/json"
-          hidden
-          onChange={(e) => {
-            const f = e.target.files?.[0]
-            e.target.value = ''
-            if (f) void importDrafts(f)
-          }}
-        />
-        {aiConnected &&
-          (queued > 0 ? (
+        {aiConnected ? (
+          queued > 0 ? (
             <>
               <span className="text-ink-2">
-                API 로 만드는 중 · 남은 {queued}명 · {fmtDuration(queued * AI_SEC_PER)}
+                AI 가 매기는 중 · 남은 {queued}명 · {fmtDuration(queued * AI_SEC_PER)}
               </span>
               {info?.note && <span className="text-warn">{info.note}</span>}
               <Button size="sm" variant="ghost" onClick={() => void api(`/sns/jobs/${jobId}/ai/stop`, { method: 'POST' }).then(onQueued)}>
@@ -894,10 +908,13 @@ function AiPanel({
               </Button>
             </>
           ) : (
-            <Button size="sm" variant="ghost" onClick={() => setOpen('api')}>
-              API 크레딧으로 바로 만들기
+            <Button size="sm" variant="primary" icon={Sparkles} loading={busy === 'api'} onClick={() => setOpen('api')}>
+              AI 로 채점하기
             </Button>
-          ))}
+          )
+        ) : (
+          manual
+        )}
         {(info?.done ?? 0) > 0 && (
           <span className="ml-auto text-xs text-muted">
             초안 {info?.done ?? 0}명{info?.fail ? ` · 실패 ${info.fail}` : ''}
@@ -905,9 +922,19 @@ function AiPanel({
           </span>
         )}
       </div>
-      <p className="text-xs text-muted">
-        추가 비용 없이(Max 요금제): ① ‘평가 자료 내보내기’로 받은 파일을 Claude Code 대화에 주고 ‘체험단 AI 초안 매겨줘’라고 하면 ② 결과 파일을 만들어 드립니다 → ③ ‘AI 초안 가져오기’로 올리고 확인 후 적용하세요.
-      </p>
+      {aiConnected ? (
+        <details className="text-xs text-muted">
+          <summary className="cursor-pointer select-none">API 비용 없이 하기(Max 요금제 대화)</summary>
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            {manual}
+            <span>① 평가 자료 내보내기 → ② Claude Code 대화에 주고 ‘체험단 AI 초안 매겨줘’ → ③ 받은 결과를 AI 초안 가져오기</span>
+          </div>
+        </details>
+      ) : (
+        <p className="text-xs text-muted">
+          추가 비용 없이(Max 요금제): ① ‘평가 자료 내보내기’로 받은 파일을 Claude Code 대화에 주고 ‘체험단 AI 초안 매겨줘’라고 하면 ② 결과 파일을 만들어 드립니다 → ③ ‘AI 초안 가져오기’로 올리고 확인 후 적용하세요. 관리자 화면에서 AI 키를 연결하면 버튼 하나로 바로 매길 수 있습니다.
+        </p>
+      )}
       {progress && <Progress value={(progress.done / Math.max(1, progress.total)) * 100} label={`평가 자료 모으는 중 ${progress.done} / ${progress.total}`} />}
 
       <Dialog
@@ -940,7 +967,7 @@ function AiPanel({
         open={open === 'api'}
         onClose={() => setOpen(null)}
         size="md"
-        title="API 크레딧으로 AI 초안 만들기"
+        title="AI 로 채점하기"
         footer={
           <>
             <Button onClick={() => setOpen(null)}>아니오</Button>
@@ -951,11 +978,12 @@ function AiPanel({
         }
       >
         <div className="flex flex-col gap-3 text-sm">
-          <p className="text-ink-2">서버가 Claude API 로 바로 초안을 만듭니다. Max 요금제와 별도로 API 크레딧이 차감됩니다.</p>
           {scopeControls}
           <Callout tone="warn" title={`${n}명 · 예상 비용 약 ₩${(n * AI_WON_PER).toLocaleString('ko-KR')} · 예상 시간 ${fmtDuration(n * AI_SEC_PER)}`}>
-            추가 비용이 듭니다. 비용 없이 하려면 ‘평가 자료 내보내기’를 쓰세요.
+            Max 요금제와 별도로 API 크레딧이 차감됩니다. 승인하면 서버가 바로 시작하고, 창을 닫아도 계속합니다.
           </Callout>
+          <Checkbox checked={autoApply} onChange={setAutoApply} label="끝나면 콘텐츠 적합성·리뷰 점수를 빈칸에 바로 적용(담당자가 적은 점수는 그대로)" />
+          <p className="text-xs text-muted">지원동기는 AI 점수가 바로 쓰입니다. 게시물을 볼 수 없는 계정(개인 인스타그램 등)은 빈칸으로 남으니 직접 확인해 주세요.</p>
           <p className="font-semibold text-ink">진행하시겠습니까?</p>
         </div>
       </Dialog>

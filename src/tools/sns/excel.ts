@@ -4,7 +4,7 @@
  */
 import type { Workbook, Worksheet } from 'exceljs'
 import type { Applicant } from './parse'
-import { MAX, STATUS_LABEL, type BlogData, type Candidate, type Recommendation } from './score'
+import { breakdownText, MAX, MOTIVE_SOURCE_LABEL, STATUS_LABEL, type BlogData, type Candidate, type Recommendation } from './score'
 
 export interface ProblemRow {
   kind: string
@@ -98,8 +98,13 @@ const tail = (c: Candidate) => [
   c.dupes.length ? c.dupes.map((d) => `${d.name ?? ''}${d.row ? `(${d.row}행)` : ''}`).join(', ') : '',
   c.notes.join(' / '),
   c.ev.aiApplied ? 'AI 초안 확인·적용' : c.subtotal || c.scores.base != null ? '담당자·자동' : '',
+  aiScore(c.ev.ai, 'fit'),
+  aiScore(c.ev.ai, 'review'),
+  aiScore(c.ev.ai, 'motive'),
   aiReasons(c),
 ]
+/** AI 초안 점수 한 칸(없으면 빈칸, 판단 못 하면 '판단 못 함') */
+const aiScore = (a: Candidate['ev']['ai'], k: 'fit' | 'review' | 'motive') => (!a || a.error || !a[k] ? '' : a[k].score ?? '판단 못 함')
 /** AI 초안 근거(있으면) */
 const aiReasons = (c: Candidate) => {
   const a = c.ev.ai
@@ -121,6 +126,9 @@ const TAIL_COLS: Col[] = [
   { header: '중복 지원\n(대표 외)', width: 16 },
   { header: '특이사항', width: 36 },
   { header: '점수 출처', width: 12 },
+  { header: 'AI 적합성\n(25)', width: 9 },
+  { header: 'AI 리뷰', width: 8 },
+  { header: 'AI 지원동기\n(15)', width: 9 },
   { header: 'AI 초안 근거', width: 48 },
 ]
 const HEAD_COLS: Col[] = [
@@ -157,6 +165,7 @@ export async function buildSelectionWorkbook(input: ExportInput): Promise<Blob> 
     { header: `지원동기\n(${MAX.ig.motive})`, width: 9, edit: true },
     { header: '지원동기\n판단', width: 8 },
     { header: '지원동기 키워드', width: 22 },
+    { header: 'AI 지원동기 기준별 점수\n(제품관심·생활맥락·리뷰계획·진정성)', width: 34 },
     ...TAIL_COLS,
   ]
   table(
@@ -174,8 +183,9 @@ export async function buildSelectionWorkbook(input: ExportInput): Promise<Blob> 
       c.ev.reviewDate ?? '',
       c.ev.reviewUrl ? link('리뷰 보기', c.ev.reviewUrl) : '',
       v(c.scores.motive),
-      c.scores.motive == null ? '' : c.motiveAuto ? '자동' : '담당자',
+      c.motiveSource ? MOTIVE_SOURCE_LABEL[c.motiveSource] : '',
       c.keywords.join(', '),
+      breakdownText(c.ev.ai?.motive?.breakdown),
       ...tail(c),
     ]),
     { statusCol: 2, freezeCols: 3 },
@@ -196,6 +206,7 @@ export async function buildSelectionWorkbook(input: ExportInput): Promise<Blob> 
     { header: `지원동기\n(${MAX.blog.motive})`, width: 9, edit: true },
     { header: '지원동기\n판단', width: 8 },
     { header: '지원동기 키워드', width: 22 },
+    { header: 'AI 지원동기 기준별 점수\n(제품관심·생활맥락·리뷰계획·진정성)', width: 34 },
     ...TAIL_COLS,
   ]
   table(
@@ -213,8 +224,9 @@ export async function buildSelectionWorkbook(input: ExportInput): Promise<Blob> 
       c.ev.reviewUrl ? link('리뷰 보기', c.ev.reviewUrl) : '',
       v(c.scores.fit),
       v(c.scores.motive),
-      c.scores.motive == null ? '' : c.motiveAuto ? '자동' : '담당자',
+      c.motiveSource ? MOTIVE_SOURCE_LABEL[c.motiveSource] : '',
       c.keywords.join(', '),
+      breakdownText(c.ev.ai?.motive?.breakdown),
       ...tail(c),
     ]),
     { statusCol: 2, freezeCols: 3 },
@@ -304,7 +316,9 @@ export async function buildSelectionWorkbook(input: ExportInput): Promise<Blob> 
     '· 리뷰: 최근 90일 내 최신 제품 리뷰 1개(없으면 확인 가능한 이전 리뷰 1개, 게시일 기록). 고정 게시물은 최신 리뷰로 보지 않음. 리뷰가 없으면 최근 30일 게시물 하나로 평가.',
     '· 근거가 없으면 0, 일부 충족하면 중간, 충분히 충족하면 만점. 협찬이라는 이유만으로 감점하지 않음. 직접 촬영·실사용 여부가 불명확하면 단정하지 않음.',
     '· 콘텐츠 적합성: 프로필 소개·카테고리·게시물 사진과 캡션으로 판단. 계정에 접근하지 못하면 0점이 아니라 미확인. 이름·성별·나이·추정 가족관계로 판단하지 않음.',
-    '· 지원동기: 신청서 글을 근거로 점수화(자동 판단은 내용 3 + 제품 언급 3 + 생활 맥락 3 + 리뷰 계획 3 + 구체성(60자 이상) 3, 담당자가 고치면 그 점수). 주요 키워드 기입.',
+    '· 지원동기: 신청서 글을 근거로 점수화. 담당자 점수 > AI 채점 > 자동 판단 순으로 씀(‘지원동기 판단’ 칸에 출처). 주요 키워드 기입.',
+    '  - AI 채점 기준(Claude, 합 15): 제품관심 4(제품 특징·지금 쓰는 화장지와의 차이를 구체적으로) · 생활맥락 3(가족 수·육아·사용량 등 실제 쓰는 상황) · 리뷰계획 4(사진·영상·비교·사용 기간 등 리뷰 방법) · 진정성 4(본인 경험·성의, 상투적 문구·복붙은 낮게)',
+    '  - 자동 판단(AI 초안이 없을 때): 내용 3 + 제품 언급 3 + 생활 맥락 3 + 리뷰 계획 3 + 구체성(60자 이상) 3',
     '[점수·순위] 같은 채널 안에서만 총점 내림차순. 모든 항목이 확인된 지원자만 100점 총점·정식 순위. 일부 미확인자는 확인 항목 소계와 확인된 배점 합계만 표시(0점 처리·환산 없음).',
     '· 인스타그램 동점: 콘텐츠 적합성 → 리뷰 표현력 → 지원동기 → 팔로워 수 → 접수 순서',
     '· 블로그 동점: 방문자 평균 → 리뷰 품질 → 콘텐츠 적합성 → 지원동기 → 접수 순서',
@@ -312,7 +326,7 @@ export async function buildSelectionWorkbook(input: ExportInput): Promise<Blob> 
     `[추천] 평가 완료자 우선 인스타그램 ${input.recIg.target}명, 블로그 ${input.recBlog.target}명. 부족하면 부족 인원과 이유를 적고, 블로그는 방문자 미확인 후보(70점 소계 순) 상위를 ‘조건부 추천—방문자 미확인’으로 제시(최종 결정은 담당자).`,
     '※ 팔로워 구간은 빠른 선발을 위한 운영 기준이며, 팔로워 수만으로 실제 도달력이나 판매 효과를 보장하지 않습니다.',
     '※ 노란 칸은 담당자가 확인해 적는 칸입니다(온비짱 화면에서 적으면 함께 들어갑니다).',
-    '※ AI 초안(Claude)은 담당자가 확인하고 적용한 것만 점수로 썼습니다. ‘점수 출처’가 ‘AI 초안 확인·적용’인 줄은 초안을 적용한 지원자입니다.',
+    '※ AI 초안(Claude) 중 콘텐츠 적합성·리뷰는 담당자가 확인하고 적용한 것만 점수로 썼습니다(‘점수 출처’가 ‘AI 초안 확인·적용’). 지원동기는 AI 채점을 바로 반영했습니다. ‘AI 적합성·AI 리뷰·AI 지원동기’ 칸은 AI 가 매긴 점수 그대로입니다.',
   ]
   lines.forEach((t, i) => {
     const c = info.getCell(i + 1, 1)

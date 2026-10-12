@@ -47,7 +47,7 @@ async function download(url, referer, file) {
 
 fs.writeFileSync(
   path.join(outDir, 'GUIDE.md'),
-  `# 평가 기준\n\n${pack.guide}\n\n# 결과 형식\n\n묶음 NN.md 를 평가하면 results/NN.json 에 아래 모양의 배열로 쓴다(지원자마다 하나).\n\n\`\`\`json\n[{ "kind": "ig|blog", "key": "계정", "fit": { "score": 0~25 또는 null, "reason": "근거" }, "review": { "score": "인스타 0~20 · 블로그 0~30 또는 null", "reason": "근거", "url": "평가한 게시물 주소", "date": "YYYY-MM-DD", "recent": false }, "motive": { "score": 0~15 또는 null, "reason": "근거", "keywords": ["키워드"] }, "note": "" }]\n\`\`\`\n\n- 근거가 없어 판단할 수 없으면 score 는 null(0 이 아님).\n- recent: 제품 리뷰가 없어 최근 30일 게시물로 평가했으면 true.\n- 지원동기가 null 이면 motive.score 도 null.\n`,
+  `# 평가 기준\n\n${pack.guide}\n\n# 결과 형식\n\n묶음 NN.md 를 평가하면 results/NN.json 에 아래 모양의 배열로 쓴다(지원자마다 하나).\n\n\`\`\`json\n[{ "kind": "ig|blog", "key": "계정", "fit": { "score": 0~25 또는 null, "reason": "근거" }, "review": { "score": "인스타 0~20 · 블로그 0~30 또는 null", "reason": "근거", "url": "평가한 게시물 주소", "date": "YYYY-MM-DD", "recent": false }, "motive": { "score": 0~15 또는 null, "reason": "근거", "keywords": ["키워드"], "breakdown": { "product": 0~4, "life": 0~3, "plan": 0~4, "sincerity": 0~4 } }, "note": "" }]\n\`\`\`\n\n- 근거가 없어 판단할 수 없으면 score 는 null(0 이 아님).\n- recent: 제품 리뷰가 없어 최근 30일 게시물로 평가했으면 true.\n- 지원동기가 null 이면 motive.score 도 null(breakdown 생략).\n- breakdown 이 있으면 그 합이 지원동기 점수가 된다(제품관심·생활맥락·리뷰계획·진정성).\n`,
 )
 
 const items = pack.items.filter((it) => !it.error)
