@@ -45,6 +45,14 @@ export function fmtDuration(sec: number) {
 }
 export const LONG_SEC = 5 * 60
 
+/** AI 채점 한 명당 어림값(사진 몇 장 + 글, Claude Opus 5.5 기준) — 실제 비용은 쌓이는 대로 화면에 보인다 */
+export const AI_WON_PER = 90
+/** 동시에 2명씩, 한 명 약 25초 → 한 명당 약 13초 */
+export const AI_SEC_PER = 13
+export const WON_PER_USD = 1400
+/** 수집과 AI 채점을 함께 할 때 전체 시간: AI 는 수집이 끝난 계정부터 바로 매기므로 둘 중 긴 쪽 + 마지막 한 명 */
+export const estimateWithAiSec = (collectSec: number, n: number) => Math.max(collectSec + AI_SEC_PER * 2, n * AI_SEC_PER)
+
 /** 5분 이상 걸리는 수집을 시작하기 전에 묻는다 */
 export function ConfirmLong({ open, seconds, detail, onYes, onNo }: { open: boolean; seconds: number; detail: string; onYes: () => void; onNo: () => void }) {
   return (

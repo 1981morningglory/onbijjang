@@ -36,6 +36,7 @@ export const SYSTEM = `당신은 모닝글로리 '더 프리미엄 5겹 도톰 �
 - 블로그 참고: 제품 전체·세부·사용 장면 사진 / 사용 상황과 경험의 구체적 설명 / 비교·장단점·사용 팁 등 구매 판단에 도움 되는 정보.
 - 근거가 없으면 0, 일부 충족 중간, 충분히 충족 만점. 협찬이라는 이유만으로 감점하지 않는다. 직접 촬영·실사용 여부가 불명확하면 단정하지 않는다.
 - 평가에 쓴 게시물의 주소와 게시일(YYYY-MM-DD)을 적는다. 게시물을 볼 수 없으면 checked=false.
+- [지원자가 신청서에 적은 리뷰 게시물]이 있으면 그것도 평가 후보다. 공개 미리보기라 캡션 앞부분과 대표 사진 1장만 보이니, 보이는 만큼만 판단하고 보이지 않는 부분을 추측해 깎거나 더하지 않는다. 올린 날짜가 미리보기에 있으면 위 날짜 규칙을 그대로 따른다. 최근 게시물을 볼 수 없는 계정이라도 이 게시물의 캡션·사진으로 콘텐츠 적합성을 판단할 수 있으면 매기되 근거에 '게시물 1개만 확인'이라고 적는다.
 
 [지원동기 0~15] 신청서의 지원동기 글로만 판단한다. 아래 네 기준으로 나눠 매기고 합을 score 로 쓴다(breakdown 에 기준별 점수).
 - 제품관심 0~4: 화장지·5겹·도톰함·부드러움·먼지 등 이 제품의 특징이나 지금 쓰는 화장지와의 차이를 구체적으로 말한다. 화장지 일반 언급은 1~2.
@@ -146,6 +147,68 @@ export async function igEvidence(username, data, now = Date.now(), { download = 
     }
   }
   return { text: lines.join('\n'), images, imageUrls, sources: posts.length }
+}
+
+/** 인스타그램 게시물 주소 → 'https://www.instagram.com/p/코드/' (게시물·릴스가 아니면 null) */
+export function igPostUrl(input) {
+  const m = /instagram\.com\/(?:[A-Za-z0-9._]+\/)?(p|reels?|tv)\/([A-Za-z0-9_-]{5,40})/i.exec(String(input ?? ''))
+  return m ? `https://www.instagram.com/${m[1].toLowerCase() === 'p' || m[1].toLowerCase() === 'tv' ? 'p' : 'reel'}/${m[2]}/` : null
+}
+
+const decodeHtml = (t) =>
+  t
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;|&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
+    .replace(/&amp;/g, '&')
+const metaContent = (html, prop) => {
+  const a = new RegExp(`<meta[^>]+(?:property|name)="${prop}"[^>]+content="([^"]*)"`, 'i').exec(html) ?? new RegExp(`<meta[^>]+content="([^"]*)"[^>]+(?:property|name)="${prop}"`, 'i').exec(html)
+  return a ? decodeHtml(a[1]) : ''
+}
+
+/**
+ * 지원자가 신청서에 직접 적은 인스타그램 리뷰 게시물 1개: 로그인 없이 보이는 공개 미리보기(캡션 일부·대표 사진)만 읽는다.
+ * 개인 계정이라 API 로 게시물을 못 읽을 때 리뷰 표현력 근거로 쓴다. 못 읽으면 그 사실만 적는다.
+ */
+export async function igPostEvidence(link, { download = true } = {}) {
+  const url = igPostUrl(link)
+  const head = '[지원자가 신청서에 적은 리뷰 게시물]'
+  if (!url) return { text: `${head} ${clip(String(link), 200)}\n인스타그램 게시물 주소가 아니라 읽지 않음`, images: [], imageUrls: [] }
+  try {
+    const res = await get(url, { 'User-Agent': 'facebookexternalhit/1.1', 'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8' })
+    const html = res.ok ? await res.text() : ''
+    const desc = metaContent(html, 'og:description')
+    const title = metaContent(html, 'og:title')
+    const image = metaContent(html, 'og:image')
+    if (!desc && !title) return { text: `${head} ${url}\n공개 미리보기를 읽지 못함(비공개·삭제된 게시물이거나 인스타그램이 막음)`, images: [], imageUrls: [] }
+    const lines = [`${head} ${url}`, `미리보기 설명(좋아요·댓글 수, 올린 날짜, 캡션 앞부분이 들어 있음): ${clip(desc.replace(/\s+/g, ' '), 1200)}`]
+    if (title && !desc.includes(title)) lines.push(`미리보기 제목: ${clip(title.replace(/\s+/g, ' '), 300)}`)
+    const images = []
+    const imageUrls = []
+    if (image) {
+      if (!download) imageUrls.push({ url: image, label: '지원자가 적은 리뷰 게시물의 대표 사진' })
+      else {
+        const b = await imageBlock(image)
+        if (b) images.push({ type: 'text', text: '사진: 지원자가 적은 리뷰 게시물의 대표 사진' }, b)
+      }
+    }
+    lines.push(image ? '대표 사진 1장(첫 장)만 볼 수 있음' : '사진 없음')
+    return { text: lines.join('\n'), images, imageUrls }
+  } catch {
+    return { text: `${head} ${url}\n공개 미리보기를 읽지 못함(연결 실패)`, images: [], imageUrls: [] }
+  }
+}
+
+/** 기본 자료에 지원자가 적은 리뷰 게시물을 덧붙인다(이미 최근 게시물 목록에 있으면 그대로) */
+export async function withReviewLink(evidence, link, opts) {
+  if (!link) return evidence
+  const url = igPostUrl(link)
+  if (url && evidence.text.includes(url.replace(/^https:\/\/www\./, ''))) return evidence
+  const extra = await igPostEvidence(link, opts)
+  return { ...evidence, text: `${evidence.text}\n\n${extra.text}`, images: [...evidence.images, ...extra.images], imageUrls: [...(evidence.imageUrls ?? []), ...extra.imageUrls] }
 }
 
 /** 블로그: 최근 글 목록 + 리뷰로 보이는 글 1개의 본문·사진 */
