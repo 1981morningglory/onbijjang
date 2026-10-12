@@ -31,7 +31,10 @@ export function parseIgOg(html) {
   if (!f) return null
   const g = /([\d.,]+\s*[kKmM만천]?)\s*(?:Following|팔로잉)/i.exec(desc)
   const p = /([\d.,]+\s*[kKmM만천]?)\s*(?:Posts|게시물)/i.exec(desc)
-  return { followers: parseCount(f[1]), following: g ? parseCount(g[1]) : null, posts: p ? parseCount(p[1]) : null }
+  const raw = f[1].trim()
+  // '12.5K'·'1.2만' 같은 축약 표기는 환산한 근사값이다(원문도 함께 남긴다)
+  const approx = /[kKmM만천]/.test(raw)
+  return { followers: parseCount(f[1]), followersRaw: raw, followersApprox: approx, following: g ? parseCount(g[1]) : null, posts: p ? parseCount(p[1]) : null }
 }
 
 /** 네이버 방문자 그래프 XML → [{ date, cnt }] (보통 5일, 마지막은 오늘) */
@@ -64,6 +67,15 @@ export function summarizeIg(bd, now = Date.now()) {
     reels: media.filter((m) => m.media_product_type === 'REELS').length,
     posts30d: times.filter((t) => now - t <= month).length,
     lastPostAt: times.length ? new Date(Math.max(...times)).toISOString() : null,
+    followersRaw: typeof bd?.followers_count === 'number' ? String(bd.followers_count) : '',
+    followersApprox: false,
+    // 평가할 때 참고할 최근 게시물(고정 게시물이 섞일 수 있으니 날짜를 함께 본다)
+    posts: (Array.isArray(bd?.media?.data) ? bd.media.data : []).slice(0, 12).map((m) => ({
+      caption: typeof m.caption === 'string' ? m.caption.slice(0, 300) : '',
+      permalink: typeof m.permalink === 'string' ? m.permalink : '',
+      timestamp: typeof m.timestamp === 'string' ? m.timestamp : '',
+      mediaType: m.media_product_type === 'REELS' ? 'REELS' : String(m.media_type ?? ''),
+    })),
   }
 }
 
@@ -149,7 +161,7 @@ export function classifyGraphError(status, body) {
   return new SnsError(e.message ? `인스타그램 API: ${e.message}` : `인스타그램 API 응답 ${status}`)
 }
 
-const BD_FIELDS = 'username,name,followers_count,follows_count,media_count,media.limit(10){like_count,comments_count,timestamp,media_type,media_product_type}'
+const BD_FIELDS = 'username,name,followers_count,follows_count,media_count,media.limit(12){caption,permalink,like_count,comments_count,timestamp,media_type,media_product_type}'
 
 /** 앱 시크릿이 있으면 appsecret_proof 를 붙인다(앱 설정 '앱 시크릿 필요'가 켜져 있어도 되도록) */
 function authQuery(token, appSecret) {
@@ -182,7 +194,7 @@ export async function fetchIgPage(username) {
   if (res.status === 404) throw new SnsError('없는 계정(주소 확인)')
   const og = parseIgOg(text)
   if (!og || og.followers == null) throw new SnsError('공개 프로필에서 팔로워 수를 읽지 못함(비공개 계정이거나 주소 오류)')
-  return { source: 'page', name: '', followers: og.followers, following: og.following, mediaCount: og.posts, postsRead: 0, avgLikes: null, avgComments: null, avgEngagement: null, hiddenLikes: false, reels: null, posts30d: null, lastPostAt: null }
+  return { source: 'page', name: '', followers: og.followers, followersRaw: og.followersRaw, followersApprox: og.followersApprox, following: og.following, mediaCount: og.posts, postsRead: 0, avgLikes: null, avgComments: null, avgEngagement: null, hiddenLikes: false, reels: null, posts30d: null, lastPostAt: null }
 }
 
 /** 토큰으로 연결된 인스타그램 비즈니스 계정 찾기 */

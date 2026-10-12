@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 // 서버 쪽 순수 함수도 여기서 함께 확인한다
 import { blogIdFromUrl, classifyGraphError, parseCount, parseIgOg, parseVisitors, summarizeIg } from '../../../server/lib/sns.mjs'
-import { blogKey, guessKind, igKey, linesToApplicants, parseList } from './parse'
-import { igMissingReason, percentiles, rankBlog, rankIg, type BlogData, type IgData } from './score'
+import { blogKey, guessKind, igKey, linesToApplicants, parseList, type Applicant } from './parse'
+import { buildCandidate, completedVisitors, followerScore, motiveKeywords, rankCandidates, recommend, suggestMotive, visitorScore, type BlogData, type IgData, type JobItem } from './score'
 
 describe('인스타그램 주소 읽기', () => {
   it.each([
@@ -65,7 +65,8 @@ describe('서버: SNS 숫자 읽기', () => {
   })
   it('인스타그램 프로필 소개 문구', () => {
     const html = '<meta property="og:description" content="1,205 Followers, 2,505 Following, 198 Posts - See Instagram photos and videos from elle haus&#x1f3e1; (&#064;elle__haus)" />'
-    expect(parseIgOg(html)).toEqual({ followers: 1205, following: 2505, posts: 198 })
+    expect(parseIgOg(html)).toEqual({ followers: 1205, followersRaw: '1,205', followersApprox: false, following: 2505, posts: 198 })
+    expect(parseIgOg('<meta property="og:description" content="12.5K Followers, 10 Following, 3 Posts" />')).toMatchObject({ followers: 12500, followersRaw: '12.5K', followersApprox: true })
     expect(parseIgOg('<html></html>')).toBeNull()
   })
   it('네이버 방문자 그래프', () => {
@@ -100,48 +101,113 @@ describe('서버: SNS 숫자 읽기', () => {
   })
 })
 
-const ig = (followers: number | null, eng: number | null): IgData => ({ source: eng == null ? 'page' : 'api', name: '', followers, following: null, mediaCount: null, postsRead: eng == null ? 0 : 10, avgLikes: eng, avgComments: 0, avgEngagement: eng, hiddenLikes: false, reels: null, posts30d: null, lastPostAt: null })
-const blog = (avgVisitors: number | null, neighbors: number | null): BlogData => ({ name: '', nick: '', visitors: [], avgVisitors, neighbors, totalVisitors: null, directory: '', powerBlog: false })
+const igData = (followers: number | null, raw?: string): IgData => ({ source: 'api', name: '', followers, followersRaw: raw ?? (followers == null ? '' : String(followers)), followersApprox: Boolean(raw && /[kKmM만천]/.test(raw)), following: null, mediaCount: null, lastPostAt: null })
+const blogData = (days: Array<[string, number]>): BlogData => ({ name: '', nick: '', visitors: days.map(([date, cnt]) => ({ date, cnt })), avgVisitors: null, neighbors: null, totalVisitors: null, directory: '', powerBlog: false })
+const item = (kind: 'ig' | 'blog', key: string, data: IgData | BlogData, at = '2026-10-12T03:00:00Z'): JobItem => ({ kind, key, state: 'done', data, at })
+const person = (row: number, at: string, motive = '모닝글로리 화장지 써 보고 싶어요'): Applicant => ({ row, raw: '', name: `지원자${row}`, submittedAt: at, motive })
 
-describe('순위', () => {
-  it('백분위: 같은 값은 같은 자리', () => {
-    expect(percentiles([10, 20, 20, 40])).toEqual([0, 0.5, 0.5, 1])
-    expect(percentiles([7])).toEqual([1])
-  })
-  it('인스타그램: 팔로워 60 + 반응 40, 반응을 못 읽으면 팔로워로 대신', () => {
-    const rows = rankIg([
-      { key: 'a', data: ig(10000, 50) },
-      { key: 'b', data: ig(2000, 400) },
-      { key: 'c', data: ig(500, 10) },
-      { key: 'd', data: ig(null, null) },
-      { key: 'e', data: ig(800, null) },
+describe('가이드 점수: 구간', () => {
+  it.each([
+    [null, null],
+    [0, 0],
+    [999, 8],
+    [1000, 16],
+    [2999, 16],
+    [3000, 24],
+    [4999, 24],
+    [5000, 32],
+    [9999, 32],
+    [10000, 40],
+  ])('팔로워 %s → %s점', (n, s) => expect(followerScore(n)).toBe(s))
+  it.each([
+    [null, null],
+    [0, 0],
+    [99.9, 6],
+    [100, 12],
+    [299, 12],
+    [300, 18],
+    [500, 24],
+    [999, 24],
+    [1000, 30],
+  ])('방문자 평균 %s → %s점', (n, s) => expect(visitorScore(n)).toBe(s))
+  it('블로그 방문자: 오늘(읽은 날, 한국 날짜)을 빼고 완료된 날 평균, 공개 안 되면 미공개', () => {
+    const d = blogData([
+      ['2026-10-08', 100],
+      ['2026-10-09', 200],
+      ['2026-10-10', 300],
+      ['2026-10-11', 400],
+      ['2026-10-12', 5],
     ])
-    expect(rows.map((r) => r.key)).toEqual(['a', 'b', 'e', 'c'])
-    const a = rows.find((r) => r.key === 'a')!
-    expect([a.followerScore, a.engagementScore, a.total]).toEqual([60, 20, 80])
-    const e = rows.find((r) => r.key === 'e')!
-    expect(e.substituted).toBe(true)
-    expect(rows.find((r) => r.key === 'b')!.engagementRate).toBe(20)
-  })
-  it('블로그: 방문자 70 + 이웃 30', () => {
-    const rows = rankBlog([
-      { key: 'x', data: blog(500, 100) },
-      { key: 'y', data: blog(100, 3000) },
-      { key: 'z', data: blog(300, 50) },
-    ])
-    expect(rows.map((r) => [r.key, r.total])).toEqual([
-      ['x', 85],
-      ['z', 35],
-      ['y', 30],
-    ])
+    expect(completedVisitors(d, '2026-10-12T03:00:00Z')).toEqual({ days: d.visitors.slice(0, 4), avg: 250 })
+    expect(completedVisitors(blogData([]), '2026-10-12T03:00:00Z').avg).toBeNull()
   })
 })
 
-describe('반응을 못 읽은 까닭', () => {
-  it('API 로 읽음 · 개인 계정 · API 연결 전(예전 작업은 reason 없음)', () => {
-    expect(igMissingReason(ig(100, 5))).toBeNull()
-    expect(igMissingReason({ ...ig(100, null), personal: true })).toBe('personal')
-    expect(igMissingReason(ig(100, null))).toBe('no-api')
-    expect(igMissingReason({ ...ig(100, null), reason: 'personal' })).toBe('personal')
+describe('가이드 점수: 미확인·총점·순위', () => {
+  it('미확인 항목이 있으면 총점·정식 순위 없이 소계/확인 배점만', () => {
+    const c = buildCandidate('ig', 'a', item('ig', 'a', igData(4000)), [person(2, '2026-09-30 10:00:00')], { fit: 20 })
+    expect(c.scores).toEqual({ base: 24, fit: 20, review: null, motive: expect.any(Number) })
+    expect(c.status).toBe('partial')
+    expect(c.total).toBeNull()
+    expect(c.confirmedMax).toBe(80)
+    expect(c.missing).toEqual(['리뷰 표현력'])
+  })
+  it('지원동기 칸이 없는 작업이면 동기는 미확인(0점으로 만들지 않음), 비어 있는 동기는 0점', () => {
+    expect(buildCandidate('ig', 'a', item('ig', 'a', igData(10)), [{ row: 2, raw: '' }]).scores.motive).toBeNull()
+    expect(buildCandidate('ig', 'a', item('ig', 'a', igData(10)), [{ ...person(2, ''), motive: '' }]).scores.motive).toBe(0)
+  })
+  it('축약 표기는 원문·근사값을 함께 남긴다', () => {
+    const c = buildCandidate('ig', 'a', item('ig', 'a', igData(12000, '1.2만')), [])
+    expect([c.followers, c.followersRaw, c.followersApprox, c.scores.base]).toEqual([12000, '1.2만', true, 40])
+  })
+  it('같은 계정 중복 지원: 가장 먼저 접수된 신청서가 대표', () => {
+    const c = buildCandidate('ig', 'a', item('ig', 'a', igData(10)), [person(9, '2026-10-01 09:00:00'), person(3, '2026-09-30 18:00:00')])
+    expect(c.rep?.row).toBe(3)
+    expect(c.dupes.map((d) => d.row)).toEqual([9])
+  })
+  it('인스타그램 동점: 적합성 → 표현력 → 동기 → 팔로워 → 접수 순서', () => {
+    const full = (key: string, followers: number, fit: number, review: number, motive: number, row: number) =>
+      buildCandidate('ig', key, item('ig', key, igData(followers)), [person(row, `2026-09-30 1${row}:00:00`)], { fit, review, motive })
+    const ranked = rankCandidates([
+      full('low', 500, 10, 10, 10, 1), // 8+10+10+10 = 38
+      full('b', 3000, 20, 10, 10, 2), // 24+20+10+10 = 64
+      full('a', 3000, 25, 5, 10, 3), // 24+25+5+10 = 64 → 적합성이 높아 먼저
+      full('c', 4000, 25, 5, 10, 4), // a 와 항목 점수가 같음 → 팔로워가 많아 a 보다 먼저
+      full('d', 3000, 25, 5, 10, 0), // a 와 모두 같음 → 접수가 빨라 a 보다 먼저
+    ])
+    expect(ranked.map((c) => [c.key, c.rank, c.total])).toEqual([
+      ['c', 1, 64],
+      ['d', 2, 64],
+      ['a', 3, 64],
+      ['b', 4, 64],
+      ['low', 5, 38],
+    ])
+  })
+  it('추천: 평가 완료자만, 부족하면 이유 · 블로그는 방문자 미확인 후보로 조건부 추천', () => {
+    const done = buildCandidate('blog', 'ok', item('blog', 'ok', blogData([['2026-10-10', 600], ['2026-10-11', 400]])), [person(2, '2026-09-30 10:00:00')], { fit: 20, review: 20, motive: 10 })
+    const hidden = buildCandidate('blog', 'hid', item('blog', 'hid', blogData([])), [person(3, '2026-09-30 11:00:00')], { fit: 25, review: 30, motive: 15 })
+    const partial = buildCandidate('blog', 'part', item('blog', 'part', blogData([['2026-10-11', 50]])), [person(4, '2026-09-30 12:00:00')], { fit: 10 })
+    expect(done.total).toBe(24 + 20 + 20 + 10)
+    expect(hidden.visitorsHidden).toBe(true)
+    const ranked = rankCandidates([partial, hidden, done])
+    const r = recommend('blog', ranked, 2)
+    expect(r.picked.map((c) => c.key)).toEqual(['ok'])
+    expect(r.shortfall).toBe(1)
+    expect(r.visitorUnknown.map((c) => [c.key, c.subtotal])).toEqual([['hid', 70]])
+    expect(r.conditional.map((c) => c.key)).toEqual(['hid'])
+  })
+  it('보류 표시는 평가 완료로 치지 않는다', () => {
+    const c = buildCandidate('ig', 'a', item('ig', 'a', igData(10)), [person(2, 'x')], { fit: 1, review: 1, motive: 1, hold: true })
+    expect([c.status, c.total]).toEqual(['hold', null])
+  })
+})
+
+describe('지원동기', () => {
+  it('키워드와 자동 판단(근거만큼 점수)', () => {
+    const t = '아이 키우는 엄마라 화장지를 많이 써요. 먼지 안 나는 도톰한 휴지를 찾고 있어서 직접 써 보고 사진과 함께 솔직한 후기를 블로그에 남기겠습니다. 가족 모두 만족하면 계속 쓰고 싶어요.'
+    expect(motiveKeywords(t)).toEqual(['화장지', '아이', '사진', '먼지', '엄마', '솔직'])
+    expect(suggestMotive(t).score).toBe(15)
+    expect(suggestMotive('').score).toBe(0)
+    expect(suggestMotive('좋아요').score).toBe(3)
   })
 })

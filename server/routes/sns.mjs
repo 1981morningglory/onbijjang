@@ -248,7 +248,7 @@ export default async function snsRoutes(app, ctx) {
   app.get('/api/sns/jobs/:id', requireAllowed, (req, res) => {
     const j = JOB_ID_RE.test(req.params.id) ? jobs.get(req.params.id) : null
     if (!j) return res.status(404).json({ error: '없는 작업입니다.' })
-    res.json({ job: { ...brief(j), items: j.items }, lanes: laneInfo() })
+    res.json({ job: { ...brief(j), items: j.items, evals: j.evals ?? {} }, lanes: laneInfo() })
   })
 
   app.post('/api/sns/jobs/:id/stop', requireAllowed, (req, res) => {
@@ -290,6 +290,42 @@ export default async function snsRoutes(app, ctx) {
     dirty.add(j.id)
     res.json({ job: brief(j), count: n })
   })
+  /** 사람이 확인한 평가(적합성·리뷰·지원동기·메모·보류·직접 확인한 수치)를 계정별로 저장 */
+  app.patch('/api/sns/jobs/:id/eval', requireAllowed, (req, res) => {
+    const j = JOB_ID_RE.test(req.params.id) ? jobs.get(req.params.id) : null
+    if (!j) return res.status(404).json({ error: '없는 작업입니다.' })
+    const kind = req.body?.kind === 'blog' ? 'blog' : req.body?.kind === 'ig' ? 'ig' : null
+    const key = typeof req.body?.key === 'string' ? req.body.key : ''
+    if (!kind || !j.items.some((x) => x.kind === kind && (x.key === key || x.id === key))) return res.status(400).json({ error: '없는 계정입니다.' })
+    const p = req.body?.patch ?? {}
+    const score = (v, max) => (v === null ? null : typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(max, Math.round(v * 10) / 10)) : undefined)
+    const count = (v) => (v === null ? null : typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.round(v * 10) / 10 : undefined)
+    const text = (v, max) => (typeof v === 'string' ? v.slice(0, max) : undefined)
+    const bool = (v) => (typeof v === 'boolean' ? v : undefined)
+    const clean = {
+      fit: score(p.fit, 25),
+      review: score(p.review, kind === 'ig' ? 20 : 30),
+      motive: score(p.motive, 15),
+      reviewDate: text(p.reviewDate, 10),
+      reviewUrl: text(p.reviewUrl, 500),
+      reviewFallback: bool(p.reviewFallback),
+      memo: text(p.memo, 500),
+      hold: bool(p.hold),
+      followers: count(p.followers),
+      followersRaw: text(p.followersRaw, 20),
+      visitors: count(p.visitors),
+    }
+    j.evals ??= {}
+    const id = `${kind}:${key}`
+    const next = { ...(j.evals[id] ?? {}) }
+    for (const [k, v] of Object.entries(clean)) if (v !== undefined) next[k] = v
+    next.by = typeof req.body?.by === 'string' ? req.body.by.slice(0, 30) : next.by
+    next.at = new Date().toISOString()
+    j.evals[id] = next
+    dirty.add(j.id)
+    res.json({ eval: next })
+  })
+
   app.delete('/api/sns/jobs/:id', requireAllowed, async (req, res) => {
     const id = req.params.id
     if (!JOB_ID_RE.test(id)) return res.status(400).json({ error: '작업 번호가 올바르지 않습니다.' })

@@ -11,6 +11,10 @@ export interface Applicant {
   phone?: string
   /** 신청서에 적은 그대로 */
   raw: string
+  /** 응답(접수) 일시 'YYYY-MM-DD HH:mm:ss' — 접수 순서·중복 지원 대표 정하기에 쓴다 */
+  submittedAt?: string
+  /** 지원동기(신청서 글). 칸이 없던 엑셀이면 undefined */
+  motive?: string
 }
 
 export interface ParsedList {
@@ -133,9 +137,17 @@ export async function readApplicantsXlsx(file: File): Promise<{ ig: Applicant[];
     }
     return String(v)
   }
+  /** 날짜 칸 → 'YYYY-MM-DD HH:mm:ss'(엑셀 날짜·글자 모두) */
+  const stamp = (v: unknown): string => {
+    if (v instanceof Date) {
+      // 엑셀 날짜는 시간대 없이 저장되므로 UTC 그대로 읽는다
+      return v.toISOString().slice(0, 19).replace('T', ' ')
+    }
+    return text(v).trim()
+  }
   // 머리줄 찾기: 'SNS' 와 '주소'가 들어간 칸이 있는 줄
   let headRow = 0
-  const col = { url: 0, name: 0, phone: 0, type: 0 }
+  const col = { url: 0, name: 0, phone: 0, type: 0, at: 0, motive: 0 }
   for (let r = 1; r <= Math.min(10, ws.rowCount) && !headRow; r++) {
     ws.getRow(r).eachCell((cell, c) => {
       const t = text(cell.value).replace(/\s+/g, '')
@@ -143,6 +155,8 @@ export async function readApplicantsXlsx(file: File): Promise<{ ig: Applicant[];
       else if (/성함|이름|성명/.test(t) && !col.name) col.name = c
       else if (/연락처|전화|휴대폰/.test(t) && !col.phone) col.phone = c
       else if (/SNS.*선택|채널|SNS종류/i.test(t) && !col.type) col.type = c
+      else if (/응답일시|접수|제출|타임스탬프|timestamp|신청일/i.test(t) && !col.at) col.at = c
+      else if (/지원동기|동기|신청이유|지원사유/.test(t) && !col.motive) col.motive = c
     })
     if (col.url) headRow = r
   }
@@ -157,7 +171,14 @@ export async function readApplicantsXlsx(file: File): Promise<{ ig: Applicant[];
     const typ = col.type ? text(row.getCell(col.type).value) : ''
     if (!raw && !typ) continue
     total++
-    const p: Applicant = { row: r, raw, name: col.name ? text(row.getCell(col.name).value).trim() : undefined, phone: col.phone ? text(row.getCell(col.phone).value).trim() : undefined }
+    const p: Applicant = {
+      row: r,
+      raw,
+      name: col.name ? text(row.getCell(col.name).value).trim() : undefined,
+      phone: col.phone ? text(row.getCell(col.phone).value).trim() : undefined,
+      submittedAt: col.at ? stamp(row.getCell(col.at).value) : undefined,
+      motive: col.motive ? text(row.getCell(col.motive).value).trim() : undefined,
+    }
     const kind = guessKind(raw) ?? (/인스타/.test(typ) ? 'ig' : /블로그/.test(typ) ? 'blog' : null)
     if (kind === 'ig') ig.push(p)
     else if (kind === 'blog') blog.push(p)

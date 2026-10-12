@@ -646,7 +646,7 @@ function SnsConnect() {
       <Panel className="flex flex-col gap-4 p-5">
         <div>
           <h3 className="text-base">인스타그램 공식 API 연결</h3>
-          <p className="text-sm text-muted">‘체험단 SNS 선발’에서 지원자 인스타그램의 팔로워와 최근 게시물 좋아요·댓글을 읽을 때 씁니다. 무료이며, 토큰은 이 서버에만 저장되고 화면에 다시 보여 주지 않습니다.</p>
+          <p className="text-sm text-muted">‘체험단 SNS 선발’에서 지원자 인스타그램의 정확한 팔로워 수와, 평가에 참고할 최근 게시물(날짜·캡션·링크)을 읽을 때 씁니다. 무료이며, 토큰은 이 서버에만 저장되고 화면에 다시 보여 주지 않습니다.</p>
         </div>
         {state?.connected ? (
           <Callout tone={soon ? 'warn' : 'success'} title={`연결됨 · @${state.igUsername || '(이름 없음)'}`}>
@@ -741,7 +741,7 @@ function SnsConnect() {
           </li>
           <li>그 긴 토큰을 왼쪽 칸에 붙여 넣고 ‘연결하기’를 누르면 끝입니다. 60일마다 4~5번만 다시 하면 됩니다.</li>
         </ol>
-        <p className="text-xs text-muted">한도: Meta 가 시간당 약 200번까지 허용해, 인스타그램 지원자 한 명에 약 19초씩 걸립니다(500명이면 약 2시간 40분). 비즈니스·크리에이터 계정인 지원자만 좋아요·댓글이 나오고, 개인 계정은 팔로워만 나옵니다.</p>
+        <p className="text-xs text-muted">한도: Meta 가 시간당 약 200번까지 허용해, 인스타그램 지원자 한 명에 약 19초씩 걸립니다(500명이면 약 2시간 40분). 비즈니스·크리에이터 계정인 지원자는 정확한 팔로워 수와 최근 게시물이 나오고, 개인 계정은 공개 프로필의 팔로워 표기(축약이면 근사값)만 나옵니다.</p>
       </Panel>
     </div>
   )

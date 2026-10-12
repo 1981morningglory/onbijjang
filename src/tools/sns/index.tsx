@@ -1,83 +1,19 @@
 import clsx from 'clsx'
-import { del, get, set } from 'idb-keyval'
-import { Camera, CirclePause, CirclePlay, Download, FileSpreadsheet, LogIn, NotebookPen, RefreshCw, Rocket, Trash2, WifiOff } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { set } from 'idb-keyval'
+import { Camera, FileSpreadsheet, LogIn, NotebookPen, RefreshCw, Rocket, WifiOff } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link } from 'react-router'
 import { useLoginDialog } from '@/app/LoginDialog'
 import { api, ApiError } from '@/lib/api'
-import { downloadBlob } from '@/lib/files'
-import { Badge, Button, Callout, Dialog, Dropzone, EmptyState, Field, Panel, Progress, Spinner, Tabs, Textarea, TextInput, toast } from '@/ui'
-import { buildSelectionWorkbook, type ProblemRow } from './excel'
+import { Badge, Button, Callout, Dropzone, Field, Panel, Spinner, Textarea, TextInput, toast } from '@/ui'
+import { JobView } from './Evaluate'
+import type { ProblemRow } from './excel'
 import { linesToApplicants, parseList, readApplicantsXlsx, type Applicant, type SnsKind } from './parse'
-import { igMissingReason, MISSING_LABEL, rankBlog, rankIg, type BlogData, type IgData, type JobItem } from './score'
+import { BLOG_SEC, ConfirmLong, estimateSec, fmtDuration, IG_SEC, LONG_SEC, metaFileKey, metaKey, type JobBrief, type Lanes, type LocalMeta } from './shared'
 
 interface Status {
   allowed: boolean
   instagram: { connected: boolean; username: string; expiresAt: string | null } | null
-}
-interface Count {
-  total: number
-  done: number
-  fail: number
-}
-interface JobBrief {
-  id: string
-  title: string
-  createdAt: string
-  finishedAt: string | null
-  status: 'running' | 'done' | 'stopped'
-  ig: Count
-  blog: Count
-}
-interface Lanes {
-  ig: { paused: boolean; note: string; gapMs: number }
-  blog: { paused: boolean; note: string; gapMs: number }
-}
-/** 이 브라우저에만 두는 지원자 정보(이름·연락처). 서버로 보내지 않는다. */
-interface LocalMeta {
-  ig: Array<[string, Applicant[]]>
-  blog: Array<[string, Applicant[]]>
-  problems: ProblemRow[]
-}
-const metaKey = (id: string) => `onbijjang:sns:job:${id}`
-
-/** 한 계정에 걸리는 시간(초): 인스타그램은 API 연결 시 Meta 한도(시간당 약 200번) 때문에 19초, 연결 전 6초. 블로그 약 1.2초 */
-const IG_SEC = (connected: boolean) => (connected ? 19 : 6)
-const BLOG_SEC = 1.2
-/** 블로그와 인스타그램은 서버에서 동시에 돌므로 둘 중 긴 쪽이 전체 시간 */
-const estimateSec = (ig: number, blog: number, connected: boolean) => Math.max(ig * IG_SEC(connected), blog * BLOG_SEC)
-function fmtDuration(sec: number) {
-  const m = Math.max(1, Math.ceil(sec / 60))
-  if (m < 60) return `약 ${m}분`
-  const h = Math.floor(m / 60)
-  return m % 60 ? `약 ${h}시간 ${m % 60}분` : `약 ${h}시간`
-}
-const LONG_SEC = 5 * 60
-
-/** 5분 이상 걸리는 수집을 시작하기 전에 묻는다 */
-function ConfirmLong({ open, seconds, detail, onYes, onNo }: { open: boolean; seconds: number; detail: string; onYes: () => void; onNo: () => void }) {
-  return (
-    <Dialog
-      open={open}
-      onClose={onNo}
-      size="sm"
-      title="시간이 오래 걸리는 작업입니다"
-      footer={
-        <>
-          <Button onClick={onNo}>아니오</Button>
-          <Button variant="primary" onClick={onYes}>
-            예, 진행합니다
-          </Button>
-        </>
-      }
-    >
-      <Callout tone="warn" title={`예상 소요시간 ${fmtDuration(seconds)}`}>
-        {detail}
-      </Callout>
-      <p className="mt-3 text-sm text-ink-2">수집은 서버에서 진행되므로 이 창을 닫거나 컴퓨터를 꺼도 계속됩니다. 중간에 ‘엑셀 내려받기’로 그때까지 모은 결과를 받을 수 있고, ‘멈추기’로 언제든 멈출 수 있습니다.</p>
-      <p className="mt-3 font-semibold text-ink">진행하시겠습니까?</p>
-    </Dialog>
-  )
 }
 
 export default function SnsTool() {
@@ -170,12 +106,12 @@ function Workspace({ status }: { status: Status }) {
     <div className="flex flex-col gap-5">
       {ig?.connected ? (
         <Callout tone="success" title={`인스타그램 공식 API 연결됨${ig.username ? ` · @${ig.username}` : ''}`}>
-          비즈니스·크리에이터 계정인 지원자는 팔로워와 최근 게시물 10개의 좋아요·댓글까지, 개인 계정은 팔로워만 읽습니다. 한도(시간당 약 200번)에 맞춰 한 계정에 약 19초씩 걸립니다.
+          비즈니스·크리에이터 계정인 지원자는 정확한 팔로워 수와 평가에 참고할 최근 게시물(날짜·캡션·링크)까지, 개인 계정은 공개 프로필의 팔로워 표기(축약이면 근사값으로 표시)를 읽습니다. 한도(시간당 약 200번)에 맞춰 한 계정에 약 19초씩 걸립니다.
           {ig.expiresAt && ig.expiresAt !== 'never' && <> 토큰은 {new Date(ig.expiresAt).toLocaleDateString('ko-KR')}에 만료됩니다.</>}
         </Callout>
       ) : (
         <Callout tone="warn" title="인스타그램 API 가 아직 연결되지 않았습니다">
-          지금은 인스타그램 팔로워 수만 공개 프로필에서 읽습니다(좋아요·댓글 없음). 관리자 화면 → ‘SNS 연결’에서 회사 인스타그램 토큰을 넣으면 반응까지 읽습니다. 블로그는 연결 없이도 모두 읽습니다.
+          지금은 인스타그램 팔로워를 공개 프로필 표기로만 읽습니다(1.2만처럼 축약되면 근사값). 관리자 화면 → ‘SNS 연결’에서 회사 인스타그램을 연결하면 정확한 팔로워 수와 최근 게시물까지 읽습니다. 블로그 방문자는 연결 없이도 읽습니다.
         </Callout>
       )}
 
@@ -229,7 +165,7 @@ function NewJob({ connected, onCreated }: { connected: boolean; onCreated: (id: 
   const [title, setTitle] = useState('')
   const [igText, setIgText] = useState('')
   const [blogText, setBlogText] = useState('')
-  const [fromFile, setFromFile] = useState<{ ig: Applicant[]; blog: Applicant[]; other: Applicant[]; total: number; name: string } | null>(null)
+  const [fromFile, setFromFile] = useState<{ ig: Applicant[]; blog: Applicant[]; other: Applicant[]; total: number; name: string; bytes: ArrayBuffer } | null>(null)
   const [busy, setBusy] = useState(false)
   const [asking, setAsking] = useState(false)
 
@@ -245,7 +181,7 @@ function NewJob({ connected, onCreated }: { connected: boolean; onCreated: (id: 
   const loadFile = async (file: File) => {
     try {
       const r = await readApplicantsXlsx(file)
-      setFromFile({ ...r, name: file.name })
+      setFromFile({ ...r, name: file.name, bytes: await file.arrayBuffer() })
       setIgText(r.ig.map((p) => p.raw).join('\n'))
       setBlogText(r.blog.map((p) => p.raw).join('\n'))
       if (!title) setTitle(file.name.replace(/\.xlsx?$/i, '').slice(0, 60))
@@ -260,12 +196,13 @@ function NewJob({ connected, onCreated }: { connected: boolean; onCreated: (id: 
     try {
       const { job } = await api<{ job: JobBrief }>('/sns/jobs', { method: 'POST', body: { title: title.trim(), instagram: [...igParsed.keys.keys()], blogs: [...blogParsed.keys.keys()] } })
       const problems: ProblemRow[] = [
-        ...igParsed.invalid.map((p) => ({ kind: '인스타그램', people: [p], raw: p.raw, reason: '주소에서 아이디를 읽지 못함' })),
-        ...blogParsed.invalid.map((p) => ({ kind: '블로그', people: [p], raw: p.raw, reason: '주소에서 블로그 아이디를 읽지 못함' })),
+        ...igParsed.invalid.map((p) => ({ kind: '인스타그램', people: [p], raw: p.raw, reason: '계정 주소가 불분명해 평가 보류' })),
+        ...blogParsed.invalid.map((p) => ({ kind: '블로그', people: [p], raw: p.raw, reason: '블로그 주소가 불분명해 평가 보류' })),
         ...(fromFile?.other ?? []).map((p) => ({ kind: '기타 SNS', people: [p], raw: p.raw, reason: '인스타그램·네이버 블로그 주소가 아님(대상 아님)' })),
       ]
-      const meta: LocalMeta = { ig: [...igParsed.keys.entries()], blog: [...blogParsed.keys.entries()], problems }
+      const meta: LocalMeta = { ig: [...igParsed.keys.entries()], blog: [...blogParsed.keys.entries()], problems, fileName: fromFile?.name }
       await set(metaKey(job.id), meta).catch(() => {})
+      if (fromFile) await set(metaFileKey(job.id), fromFile.bytes).catch(() => {})
       toast.success('수집을 시작했습니다. 창을 닫아도 서버에서 계속 모읍니다.')
       onCreated(job.id)
     } catch (err) {
@@ -336,7 +273,7 @@ function NewJob({ connected, onCreated }: { connected: boolean; onCreated: (id: 
         multiple={false}
         icon={FileSpreadsheet}
         title={fromFile ? `${fromFile.name} · 지원자 ${fromFile.total}명 (인스타 ${fromFile.ig.length} · 블로그 ${fromFile.blog.length} · 기타 ${fromFile.other.length})` : '지원자 엑셀(설문 결과)을 끌어다 놓으면 두 칸이 자동으로 채워집니다'}
-        hint="선택 사항입니다. 이름·연락처는 이 브라우저에만 두고, 서버로는 SNS 아이디만 보냅니다."
+        hint="지원동기 평가·접수 순서·중복 지원 판단에 필요하니 지원자 엑셀로 시작하세요. 이름·연락처·지원동기는 이 브라우저에만 두고 서버로는 SNS 아이디만 보냅니다. 평가 엑셀은 이 원본에 시트를 덧붙여 만듭니다."
         onFiles={(f) => f[0] && void loadFile(f[0])}
       />
       <div className="grid gap-4 lg:grid-cols-2">
@@ -366,299 +303,3 @@ function NewJob({ connected, onCreated }: { connected: boolean; onCreated: (id: 
     </Panel>
   )
 }
-
-// ── 작업 보기 ─────────────────────────────────────────────
-function JobView({ id, lanes, connected, onChanged, onDeleted }: { id: string; lanes: Lanes | null; connected: boolean; onChanged: () => void; onDeleted: () => void }) {
-  const [job, setJob] = useState<(JobBrief & { items: JobItem[] }) | null>(null)
-  const [meta, setMeta] = useState<LocalMeta | null>(null)
-  const [tab, setTab] = useState<'ig' | 'blog'>('ig')
-  const [busy, setBusy] = useState<string | null>(null)
-  const [askRecheck, setAskRecheck] = useState(false)
-  const timer = useRef<number | null>(null)
-
-  const load = useCallback(async () => {
-    const r = await api<{ job: JobBrief & { items: JobItem[] } }>(`/sns/jobs/${id}`)
-    setJob(r.job)
-    return r.job
-  }, [id])
-  useEffect(() => {
-    let alive = true
-    void get<LocalMeta>(metaKey(id))
-      .then((m) => alive && setMeta(m ?? null))
-      .catch(() => {})
-    const tick = async () => {
-      try {
-        const j = await load()
-        if (alive && j.status === 'running') timer.current = window.setTimeout(tick, 5000)
-      } catch {
-        if (alive) timer.current = window.setTimeout(tick, 10000)
-      }
-    }
-    void tick()
-    return () => {
-      alive = false
-      if (timer.current) clearTimeout(timer.current)
-    }
-  }, [id, load])
-
-  const people = useMemo(() => ({ ig: new Map(meta?.ig ?? []), blog: new Map(meta?.blog ?? []) }), [meta])
-  const ranked = useMemo(() => {
-    if (!job) return null
-    const done = job.items.filter((x) => x.state === 'done' && x.data)
-    const ig = rankIg(done.filter((x) => x.kind === 'ig').map((x) => ({ key: x.key, data: x.data as IgData })))
-    // naver.me 짧은 주소는 서버가 찾은 아이디로
-    const blog = rankBlog(done.filter((x) => x.kind === 'blog').map((x) => ({ key: x.id ?? x.key, data: x.data as BlogData })))
-    return { ig, blog }
-  }, [job])
-
-  if (!job || !ranked)
-    return (
-      <div className="flex items-center gap-2 p-4 text-sm text-muted">
-        <Spinner /> 작업을 여는 중
-      </div>
-    )
-
-  const igLeft = job.ig.total - job.ig.done - job.ig.fail
-  const blogLeft = job.blog.total - job.blog.done - job.blog.fail
-  const igEtaMin = Math.ceil((igLeft * (lanes?.ig.gapMs ?? 19000)) / 60000)
-  const pct = (c: Count) => (c.total ? ((c.done + c.fail) / c.total) * 100 : 100)
-
-  const exportXlsx = async () => {
-    setBusy('xlsx')
-    try {
-      const failed: ProblemRow[] = job.items
-        .filter((x) => x.state === 'fail')
-        .map((x) => {
-          const ps = (x.kind === 'ig' ? people.ig : people.blog).get(x.key) ?? []
-          return { kind: x.kind === 'ig' ? '인스타그램' : '블로그', people: ps, raw: ps[0]?.raw ?? x.key, reason: x.error ?? '읽지 못함' }
-        })
-      // 블로그 짧은 주소(naverme:)로 적은 사람은 찾은 아이디로도 이름을 찾을 수 있게
-      const blogPeople = new Map(people.blog)
-      for (const x of job.items) if (x.kind === 'blog' && x.id && x.id !== x.key && people.blog.has(x.key)) blogPeople.set(x.id, people.blog.get(x.key)!)
-      const blob = await buildSelectionWorkbook({
-        title: job.title,
-        ig: ranked.ig,
-        blog: ranked.blog,
-        igPeople: people.ig,
-        blogPeople,
-        problems: [...(meta?.problems ?? []), ...failed],
-        pending: { ig: igLeft, blog: blogLeft },
-      })
-      const day = new Date().toISOString().slice(0, 10).replace(/-/g, '')
-      downloadBlob(blob, `체험단선발_${(job.title || 'SNS').replace(/[\\/:*?"<>|]/g, '').slice(0, 40)}_${day}.xlsx`)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '엑셀을 만들지 못했습니다.')
-    } finally {
-      setBusy(null)
-    }
-  }
-  const act = async (label: string, fn: () => Promise<unknown>) => {
-    setBusy(label)
-    try {
-      await fn()
-      await load()
-      onChanged()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '처리하지 못했습니다.')
-    } finally {
-      setBusy(null)
-    }
-  }
-  const failCount = job.ig.fail + job.blog.fail
-  const noApi = ranked.ig.filter((r) => igMissingReason(r.data) === 'no-api').length
-  const personal = ranked.ig.filter((r) => igMissingReason(r.data) === 'personal').length
-  const withApi = ranked.ig.length - noApi - personal
-
-  return (
-    <div className="mt-2 flex flex-col gap-4 rounded-md border border-line bg-surface p-4">
-      {!meta && <Callout tone="info">이 작업을 만든 브라우저가 아니어서 지원자 이름·연락처는 비어 있습니다(서버에는 SNS 아이디만 있습니다).</Callout>}
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="flex flex-col gap-1">
-          <Progress value={pct(job.blog)} label={`블로그 ${job.blog.done + job.blog.fail} / ${job.blog.total}${job.blog.fail ? ` (실패 ${job.blog.fail})` : ''}`} />
-          {lanes?.blog.note && job.status === 'running' && blogLeft > 0 && <p className="text-xs text-warn">{lanes.blog.note}</p>}
-        </div>
-        <div className="flex flex-col gap-1">
-          <Progress value={pct(job.ig)} label={`인스타그램 ${job.ig.done + job.ig.fail} / ${job.ig.total}${job.ig.fail ? ` (실패 ${job.ig.fail})` : ''}`} />
-          {job.status === 'running' && igLeft > 0 && (
-            <p className="text-xs text-muted">
-              남은 시간 약 {igEtaMin >= 60 ? `${Math.floor(igEtaMin / 60)}시간 ${igEtaMin % 60}분` : `${igEtaMin}분`}
-              {lanes?.ig.note && <span className="text-warn"> · {lanes.ig.note}</span>}
-            </p>
-          )}
-        </div>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button variant="primary" icon={Download} loading={busy === 'xlsx'} onClick={exportXlsx} disabled={!ranked.ig.length && !ranked.blog.length}>
-          엑셀 내려받기{job.status === 'running' ? ' (지금까지)' : ''}
-        </Button>
-        {job.status === 'running' ? (
-          <Button icon={CirclePause} loading={busy === 'stop'} onClick={() => act('stop', () => api(`/sns/jobs/${id}/stop`, { method: 'POST' }))}>
-            멈추기
-          </Button>
-        ) : (
-          (job.status === 'stopped' || failCount > 0) && (
-            <Button icon={CirclePlay} loading={busy === 'resume'} onClick={() => act('resume', () => api(`/sns/jobs/${id}/resume`, { method: 'POST' }))}>
-              {job.status === 'stopped' ? '이어서 수집' : `실패한 ${failCount}개 다시 시도`}
-            </Button>
-          )
-        )}
-        <Button
-          variant="ghost"
-          icon={Trash2}
-          className="ml-auto"
-          loading={busy === 'del'}
-          onClick={() => {
-            if (!confirm('이 작업과 모은 숫자를 지울까요?')) return
-            void act('del', async () => {
-              await api(`/sns/jobs/${id}`, { method: 'DELETE' })
-              await del(metaKey(id)).catch(() => {})
-              onDeleted()
-            })
-          }}
-        >
-          지우기
-        </Button>
-      </div>
-
-      {noApi > 0 && (
-        <Callout tone="warn" title={`인스타그램 ${noApi}명은 반응(좋아요·댓글)을 아직 못 읽었습니다`}>
-          인스타그램 API 가 연결되기 전에 모아서 팔로워만 읽었습니다. 그래서 이 사람들의 반응 점수(40)는 실제 반응이 아니라 팔로워 순위로 대신 채운 값입니다(표에서 회색).
-          {connected ? (
-            <div className="mt-2">
-              <Button
-                size="sm"
-                variant="primary"
-                icon={RefreshCw}
-                loading={busy === 'recheck'}
-                onClick={() => (noApi * IG_SEC(true) >= LONG_SEC ? setAskRecheck(true) : void act('recheck', () => api(`/sns/jobs/${id}/recheck`, { method: 'POST' })))}
-              >
-                API 로 최근 10개 게시물 반응 다시 읽기 ({noApi}명 · {fmtDuration(noApi * IG_SEC(true))})
-              </Button>
-              <ConfirmLong
-                open={askRecheck}
-                seconds={noApi * IG_SEC(true)}
-                detail={`인스타그램 ${noApi}명 × 약 ${IG_SEC(true)}초(Meta 공식 API 한도: 시간당 약 200번)`}
-                onNo={() => setAskRecheck(false)}
-                onYes={() => {
-                  setAskRecheck(false)
-                  void act('recheck', () => api(`/sns/jobs/${id}/recheck`, { method: 'POST' }))
-                }}
-              />
-            </div>
-          ) : (
-            <div className="mt-1">
-              지금도 API 가 연결되어 있지 않습니다. 관리자 화면 → ‘SNS 연결’에서 연결하면 여기서 다시 읽을 수 있습니다.
-            </div>
-          )}
-        </Callout>
-      )}
-      {ranked.ig.length > 0 && noApi === 0 && (
-        <p className="text-sm text-ink-2">
-          인스타그램: 최근 게시물 10개의 좋아요·댓글을 읽은 계정 <b>{withApi}</b>명
-          {personal > 0 && <> · 개인 계정이라 팔로워만 읽은 계정 <b>{personal}</b>명(반응 점수는 팔로워 순위로 대신)</>}
-        </p>
-      )}
-
-      <Tabs
-        label="결과"
-        value={tab}
-        onValue={setTab}
-        tabs={[
-          { value: 'ig', label: `인스타그램 순위 (${ranked.ig.length})`, icon: Camera },
-          { value: 'blog', label: `블로그 순위 (${ranked.blog.length})`, icon: NotebookPen },
-        ]}
-      />
-      {tab === 'ig' ? (
-        ranked.ig.length ? (
-          <div className="max-h-[560px] overflow-auto rounded-md border border-line">
-            <table className="num w-full min-w-[980px] text-sm">
-              <thead className="sticky top-0 bg-paper text-left text-xs text-muted">
-                <tr>
-                  {['순위', '이름', '아이디', '팔로워', '평균 좋아요', '평균 댓글', '평균 반응', '참여율', '팔로워(60)', '반응(40)', '총점'].map((h) => (
-                    <th key={h} className="px-3 py-2 font-semibold">
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {ranked.ig.map((r) => (
-                  <tr key={r.key} className="border-t border-line">
-                    <td className="px-3 py-1.5 font-bold">{r.rank}</td>
-                    <td className="px-3 py-1.5">{[...new Set((people.ig.get(r.key) ?? []).map((p) => p.name).filter(Boolean))].join(', ')}</td>
-                    <td className="px-3 py-1.5">
-                      <a href={`https://www.instagram.com/${r.key}/`} target="_blank" rel="noreferrer" className="text-brand-ink hover:underline">
-                        {r.key}
-                      </a>
-                    </td>
-                    <td className="px-3 py-1.5 text-right">{r.data.followers?.toLocaleString('ko-KR')}</td>
-                    {r.data.avgEngagement != null ? (
-                      <>
-                        <td className="px-3 py-1.5 text-right">{r.data.avgLikes?.toLocaleString('ko-KR')}</td>
-                        <td className="px-3 py-1.5 text-right">{r.data.avgComments?.toLocaleString('ko-KR')}</td>
-                        <td className="px-3 py-1.5 text-right font-semibold" title={`최근 게시물 ${r.data.postsRead}개 평균`}>
-                          {r.data.avgEngagement.toLocaleString('ko-KR')}
-                        </td>
-                      </>
-                    ) : (
-                      <td colSpan={3} className="px-3 py-1.5 text-center text-xs text-faint" title={r.data.apiError ?? ''}>
-                        {MISSING_LABEL[igMissingReason(r.data) ?? 'no-api']} · 반응 없음
-                      </td>
-                    )}
-                    <td className="px-3 py-1.5 text-right">{r.engagementRate != null ? `${r.engagementRate}%` : ''}</td>
-                    <td className="px-3 py-1.5 text-right">{r.followerScore}</td>
-                    <td className={clsx('px-3 py-1.5 text-right', r.substituted && 'text-faint')}>{r.engagementScore}</td>
-                    <td className="px-3 py-1.5 text-right font-bold">{r.total}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <EmptyState title="아직 읽은 인스타그램 계정이 없습니다">수집이 진행되면 여기에 순위가 쌓입니다.</EmptyState>
-        )
-      ) : ranked.blog.length ? (
-        <div className="max-h-[560px] overflow-auto rounded-md border border-line">
-          <table className="num w-full min-w-[820px] text-sm">
-            <thead className="sticky top-0 bg-paper text-left text-xs text-muted">
-              <tr>
-                {['순위', '이름', '아이디', '블로그', '평균 방문자(5일)', '이웃', '방문자(70)', '이웃(30)', '총점'].map((h) => (
-                  <th key={h} className="px-3 py-2 font-semibold">
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {ranked.blog.map((r) => (
-                <tr key={r.key} className="border-t border-line">
-                  <td className="px-3 py-1.5 font-bold">{r.rank}</td>
-                  <td className="px-3 py-1.5">{[...new Set((people.blog.get(r.key) ?? []).map((p) => p.name).filter(Boolean))].join(', ')}</td>
-                  <td className="px-3 py-1.5">
-                    <a href={`https://blog.naver.com/${r.key}`} target="_blank" rel="noreferrer" className="text-brand-ink hover:underline">
-                      {r.key}
-                    </a>
-                  </td>
-                  <td className="max-w-48 truncate px-3 py-1.5">{r.data.name}</td>
-                  <td className="px-3 py-1.5 text-right" title={r.data.visitors.map((v) => `${v.date.slice(5)} ${v.cnt}`).join(' · ')}>
-                    {r.data.avgVisitors?.toLocaleString('ko-KR')}
-                  </td>
-                  <td className="px-3 py-1.5 text-right">{r.data.neighbors?.toLocaleString('ko-KR')}</td>
-                  <td className="px-3 py-1.5 text-right">{r.visitorScore}</td>
-                  <td className="px-3 py-1.5 text-right">{r.neighborScore}</td>
-                  <td className="px-3 py-1.5 text-right font-bold">{r.total}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <EmptyState title="아직 읽은 블로그가 없습니다">수집이 진행되면 여기에 순위가 쌓입니다.</EmptyState>
-      )}
-      <p className="text-xs text-muted">
-        점수는 지원자들 사이에서의 위치(백분위)로 매기므로, 수집이 끝나기 전에는 순위가 조금씩 바뀝니다. 엑셀에는 인스타그램·블로그 지원자 전체의 점수와 순위(평가표 빈칸 포함), 확인이 필요한 지원자, 점수 기준이 들어갑니다.
-      </p>
-    </div>
-  )
-}
-
