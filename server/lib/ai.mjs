@@ -308,6 +308,29 @@ export async function checkKey(apiKey) {
 
 export const makeClient = (apiKey) => new Anthropic({ apiKey, maxRetries: 3, timeout: 180_000 })
 
+/**
+ * AI 초안의 적합성·리뷰를 아직 비어 있는 칸에만 넣는다(담당자가 적은 점수는 그대로).
+ * 화면의 score.ts aiPatch 와 같은 규칙. 지원동기는 넣지 않아도 AI 점수가 바로 쓰인다.
+ */
+export function applyDraft(ev, draft) {
+  if (!draft || draft.error) return ev
+  const next = { ...ev }
+  let changed = false
+  if (next.fit == null && draft.fit?.score != null) {
+    next.fit = draft.fit.score
+    changed = true
+  }
+  if (next.review == null && draft.review?.score != null) {
+    next.review = draft.review.score
+    if (!next.reviewUrl && draft.review.url) next.reviewUrl = draft.review.url
+    if (!next.reviewDate && draft.review.date) next.reviewDate = draft.review.date
+    if (draft.review.recent) next.reviewFallback = true
+    changed = true
+  }
+  if (changed) next.aiApplied = true
+  return next
+}
+
 /** 밖에서 만든 초안(예: Claude Code 대화에서 매긴 결과)을 서버에 넣을 모양으로 정리한다 */
 export function normalizeDraft(kind, raw, source = 'Claude (Max 대화)') {
   const reviewMax = kind === 'ig' ? 20 : 30

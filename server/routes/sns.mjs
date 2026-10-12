@@ -7,7 +7,7 @@
 import crypto from 'node:crypto'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
-import { AI_MODEL, AiError, blogEvidence, checkKey, draftScores, igEvidence, makeClient, normalizeDraft, SYSTEM as AI_GUIDE } from '../lib/ai.mjs'
+import { AI_MODEL, AiError, applyDraft, blogEvidence, checkKey, draftScores, igEvidence, makeClient, normalizeDraft, SYSTEM as AI_GUIDE } from '../lib/ai.mjs'
 import { BLOG_ID_RE, connectInstagram, fetchBlog, fetchIgApi, fetchIgPage, IG_USER_RE, resolveNaverMe, SnsError } from '../lib/sns.mjs'
 
 const IG_API_GAP_MS = 19_000 // 시간당 약 190번
@@ -222,7 +222,9 @@ export default async function snsRoutes(app, ctx) {
       const draft = await draftScores(makeClient(aiKey()), { kind: target.kind, evidence, motive: target.motive })
       job.evals ??= {}
       const id = `${target.kind}:${target.key}`
-      job.evals[id] = { ...(job.evals[id] ?? {}), ai: draft }
+      const ev = { ...(job.evals[id] ?? {}), ai: draft }
+      // 맡길 때 ‘끝나면 바로 적용’을 골랐으면 적합성·리뷰 빈칸을 채운다
+      job.evals[id] = target.autoApply ? applyDraft(ev, draft) : ev
       job.aiStats = { ...(job.aiStats ?? {}), done: (job.aiStats?.done ?? 0) + 1, cost: Math.round(((job.aiStats?.cost ?? 0) + draft.cost) * 10000) / 10000 }
       job.aiQueue = (job.aiQueue ?? []).filter((t) => !(t.kind === target.kind && t.key === target.key))
       aiLane.note = ''
@@ -392,7 +394,7 @@ export default async function snsRoutes(app, ctx) {
     res.json({ eval: next })
   })
 
-  /** AI 점수 초안 맡기기: targets = [{ kind, key, motive? }] (지원동기는 브라우저가 보낸다) */
+  /** AI 점수 초안 맡기기: targets = [{ kind, key, motive? }], autoApply(끝나면 빈칸에 바로 적용) (지원동기는 브라우저가 보낸다) */
   app.post('/api/sns/jobs/:id/ai', requireAllowed, (req, res) => {
     const j = JOB_ID_RE.test(req.params.id) ? jobs.get(req.params.id) : null
     if (!j) return res.status(404).json({ error: '없는 작업입니다.' })
@@ -405,7 +407,7 @@ export default async function snsRoutes(app, ctx) {
       const kind = t?.kind === 'blog' ? 'blog' : t?.kind === 'ig' ? 'ig' : null
       const key = typeof t?.key === 'string' ? t.key : ''
       if (!kind || queued.has(`${kind}:${key}`) || !j.items.some((x) => x.kind === kind && x.key === key && x.state === 'done')) continue
-      j.aiQueue.push({ kind, key, motive: typeof t.motive === 'string' ? t.motive.slice(0, 3000) : undefined })
+      j.aiQueue.push({ kind, key, motive: typeof t.motive === 'string' ? t.motive.slice(0, 3000) : undefined, autoApply: req.body?.autoApply === true })
       queued.add(`${kind}:${key}`)
       n++
     }
