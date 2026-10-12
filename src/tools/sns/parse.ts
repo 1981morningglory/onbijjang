@@ -15,6 +15,8 @@ export interface Applicant {
   submittedAt?: string
   /** 지원동기(신청서 글). 칸이 없던 엑셀이면 undefined */
   motive?: string
+  /** 신청서에 적은 최근 제품 리뷰 게시물 링크(칸이 있을 때) */
+  reviewLink?: string
 }
 
 export interface ParsedList {
@@ -147,11 +149,14 @@ export async function readApplicantsXlsx(file: File): Promise<{ ig: Applicant[];
   }
   // 머리줄 찾기: 'SNS' 와 '주소'가 들어간 칸이 있는 줄
   let headRow = 0
-  const col = { url: 0, name: 0, phone: 0, type: 0, at: 0, motive: 0 }
+  const col = { url: 0, name: 0, phone: 0, type: 0, at: 0, motive: 0, review: 0 }
   for (let r = 1; r <= Math.min(10, ws.rowCount) && !headRow; r++) {
     ws.getRow(r).eachCell((cell, c) => {
       const t = text(cell.value).replace(/\s+/g, '')
-      if (/SNS.*주소|주소.*SNS|URL|링크/i.test(t) && !col.url) col.url = c
+      // ‘리뷰 게시물 링크’ 칸을 SNS 주소 칸으로 잘못 고르지 않게 먼저 본다
+      if (/리뷰|후기|게시물|포스팅/.test(t) && /링크|URL|주소/i.test(t)) {
+        if (!col.review) col.review = c
+      } else if (/SNS.*주소|주소.*SNS|URL|링크/i.test(t) && !col.url) col.url = c
       else if (/성함|이름|성명/.test(t) && !col.name) col.name = c
       else if (/연락처|전화|휴대폰/.test(t) && !col.phone) col.phone = c
       else if (/SNS.*선택|채널|SNS종류/i.test(t) && !col.type) col.type = c
@@ -178,6 +183,7 @@ export async function readApplicantsXlsx(file: File): Promise<{ ig: Applicant[];
       phone: col.phone ? text(row.getCell(col.phone).value).trim() : undefined,
       submittedAt: col.at ? stamp(row.getCell(col.at).value) : undefined,
       motive: col.motive ? text(row.getCell(col.motive).value).trim() : undefined,
+      ...(col.review ? { reviewLink: text(row.getCell(col.review).value).trim() } : {}),
     }
     const kind = guessKind(raw) ?? (/인스타/.test(typ) ? 'ig' : /블로그/.test(typ) ? 'blog' : null)
     if (kind === 'ig') ig.push(p)

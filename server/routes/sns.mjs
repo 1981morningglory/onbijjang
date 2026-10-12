@@ -7,7 +7,7 @@
 import crypto from 'node:crypto'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
-import { AI_MODEL, AiError, applyDraft, blogEvidence, checkKey, draftScores, igEvidence, makeClient, normalizeDraft, SYSTEM as AI_GUIDE } from '../lib/ai.mjs'
+import { AI_MODEL, AiError, applyDraft, blogEvidence, checkKey, draftScores, igEvidence, makeClient, normalizeDraft, SYSTEM as AI_GUIDE, withReviewLink } from '../lib/ai.mjs'
 import { BLOG_ID_RE, connectInstagram, fetchBlog, fetchIgApi, fetchIgPage, IG_USER_RE, resolveNaverMe, SnsError } from '../lib/sns.mjs'
 
 const IG_API_GAP_MS = 19_000 // 시간당 약 190번
@@ -218,7 +218,7 @@ export default async function snsRoutes(app, ctx) {
       const it = job.items.find((x) => x.kind === target.kind && x.key === target.key)
       const now = Date.now()
       const evidence =
-        target.kind === 'ig' ? await igEvidence(target.key, it?.data, now) : await blogEvidence(it?.id ?? target.key, it?.data, now)
+        target.kind === 'ig' ? await withReviewLink(await igEvidence(target.key, it?.data, now), target.reviewLink) : await blogEvidence(it?.id ?? target.key, it?.data, now)
       const draft = await draftScores(makeClient(aiKey()), { kind: target.kind, evidence, motive: target.motive })
       job.evals ??= {}
       const id = `${target.kind}:${target.key}`
@@ -394,7 +394,7 @@ export default async function snsRoutes(app, ctx) {
     res.json({ eval: next })
   })
 
-  /** AI 점수 초안 맡기기: targets = [{ kind, key, motive? }], autoApply(끝나면 빈칸에 바로 적용) (지원동기는 브라우저가 보낸다) */
+  /** AI 점수 초안 맡기기: targets = [{ kind, key, motive?, reviewLink? }], autoApply(끝나면 빈칸에 바로 적용) (지원동기는 브라우저가 보낸다) */
   app.post('/api/sns/jobs/:id/ai', requireAllowed, (req, res) => {
     const j = JOB_ID_RE.test(req.params.id) ? jobs.get(req.params.id) : null
     if (!j) return res.status(404).json({ error: '없는 작업입니다.' })
@@ -407,7 +407,13 @@ export default async function snsRoutes(app, ctx) {
       const kind = t?.kind === 'blog' ? 'blog' : t?.kind === 'ig' ? 'ig' : null
       const key = typeof t?.key === 'string' ? t.key : ''
       if (!kind || queued.has(`${kind}:${key}`) || !j.items.some((x) => x.kind === kind && x.key === key && x.state === 'done')) continue
-      j.aiQueue.push({ kind, key, motive: typeof t.motive === 'string' ? t.motive.slice(0, 3000) : undefined, autoApply: req.body?.autoApply === true })
+      j.aiQueue.push({
+        kind,
+        key,
+        motive: typeof t.motive === 'string' ? t.motive.slice(0, 3000) : undefined,
+        reviewLink: kind === 'ig' && typeof t.reviewLink === 'string' ? t.reviewLink.slice(0, 500) : undefined,
+        autoApply: req.body?.autoApply === true,
+      })
       queued.add(`${kind}:${key}`)
       n++
     }
@@ -432,7 +438,10 @@ export default async function snsRoutes(app, ctx) {
         const it = kind && j.items.find((x) => x.kind === kind && x.key === t.key && x.state === 'done')
         if (!it) continue
         try {
-          const ev = kind === 'ig' ? await igEvidence(it.key, it.data, now, { download: false }) : await blogEvidence(it.id ?? it.key, it.data, now, { download: false })
+          const ev =
+            kind === 'ig'
+              ? await withReviewLink(await igEvidence(it.key, it.data, now, { download: false }), typeof t.reviewLink === 'string' ? t.reviewLink.slice(0, 500) : '', { download: false })
+              : await blogEvidence(it.id ?? it.key, it.data, now, { download: false })
           out.push({ kind, key: it.key, account: kind === 'ig' ? `https://www.instagram.com/${it.key}/` : `https://blog.naver.com/${it.id ?? it.key}`, evidence: ev.text, images: ev.imageUrls })
         } catch (err) {
           out.push({ kind, key: it.key, error: err.message ?? String(err) })

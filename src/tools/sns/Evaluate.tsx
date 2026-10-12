@@ -262,7 +262,7 @@ export function JobView({ id, lanes, connected, aiConnected, onChanged, onDelete
         aiConnected={aiConnected}
         info={job.ai}
         lists={lists}
-        motives={(kind, key) => (kind === 'ig' ? people.ig : people.blog).get(key)?.slice().sort((a, b) => (a.submittedAt ?? '').localeCompare(b.submittedAt ?? ''))[0]?.motive}
+        applicant={(kind, key) => (kind === 'ig' ? people.ig : people.blog).get(key)?.slice().sort((a, b) => (a.submittedAt ?? '').localeCompare(b.submittedAt ?? ''))[0]}
         onQueued={() => void load()}
       />
 
@@ -508,6 +508,14 @@ function Editor({ kind, c, onPatch, onNext }: { kind: Kind; c: Row; onPatch: (p:
             같은 계정 중복 지원 {c.dupes.length}건 — 가장 먼저 접수된 신청서({c.rep?.name} {c.rep?.submittedAt})만 평가합니다: {c.dupes.map((x) => `${x.name ?? ''}(${x.row ?? ''}행)`).join(', ')}
           </Callout>
         )}
+        {c.rep?.reviewLink && (
+          <p className="text-xs text-muted">
+            신청서에 적은 리뷰 게시물:{' '}
+            <a href={c.rep.reviewLink} target="_blank" rel="noreferrer" className="break-all text-brand-ink underline">
+              {c.rep.reviewLink}
+            </a>
+          </p>
+        )}
         <div>
           <p className="text-xs font-semibold text-muted">지원동기</p>
           {c.rep?.motive !== undefined ? (
@@ -745,7 +753,7 @@ function AiPanel({
   aiConnected,
   info,
   lists,
-  motives,
+  applicant,
   onQueued,
 }: {
   jobId: string
@@ -753,7 +761,8 @@ function AiPanel({
   aiConnected: boolean
   info?: AiInfo
   lists: { ig: Row[]; blog: Row[] }
-  motives: (kind: Kind, key: string) => string | undefined
+  /** 대표 신청서(가장 먼저 접수된 것) — 지원동기·리뷰 링크를 서버에 함께 보낸다 */
+  applicant: (kind: Kind, key: string) => Applicant | undefined
   onQueued: () => void
 }) {
   const [open, setOpen] = useState<null | 'export' | 'api'>(null)
@@ -778,10 +787,10 @@ function AiPanel({
         const part = targets.slice(i, i + 25)
         const r = await api<{ items: Array<Record<string, unknown> & { kind: Kind; key: string }>; guide: string }>(`/sns/jobs/${jobId}/ai-pack`, {
           method: 'POST',
-          body: { targets: part.map((c) => ({ kind: c.kind, key: c.evalKey })) },
+          body: { targets: part.map((c) => ({ kind: c.kind, key: c.evalKey, reviewLink: applicant(c.kind, c.evalKey)?.reviewLink })) },
         })
         guide = r.guide
-        for (const it of r.items) items.push({ ...it, motive: motives(it.kind, it.key) ?? null })
+        for (const it of r.items) items.push({ ...it, motive: applicant(it.kind, it.key)?.motive ?? null })
         setProgress({ done: Math.min(n, i + part.length), total: n })
       }
       const pack = {
@@ -832,7 +841,13 @@ function AiPanel({
     try {
       const r = await api<{ queued: number }>(`/sns/jobs/${jobId}/ai`, {
         method: 'POST',
-        body: { targets: targets.map((c) => ({ kind: c.kind, key: c.evalKey, motive: motives(c.kind, c.evalKey) })), autoApply },
+        body: {
+          targets: targets.map((c) => {
+            const a = applicant(c.kind, c.evalKey)
+            return { kind: c.kind, key: c.evalKey, motive: a?.motive, reviewLink: a?.reviewLink }
+          }),
+          autoApply,
+        },
       })
       toast.success(`${r.queued}명 AI 채점을 시작했습니다. 창을 닫아도 서버에서 계속합니다.`)
       setOpen(null)

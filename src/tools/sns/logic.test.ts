@@ -223,3 +223,30 @@ describe('지원동기', () => {
     expect([f.scores.motive, f.motiveSource]).toEqual([3, 'auto'])
   })
 })
+
+describe('신청서의 리뷰 게시물 링크', () => {
+  it('리뷰 링크 칸을 SNS 주소 칸으로 잘못 고르지 않고 따로 읽는다', async () => {
+    const ExcelJS = (await import('exceljs')).default
+    const wb = new ExcelJS.Workbook()
+    const ws = wb.addWorksheet('설문')
+    ws.addRow(['응답일시', '성함', '최근 제품 리뷰 게시물 링크', 'SNS주소', '지원동기'])
+    ws.addRow(['2026-10-01 10:00:00', '가', 'https://www.instagram.com/p/DAbc123xyz/', 'https://www.instagram.com/aaa_1', '써 보고 싶어요'])
+    ws.addRow(['2026-10-01 11:00:00', '나', '', 'https://blog.naver.com/bbb', ''])
+    const buf = await wb.xlsx.writeBuffer()
+    const { readApplicantsXlsx } = await import('./parse')
+    const r = await readApplicantsXlsx(new File([buf], 'a.xlsx'))
+    expect(r.ig.map((p) => [p.raw, p.reviewLink, p.motive])).toEqual([['https://www.instagram.com/aaa_1', 'https://www.instagram.com/p/DAbc123xyz/', '써 보고 싶어요']])
+    expect(r.blog.map((p) => [p.raw, p.reviewLink])).toEqual([['https://blog.naver.com/bbb', '']])
+  })
+  it('게시물 주소만 읽고, 이미 본 게시물이나 다른 주소는 다시 읽지 않는다', async () => {
+    const { igPostUrl, withReviewLink } = await import('../../../server/lib/ai.mjs' as string)
+    expect(igPostUrl('instagram.com/reel/Cxyz12345?igsh=1')).toBe('https://www.instagram.com/reel/Cxyz12345/')
+    expect(igPostUrl('https://www.instagram.com/someone/p/ABCDE12/')).toBe('https://www.instagram.com/p/ABCDE12/')
+    expect(igPostUrl('https://www.instagram.com/someone')).toBeNull()
+    const ev = { text: '1. 2026-10-01 IMAGE https://www.instagram.com/p/ABCDE12/', images: [], imageUrls: [] }
+    expect(await withReviewLink(ev, 'https://instagram.com/p/ABCDE12')).toBe(ev)
+    expect(await withReviewLink(ev, '')).toBe(ev)
+    const other = await withReviewLink(ev, 'https://blog.naver.com/x/1')
+    expect(other.text).toContain('인스타그램 게시물 주소가 아니라 읽지 않음')
+  })
+})
