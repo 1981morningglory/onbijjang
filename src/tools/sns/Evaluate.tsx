@@ -13,8 +13,10 @@ import { buildSelectionWorkbook, type ProblemRow } from './excel'
 import type { Applicant } from './parse'
 import {
   aiPatch,
+  breakdownText,
   buildCandidate,
   MAX,
+  MOTIVE_SOURCE_LABEL,
   rankCandidates,
   recommend,
   STATUS_LABEL,
@@ -399,17 +401,12 @@ function EvalTable({ kind, list, setEval }: { kind: Kind; list: Row[]; setEval: 
                   <td className="px-3 py-1.5 text-right">{c.scores.base ?? ''}</td>
                   <td className="px-3 py-1.5 text-right">{aiCell(c.scores.fit, c.ev.ai?.fit?.score)}</td>
                   <td className="px-3 py-1.5 text-right">{aiCell(c.scores.review, c.ev.ai?.review?.score)}</td>
-                  <td className={clsx('px-3 py-1.5 text-right', c.motiveAuto && 'text-ink-2')} title={c.motiveAuto ? '자동 판단(수정 가능)' : undefined}>
-                    {c.motiveAuto && c.ev.ai?.motive?.score != null ? (
-                      <span className="text-xs font-semibold text-accent" title="AI 초안(아직 적용 전). 지금 점수는 자동 판단">
-                        AI {c.ev.ai.motive.score}
-                      </span>
-                    ) : (
-                      <>
-                        {aiCell(c.scores.motive, c.ev.ai?.motive?.score)}
-                        {c.motiveAuto && <span className="ml-0.5 text-2xs text-faint">자동</span>}
-                      </>
-                    )}
+                  <td
+                    className={clsx('px-3 py-1.5 text-right', c.motiveAuto && 'text-ink-2')}
+                    title={c.motiveSource === 'ai' ? `AI 채점(수정 가능) · ${breakdownText(c.ev.ai?.motive?.breakdown)}` : c.motiveAuto ? '자동 판단(수정 가능)' : undefined}
+                  >
+                    {c.scores.motive ?? ''}
+                    {c.motiveAuto && <span className={clsx('ml-0.5 text-2xs', c.motiveSource === 'ai' ? 'font-semibold text-accent' : 'text-faint')}>{MOTIVE_SOURCE_LABEL[c.motiveSource ?? 'auto']}</span>}
                   </td>
                   <td className="px-3 py-1.5 text-right font-bold">{c.total != null ? c.total : <span className="font-normal text-ink-2">{c.subtotal}/{c.confirmedMax}</span>}</td>
                   <td className="max-w-40 truncate px-3 py-1.5 text-xs text-muted">{c.missing.join(', ')}</td>
@@ -472,6 +469,7 @@ function Editor({ kind, c, onPatch, onNext }: { kind: Kind; c: Row; onPatch: (p:
   const m = MAX[kind]
   const ev = c.ev
   const auto = suggestMotive(c.rep?.motive)
+  const aiMotive = ev.ai && !ev.ai.error ? ev.ai.motive?.score ?? null : null
   const d = c.data as (IgData & BlogData) | undefined
   const posts = kind === 'ig' ? (d as IgData | undefined)?.posts ?? [] : []
   const since90 = Date.now() - 90 * 86400_000
@@ -591,13 +589,22 @@ function Editor({ kind, c, onPatch, onNext }: { kind: Kind; c: Row; onPatch: (p:
         </div>
         <Checkbox checked={Boolean(ev.reviewFallback)} onChange={(reviewFallback) => onPatch({ reviewFallback })} label="제품 리뷰가 없어 최근 30일 게시물로 평가함" />
         <div className="flex flex-col gap-1.5">
-          <ScoreInput label="지원동기" value={ev.motive ?? (c.motiveAuto ? auto.score : null)} max={m.motive} onValue={(motive) => onPatch({ motive })} />
-          {c.rep?.motive !== undefined && (
+          <ScoreInput label="지원동기" value={ev.motive ?? c.scores.motive} max={m.motive} onValue={(motive) => onPatch({ motive })} />
+          {(c.rep?.motive !== undefined || aiMotive != null) && (
             <p className="text-2xs text-muted">
-              자동 판단 {auto.score}점 ({auto.reasons.join(' · ') || '근거 적음'}){ev.motive != null && ' · 지금은 담당자 점수를 씁니다 '}
+              {aiMotive != null ? (
+                <>
+                  AI 채점 {aiMotive}점 ({breakdownText(ev.ai?.motive?.breakdown) || '기준별 점수 없음'})
+                </>
+              ) : (
+                <>
+                  자동 판단 {auto.score}점 ({auto.reasons.join(' · ') || '근거 적음'})
+                </>
+              )}
+              {ev.motive != null && ' · 지금은 담당자 점수를 씁니다 '}
               {ev.motive != null && (
                 <button type="button" className="underline" onClick={() => onPatch({ motive: null })}>
-                  자동 점수로 되돌리기
+                  {aiMotive != null ? 'AI 점수로 되돌리기' : '자동 점수로 되돌리기'}
                 </button>
               )}
             </p>
@@ -704,7 +711,7 @@ function AiCard({ kind, c, onApply }: { kind: Kind; c: Row; onApply: (p: Eval) =
         <span className="flex items-center gap-1 font-bold text-accent">
           <Sparkles className="size-3.5" aria-hidden /> AI 점수 초안
         </span>
-        <span className="text-faint">확인한 뒤 적용하세요 · 적용 전에는 점수로 치지 않습니다</span>
+        <span className="text-faint">적합성·리뷰는 확인한 뒤 적용해야 점수로 칩니다 · 지원동기는 AI 점수가 바로 쓰입니다(고치면 담당자 점수)</span>
         {patch && (
           <Button size="sm" variant="secondary" className="ml-auto" onClick={() => onApply(patch)}>
             빈칸에 초안 적용
@@ -725,6 +732,7 @@ function AiCard({ kind, c, onApply }: { kind: Kind; c: Row; onApply: (p: Eval) =
           {ai.review.recent && ' (제품 리뷰가 없어 최근 게시물로 평가)'}
         </p>
       )}
+      {ai.motive?.breakdown && <p className="mt-1 text-ink-2">지원동기 기준별: {breakdownText(ai.motive.breakdown)}</p>}
       {ai.motive?.keywords?.length ? <p className="mt-1 text-ink-2">지원동기 키워드: {ai.motive.keywords.join(', ')}</p> : null}
       {ai.note && <p className="mt-1 text-ink-2">메모: {ai.note}</p>}
     </div>
@@ -784,7 +792,7 @@ function AiPanel({
         guide,
         output: {
           format: 'onbijjang-sns-ai-drafts',
-          howto: '각 item 에 대해 { kind, key, fit: { score: 0~25 | null, reason }, review: { score: 인스타 0~20 · 블로그 0~30 | null, reason, url, date, recent }, motive: { score: 0~15 | null, reason, keywords: [] }, note } 를 items 배열로. 판단할 근거가 없으면 score 는 null.',
+          howto: '각 item 에 대해 { kind, key, fit: { score: 0~25 | null, reason }, review: { score: 인스타 0~20 · 블로그 0~30 | null, reason, url, date, recent }, motive: { score: 0~15 | null, reason, keywords: [], breakdown: { product: 0~4, life: 0~3, plan: 0~4, sincerity: 0~4 } }, note } 를 items 배열로. 판단할 근거가 없으면 score 는 null.',
         },
         items,
       }
