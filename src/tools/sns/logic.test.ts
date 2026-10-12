@@ -250,3 +250,34 @@ describe('신청서의 리뷰 게시물 링크', () => {
     expect(other.text).toContain('인스타그램 게시물 주소가 아니라 읽지 않음')
   })
 })
+
+describe('이상한 주소 보정', () => {
+  it.each([
+    ['https://www.instagram.com/p/DBgbPZZTbnZ/?igsh=bTI2emNxMDN4em44', 'igpost:DBgbPZZTbnZ'],
+    ['https://www.instagram.com/someone/reel/Dd5udkIpH-W/', 'igpost:Dd5udkIpH-W'],
+    ['https://www.threads.com/@_choi.mimi?igshid=NTc4MTIwNjQ2YQ==', '_choi.mimi'],
+    ['baby,jiwon_0', 'baby.jiwon_0'],
+    ['https://www.instagram.com/10001001.0', '10001001.0'],
+    ['https://instagram.com/21.3.30', '21.3.30'],
+    ['https://www.instagram.com/elle__haus', 'elle__haus'],
+  ])('%s → %s', async (input, out) => {
+    const { igKeyInfo } = await import('./parse')
+    expect(igKeyInfo(input)?.key).toBe(out)
+  })
+  it.each(['https://www.instagram.com/', 'kitttkk@naver.com', '혀ㅕㅠㅍ', '12345', 'https://youtube.com/@happything11'])('%s → 못 읽음', async (input) => {
+    const { igKeyInfo } = await import('./parse')
+    expect(igKeyInfo(input)).toBeNull()
+  })
+  it('스레드는 인스타그램으로, 고친 내용과 게시물 링크를 남긴다', () => {
+    expect(guessKind('https://www.threads.com/@seonwoo.im')).toBe('ig')
+    const r = parseList('ig', [{ row: 2, raw: 'https://www.instagram.com/p/DTeiev6D1A4/?igsh=x' }, { row: 3, raw: 'baby,jiwon_0' }])
+    const post = r.keys.get('igpost:DTeiev6D1A4')?.[0]
+    expect([post?.fixed?.startsWith('계정 대신 게시물'), post?.reviewLink]).toEqual([true, 'https://www.instagram.com/p/DTeiev6D1A4/'])
+    expect(r.keys.get('baby.jiwon_0')?.[0].fixed).toContain('쉼표')
+  })
+  it('게시물 미리보기에서 주인 아이디를 찾는다', async () => {
+    const { igPostOwner } = await import('../../../server/lib/sns.mjs')
+    expect(igPostOwner('<meta property="og:description" content="12 likes, 3 comments - Baby.Jiwon_0 on October 1, 2026: &quot;휴지&quot;" />')).toBe('baby.jiwon_0')
+    expect(igPostOwner('<html></html>')).toBeNull()
+  })
+})

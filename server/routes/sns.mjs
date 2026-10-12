@@ -8,7 +8,7 @@ import crypto from 'node:crypto'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { AI_MODEL, AiError, applyDraft, blogEvidence, checkKey, draftScores, igEvidence, makeClient, normalizeDraft, SYSTEM as AI_GUIDE, withReviewLink } from '../lib/ai.mjs'
-import { BLOG_ID_RE, connectInstagram, fetchBlog, fetchIgApi, fetchIgPage, IG_USER_RE, resolveNaverMe, SnsError } from '../lib/sns.mjs'
+import { BLOG_ID_RE, connectInstagram, fetchBlog, fetchIgApi, fetchIgPage, IG_USER_RE, resolveIgPost, resolveNaverMe, SnsError } from '../lib/sns.mjs'
 
 const IG_API_GAP_MS = 19_000 // 시간당 약 190번
 const IG_PAGE_GAP_MS = 6_000
@@ -159,7 +159,28 @@ export default async function snsRoutes(app, ctx) {
         continue
       }
       const { job, item } = next
-      const cached = fromCache(`ig:${item.key}`)
+      // 게시물 주소만 적은 지원자: 게시물 주인 아이디를 먼저 찾는다(item.id)
+      if (item.key.startsWith('igpost:') && !item.id) {
+        try {
+          item.id = await resolveIgPost(item.key.slice(7))
+        } catch (err) {
+          if (err.kind === 'rate') {
+            lane.ig.pauseUntil = Date.now() + RATE_PAUSE_MS
+            lane.ig.note = err.message
+          } else {
+            item.tries = (item.tries ?? 0) + 1
+            // 연결이 잠깐 끊긴 것이면 세 번까지 다시 해 본다
+            if (err.kind !== 'retry' || item.tries >= 3) Object.assign(item, { state: 'fail', error: err.message ?? String(err) })
+          }
+          finishIfDone(job)
+          await sleep(IG_PAGE_GAP_MS)
+          continue
+        }
+        dirty.add(job.id)
+        await sleep(IG_PAGE_GAP_MS)
+      }
+      const user = item.id ?? item.key
+      const cached = fromCache(`ig:${user}`)
       // 캐시에 API 없이 읽은 결과만 있는데 지금 토큰이 있으면 API 로 다시 본다
       if (cached && !(cached.source === 'page' && config?.token && !cached.personal) && !item.fresh) {
         Object.assign(item, { state: 'done', data: cached, error: null, at: new Date().toISOString() })
@@ -172,15 +193,15 @@ export default async function snsRoutes(app, ctx) {
         if (config?.token && config?.igUserId) {
           gap = IG_API_GAP_MS
           try {
-            data = await fetchIgApi(item.key, config)
+            data = await fetchIgApi(user, config)
           } catch (err) {
             if (err.kind !== 'personal') throw err
             await sleep(1500)
-            data = { ...(await fetchIgPage(item.key)), personal: true, reason: 'personal', apiError: err.message }
+            data = { ...(await fetchIgPage(user)), personal: true, reason: 'personal', apiError: err.message }
           }
-        } else data = { ...(await fetchIgPage(item.key)), reason: 'no-api' }
+        } else data = { ...(await fetchIgPage(user)), reason: 'no-api' }
         delete item.fresh
-        cache.set(`ig:${item.key}`, { at: Date.now(), data })
+        cache.set(`ig:${user}`, { at: Date.now(), data })
         cacheDirty = true
         Object.assign(item, { state: 'done', data, error: null, at: new Date().toISOString() })
         lane.ig.note = ''
@@ -234,7 +255,7 @@ export default async function snsRoutes(app, ctx) {
       const it = job.items.find((x) => x.kind === target.kind && x.key === target.key)
       const now = Date.now()
       const evidence =
-        target.kind === 'ig' ? await withReviewLink(await igEvidence(target.key, it?.data, now), target.reviewLink) : await blogEvidence(it?.id ?? target.key, it?.data, now)
+        target.kind === 'ig' ? await withReviewLink(await igEvidence(it?.id ?? target.key, it?.data, now), target.reviewLink) : await blogEvidence(it?.id ?? target.key, it?.data, now)
       const draft = await draftScores(makeClient(aiKey()), { kind: target.kind, evidence, motive: target.motive })
       job.evals ??= {}
       const id = `${target.kind}:${target.key}`
@@ -316,7 +337,8 @@ export default async function snsRoutes(app, ctx) {
   app.post('/api/sns/jobs', requireAllowed, async (req, res) => {
     const ig = Array.isArray(req.body?.instagram) ? req.body.instagram : []
     const blogs = Array.isArray(req.body?.blogs) ? req.body.blogs : []
-    const igKeys = [...new Set(ig.map((v) => String(v).trim().replace(/^@/, '').toLowerCase()).filter((v) => IG_USER_RE.test(v)))]
+    // 아이디(소문자) 또는 게시물 주소만 적은 경우의 'igpost:코드'(코드는 대소문자를 가린다)
+    const igKeys = [...new Set(ig.map((v) => String(v).trim().replace(/^@/, '')).map((v) => (/^igpost:[A-Za-z0-9_-]{5,40}$/.test(v) ? v : v.toLowerCase())).filter((v) => v.startsWith('igpost:') || IG_USER_RE.test(v)))]
     const blogKeys = [...new Set(blogs.map((v) => String(v).trim()).filter((v) => BLOG_ID_RE.test(v) || /^naverme:[a-z0-9]{3,20}$/i.test(v)).map((v) => (v.startsWith('naverme:') ? v : v.toLowerCase())))]
     if (!igKeys.length && !blogKeys.length) return res.status(400).json({ error: '읽을 수 있는 주소가 없습니다.' })
     if (igKeys.length + blogKeys.length > MAX_ITEMS) return res.status(400).json({ error: `한 번에 ${MAX_ITEMS}개까지 넣을 수 있습니다.` })
@@ -479,9 +501,9 @@ export default async function snsRoutes(app, ctx) {
         try {
           const ev =
             kind === 'ig'
-              ? await withReviewLink(await igEvidence(it.key, it.data, now, { download: false }), typeof t.reviewLink === 'string' ? t.reviewLink.slice(0, 500) : '', { download: false })
+              ? await withReviewLink(await igEvidence(it.id ?? it.key, it.data, now, { download: false }), typeof t.reviewLink === 'string' ? t.reviewLink.slice(0, 500) : '', { download: false })
               : await blogEvidence(it.id ?? it.key, it.data, now, { download: false })
-          out.push({ kind, key: it.key, account: kind === 'ig' ? `https://www.instagram.com/${it.key}/` : `https://blog.naver.com/${it.id ?? it.key}`, evidence: ev.text, images: ev.imageUrls })
+          out.push({ kind, key: it.key, account: kind === 'ig' ? `https://www.instagram.com/${it.id ?? it.key}/` : `https://blog.naver.com/${it.id ?? it.key}`, evidence: ev.text, images: ev.imageUrls })
         } catch (err) {
           out.push({ kind, key: it.key, error: err.message ?? String(err) })
         }

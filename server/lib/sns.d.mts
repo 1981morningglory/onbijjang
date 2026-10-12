@@ -25,3 +25,4 @@ export class SnsError extends Error {
 }
 export function classifyGraphError(status: number, body: unknown): SnsError
 export function blogIdFromUrl(u: string): string | null
+export function igPostOwner(html: string): string | null

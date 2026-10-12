@@ -200,6 +200,27 @@ export async function fetchIgPage(username) {
   return { source: 'page', name: '', followers: og.followers, followersRaw: og.followersRaw, followersApprox: og.followersApprox, following: og.following, mediaCount: og.posts, postsRead: 0, avgLikes: null, avgComments: null, avgEngagement: null, hiddenLikes: false, reels: null, posts30d: null, lastPostAt: null }
 }
 
+/**
+ * 게시물 주소(코드)만 적은 지원자: 공개 게시물 미리보기에서 게시물 주인 아이디를 찾는다.
+ * 미리보기 설명은 '좋아요 N개, 댓글 M개 - 아이디 on 날짜: "캡션"' 꼴이다.
+ */
+export function igPostOwner(html) {
+  const m = /<meta[^>]+property="og:description"[^>]+content="([^"]*)"/i.exec(html) ?? /<meta[^>]+content="([^"]*)"[^>]+property="og:description"/i.exec(html)
+  const desc = m ? m[1].replace(/&#x40;/gi, '@') : ''
+  const fromDesc = /\s-\s+@?([A-Za-z0-9._]{1,30})\s+(?:on|님|\()/i.exec(desc)
+  const fromJson = /"owner"\s*:\s*\{[^}]*?"username"\s*:\s*"([A-Za-z0-9._]{1,30})"/.exec(html) ?? /"username"\s*:\s*"([A-Za-z0-9._]{1,30})"/.exec(html)
+  const u = (fromDesc?.[1] ?? fromJson?.[1] ?? '').toLowerCase()
+  return IG_USER_RE.test(u) ? u : null
+}
+export async function resolveIgPost(code) {
+  const { res, text } = await fetchText(`https://www.instagram.com/p/${encodeURIComponent(code)}/`, { headers: { 'User-Agent': 'facebookexternalhit/1.1', 'Accept-Language': 'en-US,en;q=0.8' } })
+  if (res.status === 429) throw new SnsError('인스타그램이 잠시 쉬어 달라고 함', 'rate')
+  if (res.status === 404) throw new SnsError('게시물 주소만 적었는데 그 게시물이 없음(삭제·비공개)')
+  const u = igPostOwner(text)
+  if (!u) throw new SnsError('게시물 주소만 적었는데 게시물 주인 계정을 찾지 못함(주소 확인)')
+  return u
+}
+
 /** 토큰으로 연결된 인스타그램 비즈니스 계정 찾기 */
 export async function discoverIgAccount(cred) {
   // 사용자 토큰: 관리하는 페이지들 중 인스타그램이 연결된 것
