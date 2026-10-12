@@ -5,11 +5,26 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react
 import { Link } from 'react-router'
 import { useLoginDialog } from '@/app/LoginDialog'
 import { api, ApiError } from '@/lib/api'
-import { Badge, Button, Callout, Dropzone, Field, Panel, Spinner, Textarea, TextInput, toast } from '@/ui'
+import { Badge, Button, Callout, Checkbox, Dialog, Dropzone, Field, Panel, Spinner, Textarea, TextInput, toast } from '@/ui'
 import { JobView } from './Evaluate'
 import type { ProblemRow } from './excel'
 import { linesToApplicants, parseList, readApplicantsXlsx, type Applicant, type SnsKind } from './parse'
-import { BLOG_SEC, ConfirmLong, estimateSec, fmtDuration, IG_SEC, LONG_SEC, metaFileKey, metaKey, type JobBrief, type Lanes, type LocalMeta } from './shared'
+import {
+  AI_SEC_PER,
+  AI_WON_PER,
+  BLOG_SEC,
+  ConfirmLong,
+  estimateSec,
+  estimateWithAiSec,
+  fmtDuration,
+  IG_SEC,
+  LONG_SEC,
+  metaFileKey,
+  metaKey,
+  type JobBrief,
+  type Lanes,
+  type LocalMeta,
+} from './shared'
 
 interface Status {
   allowed: boolean
@@ -118,6 +133,7 @@ function Workspace({ status }: { status: Status }) {
 
       <NewJob
         connected={Boolean(ig?.connected)}
+        aiConnected={Boolean(status.ai?.connected)}
         onCreated={(id) => {
           setOpenId(id)
           void refresh()
@@ -162,13 +178,17 @@ function Workspace({ status }: { status: Status }) {
 }
 
 // ── 새 작업 ───────────────────────────────────────────────
-function NewJob({ connected, onCreated }: { connected: boolean; onCreated: (id: string) => void }) {
+function NewJob({ connected, aiConnected, onCreated }: { connected: boolean; aiConnected: boolean; onCreated: (id: string) => void }) {
   const [title, setTitle] = useState('')
   const [igText, setIgText] = useState('')
   const [blogText, setBlogText] = useState('')
   const [fromFile, setFromFile] = useState<{ ig: Applicant[]; blog: Applicant[]; other: Applicant[]; total: number; name: string; bytes: ArrayBuffer } | null>(null)
   const [busy, setBusy] = useState(false)
   const [asking, setAsking] = useState(false)
+  /** 수집하면서 AI 채점까지 한 번에(AI 키가 연결돼 있을 때) */
+  const [withAi, setWithAi] = useState(true)
+  const [autoApply, setAutoApply] = useState(true)
+  const doAi = aiConnected && withAi
 
   /** 칸의 줄에 엑셀에서 읽은 이름·연락처를 붙인다(같은 줄 글자로 맞춤) */
   const enrich = (kind: SnsKind, text: string) => {
@@ -195,7 +215,18 @@ function NewJob({ connected, onCreated }: { connected: boolean; onCreated: (id: 
   const start = async () => {
     setBusy(true)
     try {
-      const { job } = await api<{ job: JobBrief }>('/sns/jobs', { method: 'POST', body: { title: title.trim(), instagram: [...igParsed.keys.keys()], blogs: [...blogParsed.keys.keys()] } })
+      // AI 채점까지 하면 계정마다 대표 신청서(가장 먼저 접수된 것)의 지원동기·리뷰 링크를 함께 보낸다(이름·연락처는 보내지 않음)
+      const people: Record<string, { motive?: string; reviewLink?: string }> = {}
+      if (doAi)
+        for (const [kind, parsed] of [['ig', igParsed], ['blog', blogParsed]] as const)
+          for (const [key, list] of parsed.keys) {
+            const rep = list.slice().sort((a, b) => (a.submittedAt ?? '').localeCompare(b.submittedAt ?? ''))[0]
+            if (rep?.motive !== undefined || rep?.reviewLink) people[`${kind}:${key}`] = { motive: rep.motive, reviewLink: rep.reviewLink }
+          }
+      const { job } = await api<{ job: JobBrief }>('/sns/jobs', {
+        method: 'POST',
+        body: { title: title.trim(), instagram: [...igParsed.keys.keys()], blogs: [...blogParsed.keys.keys()], ...(doAi ? { ai: { autoApply, people } } : {}) },
+      })
       const problems: ProblemRow[] = [
         ...igParsed.invalid.map((p) => ({ kind: '인스타그램', people: [p], raw: p.raw, reason: '계정 주소가 불분명해 평가 보류' })),
         ...blogParsed.invalid.map((p) => ({ kind: '블로그', people: [p], raw: p.raw, reason: '블로그 주소가 불분명해 평가 보류' })),
@@ -204,7 +235,7 @@ function NewJob({ connected, onCreated }: { connected: boolean; onCreated: (id: 
       const meta: LocalMeta = { ig: [...igParsed.keys.entries()], blog: [...blogParsed.keys.entries()], problems, fileName: fromFile?.name }
       await set(metaKey(job.id), meta).catch(() => {})
       if (fromFile) await set(metaFileKey(job.id), fromFile.bytes).catch(() => {})
-      toast.success('수집을 시작했습니다. 창을 닫아도 서버에서 계속 모읍니다.')
+      toast.success(doAi ? '수집과 AI 채점을 시작했습니다. 창을 닫아도 서버에서 계속합니다.' : '수집을 시작했습니다. 창을 닫아도 서버에서 계속 모읍니다.')
       onCreated(job.id)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '시작하지 못했습니다.')
@@ -259,7 +290,10 @@ function NewJob({ connected, onCreated }: { connected: boolean; onCreated: (id: 
   ]
     .filter(Boolean)
     .join(' · ')
-  const onStart = () => (est >= LONG_SEC ? setAsking(true) : void start())
+  const aiWon = total * AI_WON_PER
+  const allSec = doAi ? estimateWithAiSec(est, total) : est
+  // AI 채점은 비용이 드니 늘 한 번 묻는다
+  const onStart = () => (doAi || est >= LONG_SEC ? setAsking(true) : void start())
   return (
     <Panel className="flex flex-col gap-4 p-4">
       <div className="flex flex-wrap items-end gap-3">
@@ -283,16 +317,18 @@ function NewJob({ connected, onCreated }: { connected: boolean; onCreated: (id: 
       </div>
       <div className="flex flex-wrap items-center gap-3">
         <Button variant="primary" icon={Rocket} loading={busy} disabled={!total} onClick={onStart}>
-          {total ? `${total}개 계정 수집 시작` : '수집 시작'}
+          {total ? `${total}개 계정 ${doAi ? '수집 + AI 채점' : '수집'} 시작` : '수집 시작'}
         </Button>
+        {aiConnected && <Checkbox checked={withAi} onChange={setWithAi} label="수집이 끝나는 대로 AI 채점까지" />}
         {total > 0 && (
-          <span className={clsx('text-sm', est >= LONG_SEC ? 'font-semibold text-warn' : 'text-muted')}>
-            예상 소요시간 {fmtDuration(est)} <span className="font-normal text-muted">({detail}, 블로그와 인스타그램은 함께 진행)</span>
+          <span className={clsx('text-sm', allSec >= LONG_SEC ? 'font-semibold text-warn' : 'text-muted')}>
+            예상 소요시간 {fmtDuration(allSec)}
+            {doAi && ` · AI 비용 약 ₩${aiWon.toLocaleString('ko-KR')}`} <span className="font-normal text-muted">({detail}, 블로그와 인스타그램은 함께 진행)</span>
           </span>
         )}
       </div>
       <ConfirmLong
-        open={asking}
+        open={asking && !doAi}
         seconds={est}
         detail={detail}
         onNo={() => setAsking(false)}
@@ -301,6 +337,43 @@ function NewJob({ connected, onCreated }: { connected: boolean; onCreated: (id: 
           void start()
         }}
       />
+      <Dialog
+        open={asking && doAi}
+        onClose={() => setAsking(false)}
+        size="md"
+        title="수집 + AI 채점을 시작할까요?"
+        footer={
+          <>
+            <Button onClick={() => setAsking(false)}>아니오</Button>
+            <Button
+              variant="primary"
+              icon={Rocket}
+              loading={busy}
+              onClick={() => {
+                setAsking(false)
+                void start()
+              }}
+            >
+              예, {total}명 진행합니다
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-3 text-sm">
+          <Callout tone="warn" title={`${total}명 · 예상 비용 약 ₩${aiWon.toLocaleString('ko-KR')} · 예상 시간 ${fmtDuration(allSec)}`}>
+            <ul className="list-disc pl-4">
+              <li>계정 수집: {detail}</li>
+              <li>AI 채점: 수집이 끝난 계정부터 바로 매김(한 명 약 {AI_SEC_PER}초 · ₩{AI_WON_PER} 안팎, Max 요금제와 별도로 API 크레딧 차감)</li>
+            </ul>
+          </Callout>
+          <Checkbox checked={autoApply} onChange={setAutoApply} label="콘텐츠 적합성·리뷰 점수를 빈칸에 바로 적용(담당자가 적은 점수는 그대로)" />
+          <p className="text-xs text-muted">
+            지원동기는 AI 점수가 바로 쓰입니다. 지원동기와 신청서의 리뷰 링크는 AI 채점을 위해 서버로 보내고, 이름·연락처는 보내지 않습니다. 게시물을 볼 수 없는 계정은 빈칸으로 남습니다. 서버에서 진행하니 창을 닫아도 계속되고, 작업 화면의 ‘멈추기’로 언제든 멈출 수
+            있습니다.
+          </p>
+          <p className="font-semibold text-ink">진행하시겠습니까?</p>
+        </div>
+      </Dialog>
     </Panel>
   )
 }

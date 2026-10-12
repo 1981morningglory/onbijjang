@@ -203,8 +203,24 @@ export default async function snsRoutes(app, ctx) {
   // ── AI 점수 초안 일꾼(동시에 2명씩) ──
   const aiLane = { pauseUntil: 0, note: '' }
   const aiBusy = new Set()
+  /** ‘수집하면서 AI 채점까지’로 만든 작업: 수집이 끝난 계정을 차례로 AI 줄에 세운다 */
+  function feedAuto(j) {
+    const auto = j.aiAuto
+    if (!auto || auto.off) return
+    j.aiQueue ??= []
+    const queued = new Set(j.aiQueue.map((t) => `${t.kind}:${t.key}`))
+    for (const it of j.items) {
+      const id = `${it.kind}:${it.key}`
+      if (it.state !== 'done' || queued.has(id) || j.evals?.[id]?.ai) continue
+      const p = auto.people?.[id] ?? {}
+      j.aiQueue.push({ kind: it.kind, key: it.key, motive: p.motive, reviewLink: it.kind === 'ig' ? p.reviewLink : undefined, autoApply: auto.autoApply })
+      queued.add(id)
+      dirty.add(j.id)
+    }
+  }
   function nextAi() {
     for (const j of [...jobs.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+      feedAuto(j)
       const q = j.aiQueue ?? []
       const i = q.findIndex((t) => !aiBusy.has(`${j.id}:${t.kind}:${t.key}`))
       if (i >= 0) return { job: j, target: q[i] }
@@ -277,7 +293,16 @@ export default async function snsRoutes(app, ctx) {
       blog: { total: count('blog'), done: count('blog', 'done'), fail: count('blog', 'fail') },
     }
   }
-  const aiInfo = (j) => ({ queued: (j.aiQueue ?? []).length, done: j.aiStats?.done ?? 0, fail: j.aiStats?.fail ?? 0, cost: j.aiStats?.cost ?? 0, note: aiLane.pauseUntil > Date.now() ? aiLane.note : '' })
+  const aiInfo = (j) => ({
+    auto: Boolean(j.aiAuto && !j.aiAuto.off),
+    // AI 채점까지 하는 작업에서 아직 수집 중이라 줄에 서지 않은 계정
+    autoWaiting: j.aiAuto && !j.aiAuto.off && j.status === 'running' ? j.items.filter((x) => x.state === 'wait').length : 0,
+    queued: (j.aiQueue ?? []).length,
+    done: j.aiStats?.done ?? 0,
+    fail: j.aiStats?.fail ?? 0,
+    cost: j.aiStats?.cost ?? 0,
+    note: aiLane.pauseUntil > Date.now() ? aiLane.note : '',
+  })
   const laneInfo = () => ({
     ig: { paused: lane.ig.pauseUntil > Date.now(), note: lane.ig.note, gapMs: config?.token ? IG_API_GAP_MS : IG_PAGE_GAP_MS },
     blog: { paused: lane.blog.pauseUntil > Date.now(), note: lane.blog.note, gapMs: BLOG_GAP_MS },
@@ -301,6 +326,20 @@ export default async function snsRoutes(app, ctx) {
       createdAt: new Date().toISOString(),
       status: 'running',
       items: [...blogKeys.map((key) => ({ kind: 'blog', key, state: 'wait' })), ...igKeys.map((key) => ({ kind: 'ig', key, state: 'wait' }))],
+    }
+    // 수집하면서 AI 채점까지: 계정마다 지원동기·리뷰 링크(브라우저가 보낸다)를 받아 두고, 수집이 끝나는 대로 AI 줄에 세운다
+    if (req.body?.ai && typeof req.body.ai === 'object') {
+      if (!aiKey()) return res.status(400).json({ error: 'AI 키가 아직 없습니다. 관리자 화면 → ‘SNS 연결’에서 AI 키를 넣거나 ‘AI 채점까지’를 끄고 시작해 주세요.' })
+      const ids = new Set(job.items.map((x) => `${x.kind}:${x.key}`))
+      const people = {}
+      for (const [id, v] of Object.entries(req.body.ai.people ?? {})) {
+        if (!ids.has(id) || !v || typeof v !== 'object') continue
+        people[id] = {
+          motive: typeof v.motive === 'string' ? v.motive.slice(0, 3000) : undefined,
+          reviewLink: typeof v.reviewLink === 'string' ? v.reviewLink.slice(0, 500) : undefined,
+        }
+      }
+      job.aiAuto = { autoApply: req.body.ai.autoApply !== false, people }
     }
     jobs.set(job.id, job)
     await writeJson(jobFile(job.id), job)
@@ -480,6 +519,8 @@ export default async function snsRoutes(app, ctx) {
     const j = JOB_ID_RE.test(req.params.id) ? jobs.get(req.params.id) : null
     if (!j) return res.status(404).json({ error: '없는 작업입니다.' })
     j.aiQueue = []
+    // 수집하면서 이어 가던 AI 채점도 멈춘다(다시 하려면 ‘AI 로 채점하기’)
+    if (j.aiAuto) j.aiAuto.off = true
     dirty.add(j.id)
     res.json({ ai: aiInfo(j) })
   })

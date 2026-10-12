@@ -29,10 +29,14 @@ import {
   type IgData,
   type JobItem,
 } from './score'
-import { ConfirmLong, fmtDuration, IG_SEC, LONG_SEC, metaFileKey, metaKey, type Count, type JobBrief, type Lanes, type LocalMeta } from './shared'
+import { AI_SEC_PER, AI_WON_PER, ConfirmLong, fmtDuration, IG_SEC, LONG_SEC, metaFileKey, metaKey, WON_PER_USD, type Count, type JobBrief, type Lanes, type LocalMeta } from './shared'
 
 type Kind = 'ig' | 'blog'
 interface AiInfo {
+  /** 수집하면서 AI 채점까지 하는 작업인지 */
+  auto?: boolean
+  /** 그중 아직 수집 중이라 AI 줄에 서지 않은 계정 */
+  autoWaiting?: number
   queued: number
   done: number
   fail: number
@@ -41,10 +45,6 @@ interface AiInfo {
 }
 type Job = JobBrief & { items: JobItem[]; evals: Record<string, Eval>; ai?: AiInfo }
 
-/** AI 초안 한 명당 어림값(사진 몇 장 + 글, Claude Opus 5.5 기준) — 실제 비용은 쌓이는 대로 화면에 보인다 */
-const AI_WON_PER = 90
-const AI_SEC_PER = 13 // 동시에 2명씩, 한 명 약 25초
-const WON_PER_USD = 1400
 
 const STATUS_TONE: Record<EvalStatus, string> = {
   complete: 'bg-brand-soft text-brand-ink',
@@ -912,10 +912,11 @@ function AiPanel({
         <Sparkles className="size-4 text-accent" aria-hidden />
         <span className="font-semibold text-ink">AI 점수 초안</span>
         {aiConnected ? (
-          queued > 0 ? (
+          queued > 0 || (info?.autoWaiting ?? 0) > 0 ? (
             <>
               <span className="text-ink-2">
-                AI 가 매기는 중 · 남은 {queued}명 · {fmtDuration(queued * AI_SEC_PER)}
+                AI 가 매기는 중 · 남은 {queued}명{(info?.autoWaiting ?? 0) > 0 && ` · 수집 중 ${info?.autoWaiting}명(끝나는 대로 이어서 채점)`} ·{' '}
+                {fmtDuration((queued + (info?.autoWaiting ?? 0)) * AI_SEC_PER)}
               </span>
               {info?.note && <span className="text-warn">{info.note}</span>}
               <Button size="sm" variant="ghost" onClick={() => void api(`/sns/jobs/${jobId}/ai/stop`, { method: 'POST' }).then(onQueued)}>
