@@ -4,7 +4,7 @@
  */
 import clsx from 'clsx'
 import { del, get } from 'idb-keyval'
-import { Camera, ChevronRight, CirclePause, CirclePlay, Download, ExternalLink, ListChecks, NotebookPen, RefreshCw, Search, Sparkles, Trash2 } from 'lucide-react'
+import { Camera, ChevronRight, CirclePause, CirclePlay, Download, ExternalLink, FileUp, ListChecks, NotebookPen, RefreshCw, Search, Sparkles, Trash2 } from 'lucide-react'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '@/lib/api'
 import { downloadBlob } from '@/lib/files'
@@ -256,6 +256,7 @@ export function JobView({ id, lanes, connected, aiConnected, onChanged, onDelete
 
       <AiPanel
         jobId={id}
+        jobTitle={job.title}
         aiConnected={aiConnected}
         info={job.ai}
         lists={lists}
@@ -732,6 +733,7 @@ function AiCard({ kind, c, onApply }: { kind: Kind; c: Row; onApply: (p: Eval) =
 
 function AiPanel({
   jobId,
+  jobTitle,
   aiConnected,
   info,
   lists,
@@ -739,109 +741,221 @@ function AiPanel({
   onQueued,
 }: {
   jobId: string
+  jobTitle: string
   aiConnected: boolean
   info?: AiInfo
   lists: { ig: Row[]; blog: Row[] }
   motives: (kind: Kind, key: string) => string | undefined
   onQueued: () => void
 }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState<null | 'export' | 'api'>(null)
   const [scope, setScope] = useState<'todo' | 'all'>('todo')
   const [channel, setChannel] = useState<'both' | Kind>('both')
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
   const pick = (l: Row[]) => l.filter((c) => !c.waiting && c.status !== 'hold' && (scope === 'all' ? true : c.status === 'partial' || c.status === 'failed') && (scope === 'all' || !c.ev.ai || Boolean(c.ev.ai.error)))
   const targets = [...(channel !== 'blog' ? pick(lists.ig) : []), ...(channel !== 'ig' ? pick(lists.blog) : [])]
   const n = targets.length
+
+  /** 평가 자료 묶음(JSON) 내려받기 — Claude Code 대화(Max 요금제)에 주고 초안을 받는다 */
+  const exportPack = async () => {
+    setBusy('export')
+    setProgress({ done: 0, total: n })
+    try {
+      const items: Array<Record<string, unknown>> = []
+      let guide = ''
+      for (let i = 0; i < targets.length; i += 25) {
+        const part = targets.slice(i, i + 25)
+        const r = await api<{ items: Array<Record<string, unknown> & { kind: Kind; key: string }>; guide: string }>(`/sns/jobs/${jobId}/ai-pack`, {
+          method: 'POST',
+          body: { targets: part.map((c) => ({ kind: c.kind, key: c.evalKey })) },
+        })
+        guide = r.guide
+        for (const it of r.items) items.push({ ...it, motive: motives(it.kind, it.key) ?? null })
+        setProgress({ done: Math.min(n, i + part.length), total: n })
+      }
+      const pack = {
+        format: 'onbijjang-sns-ai-pack',
+        version: 1,
+        jobId,
+        title: jobTitle,
+        exportedAt: new Date().toISOString(),
+        guide,
+        output: {
+          format: 'onbijjang-sns-ai-drafts',
+          howto: '각 item 에 대해 { kind, key, fit: { score: 0~25 | null, reason }, review: { score: 인스타 0~20 · 블로그 0~30 | null, reason, url, date, recent }, motive: { score: 0~15 | null, reason, keywords: [] }, note } 를 items 배열로. 판단할 근거가 없으면 score 는 null.',
+        },
+        items,
+      }
+      const day = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+      downloadBlob(new Blob([JSON.stringify(pack, null, 1)], { type: 'application/json' }), `체험단_AI평가자료_${(jobTitle || 'SNS').replace(/[\\/:*?"<>|]/g, '').slice(0, 30)}_${day}.json`)
+      toast.success(`${items.length}명의 평가 자료를 내려받았습니다. Claude Code 대화에 이 파일을 주고 ‘체험단 AI 초안 매겨줘’라고 하세요.`)
+      setOpen(null)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '내보내지 못했습니다.')
+    } finally {
+      setBusy(null)
+      setProgress(null)
+    }
+  }
+
+  /** Claude Code 대화에서 만든 초안 결과(JSON) 가져오기 */
+  const importDrafts = async (file: File) => {
+    setBusy('import')
+    try {
+      const raw = JSON.parse(await file.text())
+      const items = Array.isArray(raw) ? raw : raw?.items
+      if (!Array.isArray(items)) throw new Error('초안 결과 파일이 아닙니다(items 가 없음).')
+      if (raw?.jobId && raw.jobId !== jobId && !confirm('다른 작업에서 만든 결과 파일 같습니다. 그래도 같은 계정이 있으면 넣을까요?')) return
+      const r = await api<{ imported: number; skippedCount: number }>(`/sns/jobs/${jobId}/ai-import`, { method: 'POST', body: { items } })
+      toast.success(`AI 초안 ${r.imported}명을 넣었습니다${r.skippedCount ? ` (이 작업에 없는 계정 ${r.skippedCount}개는 건너뜀)` : ''}. 확인 후 ‘적용’해 주세요.`)
+      onQueued()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '가져오지 못했습니다.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const start = async () => {
-    setBusy(true)
+    setBusy('api')
     try {
       const r = await api<{ queued: number }>(`/sns/jobs/${jobId}/ai`, {
         method: 'POST',
         body: { targets: targets.map((c) => ({ kind: c.kind, key: c.evalKey, motive: motives(c.kind, c.evalKey) })) },
       })
       toast.success(`${r.queued}명의 AI 초안을 만들기 시작했습니다. 창을 닫아도 서버에서 계속합니다.`)
-      setOpen(false)
+      setOpen(null)
       onQueued()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '시작하지 못했습니다.')
     } finally {
-      setBusy(false)
+      setBusy(null)
     }
   }
   const queued = info?.queued ?? 0
+  const scopeControls = (
+    <div className="flex flex-wrap items-center gap-2">
+      <Segmented<'todo' | 'all'>
+        label="대상"
+        size="sm"
+        value={scope}
+        onValue={setScope}
+        options={[
+          { value: 'todo', label: '확인할 것(초안 없는 미확인자)' },
+          { value: 'all', label: '전체(다시 만들기 포함)' },
+        ]}
+      />
+      <Segmented<'both' | Kind>
+        label="채널"
+        size="sm"
+        value={channel}
+        onValue={setChannel}
+        options={[
+          { value: 'both', label: '둘 다' },
+          { value: 'ig', label: '인스타그램' },
+          { value: 'blog', label: '블로그' },
+        ]}
+      />
+    </div>
+  )
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-md border border-line bg-paper px-3 py-2 text-sm">
-      <Sparkles className="size-4 text-accent" aria-hidden />
-      <span className="font-semibold text-ink">AI 점수 초안</span>
-      {!aiConnected ? (
-        <span className="text-muted">AI 키가 아직 없습니다 — 관리자 화면 → ‘SNS 연결’에서 AI 키를 넣으면 쓸 수 있습니다.</span>
-      ) : queued > 0 ? (
-        <>
-          <span className="text-ink-2">
-            만드는 중 · 남은 {queued}명 · 약 {fmtDuration(queued * AI_SEC_PER)}
-          </span>
-          {info?.note && <span className="text-warn">{info.note}</span>}
-          <Button size="sm" variant="ghost" onClick={() => void api(`/sns/jobs/${jobId}/ai/stop`, { method: 'POST' }).then(onQueued)}>
-            멈추기
-          </Button>
-        </>
-      ) : (
-        <Button size="sm" variant="primary" icon={Sparkles} onClick={() => setOpen(true)}>
-          AI 초안 만들기
+    <div className="flex flex-col gap-2 rounded-md border border-line bg-paper px-3 py-2 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <Sparkles className="size-4 text-accent" aria-hidden />
+        <span className="font-semibold text-ink">AI 점수 초안</span>
+        <Button size="sm" variant="primary" icon={Download} loading={busy === 'export'} onClick={() => setOpen('export')}>
+          평가 자료 내보내기
         </Button>
-      )}
-      {(info?.done ?? 0) + (info?.fail ?? 0) > 0 && (
-        <span className="ml-auto text-xs text-muted">
-          완료 {info?.done ?? 0}명{info?.fail ? ` · 실패 ${info.fail}` : ''} · 지금까지 비용 약 ₩{Math.round((info?.cost ?? 0) * WON_PER_USD).toLocaleString('ko-KR')} (${(info?.cost ?? 0).toFixed(2)})
-        </span>
-      )}
+        <Button size="sm" icon={FileUp} loading={busy === 'import'} onClick={() => fileRef.current?.click()}>
+          AI 초안 가져오기
+        </Button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".json,application/json"
+          hidden
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            e.target.value = ''
+            if (f) void importDrafts(f)
+          }}
+        />
+        {aiConnected &&
+          (queued > 0 ? (
+            <>
+              <span className="text-ink-2">
+                API 로 만드는 중 · 남은 {queued}명 · {fmtDuration(queued * AI_SEC_PER)}
+              </span>
+              {info?.note && <span className="text-warn">{info.note}</span>}
+              <Button size="sm" variant="ghost" onClick={() => void api(`/sns/jobs/${jobId}/ai/stop`, { method: 'POST' }).then(onQueued)}>
+                멈추기
+              </Button>
+            </>
+          ) : (
+            <Button size="sm" variant="ghost" onClick={() => setOpen('api')}>
+              API 크레딧으로 바로 만들기
+            </Button>
+          ))}
+        {(info?.done ?? 0) > 0 && (
+          <span className="ml-auto text-xs text-muted">
+            초안 {info?.done ?? 0}명{info?.fail ? ` · 실패 ${info.fail}` : ''}
+            {(info?.cost ?? 0) > 0 && ` · API 비용 약 ₩${Math.round((info?.cost ?? 0) * WON_PER_USD).toLocaleString('ko-KR')}`}
+          </span>
+        )}
+      </div>
+      <p className="text-xs text-muted">
+        추가 비용 없이(Max 요금제): ① ‘평가 자료 내보내기’로 받은 파일을 Claude Code 대화에 주고 ‘체험단 AI 초안 매겨줘’라고 하면 ② 결과 파일을 만들어 드립니다 → ③ ‘AI 초안 가져오기’로 올리고 확인 후 적용하세요.
+      </p>
+      {progress && <Progress value={(progress.done / Math.max(1, progress.total)) * 100} label={`평가 자료 모으는 중 ${progress.done} / ${progress.total}`} />}
+
       <Dialog
-        open={open}
-        onClose={() => setOpen(false)}
+        open={open === 'export'}
+        onClose={() => setOpen(null)}
         size="md"
-        title="AI 점수 초안 만들기"
+        title="평가 자료 내보내기 (추가 비용 없음)"
         footer={
           <>
-            <Button onClick={() => setOpen(false)}>아니오</Button>
-            <Button variant="primary" icon={Sparkles} loading={busy} disabled={!n} onClick={start}>
-              예, {n}명 진행합니다
+            <Button onClick={() => setOpen(null)}>아니오</Button>
+            <Button variant="primary" icon={Download} loading={busy === 'export'} disabled={!n} onClick={exportPack}>
+              예, {n}명 내보냅니다
             </Button>
           </>
         }
       >
         <div className="flex flex-col gap-3 text-sm">
           <p className="text-ink-2">
-            Claude(Opus 5.5)가 공개 게시물(인스타그램 최근 게시물 캡션·사진, 블로그 최근 글 목록과 리뷰 글 본문·사진)과 신청서 지원동기를 보고 콘텐츠 적합성·리뷰·지원동기의 <b>초안 점수와 근거</b>를 적습니다. 초안은 담당자가 확인하고 ‘적용’해야 점수로 쓰입니다.
+            서버가 공개 게시물(인스타그램 최근 게시물 캡션·사진 주소, 블로그 최근 글 목록과 제품 리뷰 글 본문·사진 주소)을 모으고, 이 브라우저의 신청서 지원동기를 덧붙여 <b>파일 하나</b>로 내려받습니다. 이름·연락처·주소는 넣지 않습니다.
           </p>
-          <div className="flex flex-wrap items-center gap-2">
-            <Segmented<'todo' | 'all'>
-              label="대상"
-              size="sm"
-              value={scope}
-              onValue={setScope}
-              options={[
-                { value: 'todo', label: '확인할 것(초안 없는 미확인자)' },
-                { value: 'all', label: '전체(다시 만들기 포함)' },
-              ]}
-            />
-            <Segmented<'both' | Kind>
-              label="채널"
-              size="sm"
-              value={channel}
-              onValue={setChannel}
-              options={[
-                { value: 'both', label: '둘 다' },
-                { value: 'ig', label: '인스타그램' },
-                { value: 'blog', label: '블로그' },
-              ]}
-            />
-          </div>
-          <Callout tone={n * AI_SEC_PER >= LONG_SEC ? 'warn' : 'info'} title={`${n}명 · 예상 비용 약 ₩${(n * AI_WON_PER).toLocaleString('ko-KR')} · 예상 시간 ${fmtDuration(n * AI_SEC_PER)}`}>
-            비용은 한 명에 약 ₩{AI_WON_PER}(사진·글 양에 따라 달라짐)으로 어림했고, 실제로 쓴 금액은 진행하면서 화면에 쌓여 보입니다. 서버에서 진행되므로 창을 닫아도 계속됩니다.
+          {scopeControls}
+          <Callout tone="info" title={`${n}명 · 자료 모으기 ${fmtDuration(n * 1.5)} 정도`}>
+            이 파일을 Claude Code 대화(Max 요금제)에 주면 가이드대로 초안 점수와 근거를 매긴 결과 파일을 만들어 드립니다. 별도 API 크레딧은 쓰지 않습니다. 인원이 많으면 대화에서 나눠 진행하며, Max 사용 한도에 닿으면 잠시 쉬었다 이어 갑니다.
           </Callout>
-          <p className="text-xs text-muted">
-            보내는 자료: 공개 SNS 게시물과 신청서 ‘지원동기’ 글(이름·연락처·주소는 보내지 않음). 개인 계정 인스타그램은 게시물을 볼 수 없어 적합성·리뷰가 ‘판단 못 함’으로 남을 수 있습니다.
-          </p>
+          <p className="font-semibold text-ink">진행하시겠습니까?</p>
+        </div>
+      </Dialog>
+
+      <Dialog
+        open={open === 'api'}
+        onClose={() => setOpen(null)}
+        size="md"
+        title="API 크레딧으로 AI 초안 만들기"
+        footer={
+          <>
+            <Button onClick={() => setOpen(null)}>아니오</Button>
+            <Button variant="primary" icon={Sparkles} loading={busy === 'api'} disabled={!n} onClick={start}>
+              예, {n}명 진행합니다
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-3 text-sm">
+          <p className="text-ink-2">서버가 Claude API 로 바로 초안을 만듭니다. Max 요금제와 별도로 API 크레딧이 차감됩니다.</p>
+          {scopeControls}
+          <Callout tone="warn" title={`${n}명 · 예상 비용 약 ₩${(n * AI_WON_PER).toLocaleString('ko-KR')} · 예상 시간 ${fmtDuration(n * AI_SEC_PER)}`}>
+            추가 비용이 듭니다. 비용 없이 하려면 ‘평가 자료 내보내기’를 쓰세요.
+          </Callout>
           <p className="font-semibold text-ink">진행하시겠습니까?</p>
         </div>
       </Dialog>

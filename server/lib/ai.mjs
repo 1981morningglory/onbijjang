@@ -11,10 +11,16 @@ const UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/6
 const MAX_IMAGES = 4
 const MAX_IMAGE_BYTES = 3_500_000
 const REVIEW_WORDS = /후기|리뷰|사용기|써\s?보|써봤|체험|내돈내산|협찬|제공받|추천템|비교|언박싱|하울|구매/
-// 제품 리뷰로 보이는 말 / 장소·음식 후기로 보이는 말(제품 리뷰 고를 때 뒤로 미룬다)
-const PRODUCT_WORDS = /제품|사용|써\s?보|써봤|사용기|내돈내산|추천템|언박싱|하울|구매|생활용품|살림템|육아템|화장지|휴지|세제|주방|욕실|청소|정리|수납|가전|리빙|화장품|아이템/
-const PLACE_WORDS = /맛집|술집|카페|식당|여행|숙소|호텔|펜션|리조트|핫플|메뉴|코스|축제|데이트/
-const reviewScore = (p) => (REVIEW_WORDS.test(`${p.title} ${p.brief}`) ? 2 : 0) + (PRODUCT_WORDS.test(`${p.title} ${p.brief}`) ? 2 : 0) - (PLACE_WORDS.test(p.title) ? 3 : 0)
+// 제품 리뷰로 보이는 말 / 장소·행사 후기로 보이는 말(제품 리뷰 고를 때 뒤로 미룬다)
+const PRODUCT_WORDS = /제품|사용|써\s?보|써봤|사용기|내돈내산|추천템|언박싱|하울|구매|생활용품|살림|육아템|화장지|휴지|티슈|세제|섬유유연제|주방|욕실|청소|정리|수납|가전|리빙|화장품|쿠션|앰플|크림|세럼|샴푸|향기|아이템|[가-힣]템/
+const PLACE_WORDS = /맛집|술집|카페|식당|여행|숙소|호텔|펜션|리조트|핫플|메뉴|코스|축제|행사|나들이|가볼|갈만한|갈 만한|명소|놀거리|공원|시장|데이트|키즈카페|투어/
+// 블로그 카테고리 이름이 체험단·상품 리뷰 쪽이면 더 믿는다
+const PRODUCT_CATEGORY = /체험단|상품|제품|리뷰|살림|리빙|육아|뷰티|생활/
+const reviewScore = (p) =>
+  (REVIEW_WORDS.test(p.title) ? 2 : REVIEW_WORDS.test(p.brief) ? 1 : 0) +
+  (PRODUCT_WORDS.test(p.title) ? 3 : PRODUCT_WORDS.test(p.brief) ? 1 : 0) +
+  (PRODUCT_CATEGORY.test(p.category ?? '') && !/맛집|여행|일상/.test(p.category ?? '') ? 2 : 0) -
+  (PLACE_WORDS.test(`${p.title} ${p.category ?? ''}`) ? 4 : 0)
 
 export const SYSTEM = `당신은 모닝글로리 '더 프리미엄 5겹 도톰 플러스 화장지' 체험단 선발을 돕는 평가 보조입니다.
 주어진 공개 자료만 근거로 항목별 '초안' 점수를 매기고, 담당자가 확인할 수 있게 근거를 짧게 한국어로 씁니다.
@@ -77,13 +83,15 @@ const kst = (ms) => new Date(ms + 9 * 3600_000).toISOString().slice(0, 10)
 const clip = (s, n) => (s.length > n ? `${s.slice(0, n)}…` : s)
 
 /** 인스타그램: 서버가 모아 둔 자료(비즈니스·크리에이터 계정은 최근 게시물 포함) */
-export async function igEvidence(username, data, now = Date.now()) {
+export async function igEvidence(username, data, now = Date.now(), { download = true } = {}) {
   const lines = [`[인스타그램 계정] @${username}`, `오늘(한국): ${kst(now)}`]
   if (data?.name) lines.push(`이름: ${data.name}`)
   if (data?.biography) lines.push(`프로필 소개: ${clip(data.biography, 300)}`)
   if (data?.followers != null) lines.push(`팔로워: ${data.followers}${data.followersApprox ? ` (표기 ${data.followersRaw}, 근사값)` : ''}`)
   const posts = Array.isArray(data?.posts) ? data.posts : []
   const images = []
+  /** download=false 이면 사진을 받지 않고 주소만(Max 대화용 자료 묶음) */
+  const imageUrls = []
   if (!posts.length) lines.push('최근 게시물: 볼 수 없음(개인 계정이거나 공식 API 로 읽지 못함)')
   else {
     lines.push('최근 게시물(최신순, 고정 게시물이 섞여 있을 수 있음):')
@@ -93,6 +101,10 @@ export async function igEvidence(username, data, now = Date.now()) {
     // 사진: 최근 90일 안의 게시물을 먼저
     const recent = posts.filter((p) => p.imageUrl).sort((a, b) => Number(Date.parse(b.timestamp) >= now - 90 * 864e5) - Number(Date.parse(a.timestamp) >= now - 90 * 864e5))
     for (const p of recent) {
+      if (!download) {
+        if (imageUrls.length < MAX_IMAGES) imageUrls.push({ url: p.imageUrl, label: `게시물 ${posts.indexOf(p) + 1} (${p.timestamp?.slice(0, 10) ?? ''})` })
+        continue
+      }
       if (images.length >= MAX_IMAGES) break
       const b = await imageBlock(p.imageUrl)
       if (b) {
@@ -100,15 +112,16 @@ export async function igEvidence(username, data, now = Date.now()) {
       }
     }
   }
-  return { text: lines.join('\n'), images, sources: posts.length }
+  return { text: lines.join('\n'), images, imageUrls, sources: posts.length }
 }
 
 /** 블로그: 최근 글 목록 + 리뷰로 보이는 글 1개의 본문·사진 */
-export async function blogEvidence(blogId, data, now = Date.now()) {
+export async function blogEvidence(blogId, data, now = Date.now(), { download = true } = {}) {
   const lines = [`[네이버 블로그] https://blog.naver.com/${blogId}`, `오늘(한국): ${kst(now)}`]
   if (data?.name) lines.push(`블로그 이름: ${data.name}`)
   if (data?.directory) lines.push(`블로그 주제: ${data.directory}`)
   const images = []
+  const imageUrls = []
   let list = []
   try {
     const res = await get(`https://m.blog.naver.com/api/blogs/${encodeURIComponent(blogId)}/post-list?categoryNo=0&itemCount=24&page=1`, { Referer: `https://m.blog.naver.com/${blogId}` })
@@ -120,19 +133,21 @@ export async function blogEvidence(blogId, data, now = Date.now()) {
       category: String(it.categoryName ?? ''),
       date: Number(it.addDate) ? kst(Number(it.addDate)) : '',
       at: Number(it.addDate) || 0,
+      // 다른 블로그 글을 옮겨 온 스크랩·공유 글은 본인 리뷰가 아니다
+      scraped: String(it.scraped) === 'true' || /^\s*\[(공유|스크랩)\]/.test(String(it.titleWithInspectMessage ?? '')) || /스크랩/.test(String(it.categoryName ?? '')),
     }))
   } catch {
     // 아래에서 처리
   }
   if (!list.length) {
     lines.push('최근 글: 볼 수 없음(비공개이거나 읽지 못함)')
-    return { text: lines.join('\n'), images, sources: 0 }
+    return { text: lines.join('\n'), images, imageUrls, sources: 0 }
   }
   lines.push('최근 글 목록(최신순):')
   list.forEach((p, i) => lines.push(`${i + 1}. ${p.date} [${p.category}] ${p.title}`))
   // 리뷰 후보: 최근 90일 제품 리뷰 → 이전 제품 리뷰 → 최근 30일 글(장소·음식 후기는 뒤로)
-  const best = (arr) => arr.filter((p) => reviewScore(p) >= 2).sort((a, b) => reviewScore(b) - reviewScore(a) || b.at - a.at)[0]
-  const pick = best(list.filter((p) => p.at >= now - 90 * 864e5)) ?? best(list) ?? list.find((p) => p.at >= now - 30 * 864e5) ?? list[0]
+  const best = (arr) => arr.filter((p) => !p.scraped && reviewScore(p) >= 2).sort((a, b) => reviewScore(b) - reviewScore(a) || b.at - a.at)[0]
+  const pick = best(list.filter((p) => p.at >= now - 90 * 864e5)) ?? best(list) ?? list.find((p) => !p.scraped && p.at >= now - 30 * 864e5) ?? list.find((p) => !p.scraped) ?? list[0]
   const url = `https://blog.naver.com/${blogId}/${pick.logNo}`
   try {
     const res = await get(`https://m.blog.naver.com/PostView.naver?blogId=${encodeURIComponent(blogId)}&logNo=${pick.logNo}`, { Referer: `https://m.blog.naver.com/${blogId}` })
@@ -154,7 +169,8 @@ export async function blogEvidence(blogId, data, now = Date.now()) {
       .trim()
     const imgs = [...body.matchAll(/data-lazy-src="([^"]+)"/g)].map((m) => m[1].replace(/&amp;/g, '&'))
     lines.push(`\n[평가 후보 글] ${pick.date} ${pick.title}\n주소: ${url}\n사진 ${imgs.length}장\n본문(앞부분): ${clip(text, 6000)}`)
-    for (const src of imgs.slice(0, 12)) {
+    if (!download) imgs.slice(0, MAX_IMAGES).forEach((src, i) => imageUrls.push({ url: src, label: `평가 후보 글의 사진 ${i + 1}`, referer: 'https://m.blog.naver.com/' }))
+    for (const src of download ? imgs.slice(0, 12) : []) {
       if (images.length >= MAX_IMAGES * 2) break
       const b = await imageBlock(src, 'https://m.blog.naver.com/')
       if (b) images.push({ type: 'text', text: `사진: 평가 후보 글의 사진 ${images.length / 2 + 1}` }, b)
@@ -162,7 +178,7 @@ export async function blogEvidence(blogId, data, now = Date.now()) {
   } catch {
     lines.push(`\n[평가 후보 글] ${pick.date} ${pick.title}\n주소: ${url}\n본문을 읽지 못했습니다(요약: ${clip(pick.brief, 300)})`)
   }
-  return { text: lines.join('\n'), images, sources: list.length }
+  return { text: lines.join('\n'), images, imageUrls, sources: list.length }
 }
 
 export class AiError extends Error {
@@ -248,3 +264,22 @@ export async function checkKey(apiKey) {
 }
 
 export const makeClient = (apiKey) => new Anthropic({ apiKey, maxRetries: 3, timeout: 180_000 })
+
+/** 밖에서 만든 초안(예: Claude Code 대화에서 매긴 결과)을 서버에 넣을 모양으로 정리한다 */
+export function normalizeDraft(kind, raw, source = 'Claude (Max 대화)') {
+  const reviewMax = kind === 'ig' ? 20 : 30
+  const num = (v, m) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(m, Math.round(v))) : null)
+  const str = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '')
+  const fit = raw?.fit ?? {}
+  const review = raw?.review ?? {}
+  const motive = raw?.motive ?? {}
+  return {
+    fit: { score: num(fit.score, 25), reason: str(fit.reason, 400) },
+    review: { score: num(review.score, reviewMax), reason: str(review.reason, 400), url: str(review.url, 500), date: str(review.date, 10), recent: Boolean(review.recent) },
+    motive: { score: num(motive.score, 15), reason: str(motive.reason, 300), keywords: (Array.isArray(motive.keywords) ? motive.keywords : []).slice(0, 6).map((k) => str(k, 20)) },
+    note: str(raw?.note, 300),
+    model: source,
+    cost: 0,
+    at: new Date().toISOString(),
+  }
+}

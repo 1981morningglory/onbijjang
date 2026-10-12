@@ -7,7 +7,7 @@
 import crypto from 'node:crypto'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
-import { AI_MODEL, AiError, blogEvidence, checkKey, draftScores, igEvidence, makeClient } from '../lib/ai.mjs'
+import { AI_MODEL, AiError, blogEvidence, checkKey, draftScores, igEvidence, makeClient, normalizeDraft, SYSTEM as AI_GUIDE } from '../lib/ai.mjs'
 import { BLOG_ID_RE, connectInstagram, fetchBlog, fetchIgApi, fetchIgPage, IG_USER_RE, resolveNaverMe, SnsError } from '../lib/sns.mjs'
 
 const IG_API_GAP_MS = 19_000 // 시간당 약 190번
@@ -412,6 +412,59 @@ export default async function snsRoutes(app, ctx) {
     dirty.add(j.id)
     res.json({ queued: n, ai: aiInfo(j) })
   })
+  /**
+   * Max 요금제(Claude Code 대화)로 초안을 매길 때 쓰는 평가 자료 묶음.
+   * 한 번에 25명까지: 공개 게시물 글과 사진 주소(사진은 받지 않음). 지원동기는 브라우저가 덧붙인다.
+   */
+  app.post('/api/sns/jobs/:id/ai-pack', requireAllowed, async (req, res) => {
+    const j = JOB_ID_RE.test(req.params.id) ? jobs.get(req.params.id) : null
+    if (!j) return res.status(404).json({ error: '없는 작업입니다.' })
+    const list = (Array.isArray(req.body?.targets) ? req.body.targets : []).slice(0, 25)
+    const now = Date.now()
+    const out = []
+    let i = 0
+    const worker = async () => {
+      while (i < list.length) {
+        const t = list[i++]
+        const kind = t?.kind === 'blog' ? 'blog' : t?.kind === 'ig' ? 'ig' : null
+        const it = kind && j.items.find((x) => x.kind === kind && x.key === t.key && x.state === 'done')
+        if (!it) continue
+        try {
+          const ev = kind === 'ig' ? await igEvidence(it.key, it.data, now, { download: false }) : await blogEvidence(it.id ?? it.key, it.data, now, { download: false })
+          out.push({ kind, key: it.key, account: kind === 'ig' ? `https://www.instagram.com/${it.key}/` : `https://blog.naver.com/${it.id ?? it.key}`, evidence: ev.text, images: ev.imageUrls })
+        } catch (err) {
+          out.push({ kind, key: it.key, error: err.message ?? String(err) })
+        }
+      }
+    }
+    await Promise.all([worker(), worker(), worker()])
+    res.json({ items: out, guide: AI_GUIDE })
+  })
+
+  /** Claude Code 대화에서 매긴 초안 결과 넣기: items = [{ kind, key, fit, review, motive, note }] */
+  app.post('/api/sns/jobs/:id/ai-import', requireAllowed, (req, res) => {
+    const j = JOB_ID_RE.test(req.params.id) ? jobs.get(req.params.id) : null
+    if (!j) return res.status(404).json({ error: '없는 작업입니다.' })
+    const list = Array.isArray(req.body?.items) ? req.body.items.slice(0, 5000) : []
+    j.evals ??= {}
+    let n = 0
+    const skipped = []
+    for (const r of list) {
+      const kind = r?.kind === 'blog' ? 'blog' : r?.kind === 'ig' ? 'ig' : null
+      const key = typeof r?.key === 'string' ? r.key : ''
+      if (!kind || !j.items.some((x) => x.kind === kind && x.key === key)) {
+        skipped.push(`${r?.kind}:${r?.key}`)
+        continue
+      }
+      const id = `${kind}:${key}`
+      j.evals[id] = { ...(j.evals[id] ?? {}), ai: normalizeDraft(kind, r) }
+      n++
+    }
+    j.aiStats = { ...(j.aiStats ?? {}), done: (j.aiStats?.done ?? 0) + n }
+    dirty.add(j.id)
+    res.json({ imported: n, skipped: skipped.slice(0, 20), skippedCount: skipped.length })
+  })
+
   app.post('/api/sns/jobs/:id/ai/stop', requireAllowed, (req, res) => {
     const j = JOB_ID_RE.test(req.params.id) ? jobs.get(req.params.id) : null
     if (!j) return res.status(404).json({ error: '없는 작업입니다.' })
