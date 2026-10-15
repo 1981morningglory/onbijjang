@@ -119,24 +119,24 @@ export interface OutputSpec {
 export const OUTPUTS: OutputSpec[] = [
   {
     kind: 'warehouse',
-    label: '창고 전달',
-    suffix: '창고전달',
+    label: '센터주문서',
+    suffix: '센터주문서',
     cols: [COL.no, COL.receiver, COL.code, COL.name, COL.option, COL.qty, COL.message],
     widths: [3.5, 15.6, 14.5, 31.2, 13.2, 4, 9.4],
     message: 'jeju',
   },
   {
     kind: 'cj',
-    label: 'CJ대한통운 업로드',
-    suffix: 'CJ대한통운업로드',
+    label: 'CJ택배',
+    suffix: 'CJ택배',
     cols: [COL.no, COL.orderNo, COL.buyer, COL.receiver, COL.phone1, COL.phone2, COL.address, COL.code, COL.name, COL.option, COL.qty, COL.message, COL.mall, COL.sabangNo, COL.warehouse],
     widths: [3.5, 18.1, 16.6, 21.4, 14.2, 14.2, 76.9, 14.5, 31.2, 13.2, 4, 39.4, 10.4, 11.9, 15.6],
     message: 'original',
   },
   {
     kind: 'drive',
-    label: '구글 드라이브 업로드',
-    suffix: '구글드라이브업로드',
+    label: '구글드라이브용',
+    suffix: '구글드라이브용',
     cols: [COL.no, COL.orderNo, COL.buyer, COL.receiver, COL.phone1, COL.phone2, COL.code, COL.name, COL.option, COL.qty, COL.message, COL.mall, COL.sabangNo],
     widths: [3.5, 18.1, 16.6, 21.4, 14.2, 14.2, 14.5, 31.2, 13.2, 4, 11, 10.4, 11.9],
     message: 'jeju',
@@ -159,6 +159,11 @@ export function buildOutput(spec: OutputSpec, rows: OrderRow[]): Array<Array<str
   })
   return out
 }
+
+/** 업로드 시각 '13:05' (한국 시각) */
+export const timeKst = (iso: string) => new Date(Date.parse(iso) + 9 * 3600_000).toISOString().slice(11, 16)
+/** 업로드 일시 '2026-10-15 13:05' (한국 시각) */
+export const dateTimeKst = (iso: string) => new Date(Date.parse(iso) + 9 * 3600_000).toISOString().slice(0, 16).replace('T', ' ')
 
 /** '2026-10-15', 2 → '20261015_2차' */
 export const batchStamp = (date: string, seq: number) => `${date.replace(/-/g, '')}_${seq}차`

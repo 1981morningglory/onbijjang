@@ -159,7 +159,7 @@ export const TOOLS: ToolDef[] = [
   },
   {
     id: 'orders', group: 'doc', title: '주문서만들기(온비팀전용)',
-    summary: '사방넷 주문서로 창고 전달·CJ대한통운·구글 드라이브 파일을 한 번에 만들고, 날짜·차수별로 쌓아 고객·상품·주문을 조회',
+    summary: '사방넷 주문서로 센터주문서·CJ택배·구글드라이브용 파일을 한 번에 만들고, 날짜·차수별로 쌓아 고객·상품·주문을 조회',
     keywords: ['사방넷', '주문서', '발주서', '창고', 'CJ', '대한통운', '택배', '송장', '구글드라이브', '주문조회', '고객조회', '온비'],
     icon: ClipboardList, art: 'quote', local: false, wide: true, roles: ['member', 'staff', 'admin'],
     component: lazy(() => import('@/tools/orders')),

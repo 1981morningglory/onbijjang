@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildOutput, cellValue, COL, dateFromName, JEJU_NOTE, looksLikeSabangnet, needsProduct, OUTPUTS, outputFileName, productKey, sortRows, type OrderRow } from './logic'
+import { buildOutput, cellValue, COL, dateFromName, JEJU_NOTE, looksLikeSabangnet, needsProduct, OUTPUTS, outputFileName, productKey, sortRows, timeKst, type OrderRow } from './logic'
 
 const row = (o: Partial<Record<string, string | number | null>>): OrderRow => ({
   [COL.orderNo]: '1',
@@ -83,6 +83,7 @@ describe('결과 파일', () => {
     const r = row({ [COL.code]: null, [COL.rawName]: '점착메모지 블루', [COL.rawOption]: '100매:블루' })
     expect(needsProduct(r)).toBe(true)
     expect(productKey(r)).toBe('점착메모지 블루|100매:블루')
-    expect(outputFileName(spec('cj'), '2026-10-15', 2)).toBe('20261015_2차_CJ대한통운업로드.xlsx')
+    expect(outputFileName(spec('cj'), '2026-10-15', 2)).toBe('20261015_2차_CJ택배.xlsx')
+    expect(timeKst('2026-10-15T04:05:00.000Z')).toBe('13:05')
   })
 })
