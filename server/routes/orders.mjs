@@ -29,6 +29,13 @@ async function writeJson(file, value) {
 }
 
 const str = (v) => (v == null ? '' : String(v).trim())
+/** 결제금액 칸(사방넷에서 받아 올 때 넣었으면): 결제금액·주문금액·총금액·판매금액 */
+const AMOUNT_RE = /결제\s*금액|주문\s*금액|총\s*금액|판매\s*금액|결제액/
+const num = (v) => {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0
+  const n = Number(str(v).replace(/[^\d.-]/g, ''))
+  return Number.isFinite(n) ? n : 0
+}
 const digits = (v) => str(v).replace(/\D/g, '')
 
 /** 줄 하나를 저장할 모양으로(칸 이름 80자, 값은 글자 1000자·숫자) */
@@ -56,7 +63,7 @@ const FIELDS = {
 }
 
 export default async function ordersRoutes(app, ctx) {
-  const { isAdmin, currentUser, DATA_DIR, TRUSTED } = ctx
+  const { isAdmin, requireAdmin, currentUser, DATA_DIR, TRUSTED } = ctx
   const DIR = path.join(DATA_DIR, 'orders')
   const batchFile = (id) => path.join(DIR, 'batches', `${id}.json`)
   const PRODUCTS = path.join(DIR, 'products.json')
@@ -94,7 +101,39 @@ export default async function ordersRoutes(app, ctx) {
   }
   const who = (req) => currentUser?.(req)?.name ?? (isAdmin(req) ? '관리자' : '팀')
 
-  const brief = (b) => ({ id: b.id, date: b.date, seq: b.seq, fileName: b.fileName, sheetName: b.sheetName, uploadedAt: b.uploadedAt, uploadedBy: b.uploadedBy, count: b.rows.length, qty: b.rows.reduce((s, r) => s + (Number(r['수량']) || 0), 0), invoices: b.rows.filter((r) => str(r['송장번호'])).length })
+  const brief = (b) => {
+    const amountCol = b.cols.find((c) => AMOUNT_RE.test(c)) ?? null
+    return {
+      id: b.id,
+      date: b.date,
+      seq: b.seq,
+      fileName: b.fileName,
+      sheetName: b.sheetName,
+      uploadedAt: b.uploadedAt,
+      uploadedBy: b.uploadedBy,
+      editedAt: b.editedAt ?? null,
+      /** 주문줄수(센터주문서 NO 의 마지막 번호) */
+      count: b.rows.length,
+      /** 주문건수(주문번호 수) */
+      orders: new Set(b.rows.map((r) => `${str(r['쇼핑몰'])}|${str(r['주문번호'])}`)).size,
+      qty: b.rows.reduce((s, r) => s + (Number(r['수량']) || 0), 0),
+      /** 주문총액(결제금액 칸이 있을 때만) */
+      amount: amountCol ? b.rows.reduce((s, r) => s + num(r[amountCol]), 0) : null,
+      invoices: b.rows.filter((r) => str(r['송장번호'])).length,
+    }
+  }
+  /** 검색어에 맞는 줄인지 */
+  function matcher(q, field) {
+    const words = str(q).slice(0, 200).toLowerCase().split(/\s+/).filter(Boolean)
+    if (!words.length) return null
+    const f = Object.hasOwn(FIELDS, field) ? field : 'all'
+    return (r) => {
+      const keys = f === 'all' ? Object.keys(r) : FIELDS[f]
+      const hay = keys.map((k) => str(r[k]).toLowerCase()).join('\n')
+      const hayDigits = keys.map((k) => digits(r[k])).join('\n')
+      return words.every((w) => hay.includes(w) || (/\d/.test(w) && digits(w).length >= 3 && hayDigits.includes(digits(w))))
+    }
+  }
   const nextSeq = (date) => Math.max(0, ...[...batches.values()].filter((b) => b.date === date).map((b) => b.seq)) + 1
 
   /** 지난 주문서에서 상품코드 → 상품명·옵션(새 코드를 넣을 때 이름을 채워 준다) */
@@ -107,7 +146,8 @@ export default async function ordersRoutes(app, ctx) {
   }
 
   app.get('/api/orders/status', async (req, res) => {
-    res.json({ allowed: await allowed(req) })
+    // admin: 전체마스터(관리자) — 주문서 수정·삭제는 관리자만
+    res.json({ allowed: await allowed(req), admin: isAdmin(req) })
   })
 
   /** 이 날짜에 올리면 몇 차가 되는지 */
@@ -159,16 +199,33 @@ export default async function ordersRoutes(app, ctx) {
     }
   })
 
-  /** 차수 목록: ?from=&to= */
+  /**
+   * 차수 목록: ?from=&to=&q=&field=&mall=
+   * 검색어가 있으면 맞는 줄이 있는 차수만, 맞는 줄 번호(lines)와 함께.
+   */
   app.get('/api/orders/batches', requireAllowed, (req, res) => {
     const from = String(req.query.from ?? '')
     const to = String(req.query.to ?? '')
-    const list = [...batches.values()]
-      .filter((b) => (!DATE_RE.test(from) || b.date >= from) && (!DATE_RE.test(to) || b.date <= to))
-      .sort((a, b) => b.date.localeCompare(a.date) || b.seq - a.seq)
-      .slice(0, 500)
-      .map(brief)
-    res.json({ batches: list })
+    const mall = str(req.query.mall)
+    const match = matcher(req.query.q, String(req.query.field ?? 'all'))
+    const list = []
+    for (const b of [...batches.values()].sort((a, c) => c.date.localeCompare(a.date) || c.seq - a.seq)) {
+      if ((DATE_RE.test(from) && b.date < from) || (DATE_RE.test(to) && b.date > to)) continue
+      if (!match && !mall) {
+        list.push(brief(b))
+        continue
+      }
+      const lines = []
+      b.rows.forEach((r, i) => {
+        if (mall && str(r['쇼핑몰']) !== mall) return
+        if (match && !match(r)) return
+        lines.push(i + 1)
+      })
+      if (lines.length) list.push({ ...brief(b), lines })
+      if (list.length >= 500) break
+    }
+    const malls = [...new Set([...batches.values()].flatMap((b) => b.rows.map((r) => str(r['쇼핑몰']))).filter(Boolean))].sort()
+    res.json({ batches: list, malls, hasAmount: [...batches.values()].some((b) => b.cols.some((c) => AMOUNT_RE.test(c))) })
   })
 
   app.get('/api/orders/batches/:id', requireAllowed, (req, res) => {
@@ -177,8 +234,39 @@ export default async function ordersRoutes(app, ctx) {
     res.json({ batch: { ...brief(b), cols: b.cols, rows: b.rows } })
   })
 
-  /** 잘못 올린 차수 지우기(차수 번호는 다시 매기지 않는다 — 이미 보낸 파일 이름과 어긋나지 않게) */
-  app.delete('/api/orders/batches/:id', requireAllowed, async (req, res) => {
+  /** 차수 고치기(전체마스터만): { date?, seq? } — 같은 날짜·차수가 이미 있으면 거절 */
+  app.patch('/api/orders/batches/:id', requireAdmin, async (req, res) => {
+    const b = ID_RE.test(req.params.id) ? batches.get(req.params.id) : null
+    if (!b) return res.status(404).json({ error: '없는 주문서입니다.' })
+    const date = req.body?.date === undefined ? b.date : String(req.body.date)
+    const seq = req.body?.seq === undefined ? b.seq : Number(req.body.seq)
+    if (!DATE_RE.test(date)) return res.status(400).json({ error: '날짜를 확인해 주세요.' })
+    if (!Number.isInteger(seq) || seq < 1 || seq > 99) return res.status(400).json({ error: '차수는 1~99 사이 숫자로 넣어 주세요.' })
+    if ([...batches.values()].some((x) => x.id !== b.id && x.date === date && x.seq === seq)) return res.status(400).json({ error: `${date} ${seq}차가 이미 있습니다.` })
+    await serial(async () => {
+      Object.assign(b, { date, seq, editedAt: new Date().toISOString(), editedBy: who(req) })
+      await writeJson(batchFile(b.id), b)
+    })
+    res.json({ batch: brief(b) })
+  })
+  /** 주문 한 줄 고치기(전체마스터만): { row } — 칸 이름 → 값 */
+  app.patch('/api/orders/batches/:id/rows/:line', requireAdmin, async (req, res) => {
+    const b = ID_RE.test(req.params.id) ? batches.get(req.params.id) : null
+    const i = Number(req.params.line) - 1
+    if (!b || !Number.isInteger(i) || !b.rows[i]) return res.status(404).json({ error: '없는 주문입니다.' })
+    const next = { ...b.rows[i], ...cleanRow(req.body?.row) }
+    await serial(async () => {
+      b.rows[i] = next
+      for (const k of Object.keys(next)) if (!b.cols.includes(k)) b.cols.push(k)
+      b.editedAt = new Date().toISOString()
+      b.editedBy = who(req)
+      await writeJson(batchFile(b.id), b)
+    })
+    res.json({ row: next })
+  })
+
+  /** 잘못 올린 차수 지우기(전체마스터만). 차수 번호는 다시 매기지 않는다 — 이미 보낸 파일 이름과 어긋나지 않게 */
+  app.delete('/api/orders/batches/:id', requireAdmin, async (req, res) => {
     const b = ID_RE.test(req.params.id) ? batches.get(req.params.id) : null
     if (!b) return res.status(404).json({ error: '없는 주문서입니다.' })
     await serial(async () => {
