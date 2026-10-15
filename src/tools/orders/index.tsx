@@ -28,7 +28,7 @@ import { Link } from 'react-router'
 import { useLoginDialog } from '@/app/LoginDialog'
 import { api, ApiError } from '@/lib/api'
 import { downloadBlob, makeZip } from '@/lib/files'
-import { Badge, Button, Callout, Dialog, Dropzone, EmptyState, Field, Panel, Select, Spinner, Switch, Tabs, TextInput, toast } from '@/ui'
+import { Badge, Button, Callout, Dialog, Dropzone, EmptyState, Field, Panel, Segmented, Select, Spinner, Switch, Tabs, TextInput, toast } from '@/ui'
 import { readAnyTable, readSabangnet, writeOutput } from './excel'
 import {
   batchStamp,
@@ -36,8 +36,6 @@ import {
   dateFromName,
   dateTimeKst,
   DEFAULT_WAREHOUSE,
-  findInvoiceCol,
-  findKeyCols,
   isJeju,
   needsProduct,
   OUTPUTS,
@@ -66,10 +64,69 @@ interface BatchBrief {
   orders: number
   qty: number
   amount: number | null
-  invoices: number
+  /** 송장이 붙은 주문 수 · 송장(운송장) 수 */
+  invoiceOrders: number
+  waybills: number
   /** 검색어에 맞는 줄 번호(검색할 때만) */
   lines?: number[]
 }
+interface Waybill {
+  invoice: string
+  date?: string
+  pickupDate?: string
+  status?: string
+  box?: string
+  fare?: number
+  receiver?: string
+}
+interface CjDay {
+  date: string
+  uploads: number
+  lastUploadAt: string | null
+  lastBy: string
+  fileNames: string[]
+  /** 운송장(상자) 수 · 상품 줄 수 */
+  waybills: number
+  lines: number
+  orders: number
+  matched: number
+  fare: number
+}
+interface CjWaybill extends Waybill {
+  orderNo: string
+  sabangNo: string
+  mall: string
+  name: string
+  option: string
+  qty: number
+  home: { batchId: string; date: string; seq: number; buyer: string; mall: string } | null
+}
+/** CJ대한통운 배송조회 */
+const trackUrl = (invoice: string) => `https://trace.cjlogistics.com/next/tracking.html?wblNo=${invoice.replace(/\D/g, '')}`
+
+/** 운송장 번호 칩(누르면 CJ 배송조회) */
+function WaybillChips({ list }: { list: Waybill[] }) {
+  if (!list.length) return <span className="text-xs text-faint">-</span>
+  return (
+    <div className="flex flex-wrap gap-1">
+      {list.map((w) => (
+        <a
+          key={w.invoice}
+          href={trackUrl(w.invoice)}
+          target="_blank"
+          rel="noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          title={[w.pickupDate && `집화 ${w.pickupDate}`, w.status, w.box && `박스 ${w.box}`].filter(Boolean).join(' · ') || 'CJ대한통운 배송조회'}
+          className="num inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-line bg-surface px-2 py-0.5 text-xs text-ink-2 transition-colors duration-150 hover:border-brand/50 hover:bg-brand-soft hover:text-brand-ink"
+        >
+          <Truck className="size-3" aria-hidden />
+          {w.invoice}
+        </a>
+      ))}
+    </div>
+  )
+}
+
 interface Mapping {
   code: string
   name: string
@@ -402,7 +459,7 @@ function Make({ onGoList }: { onGoList: () => void }) {
                 {missing > 0 && <Switch className="ml-auto" checked={skip} onChange={setSkip} label="입력하지 않고 그대로 만들기" hint="빈 상품코드는 비워 두고, 상품명·옵션은 쇼핑몰 것을 넣습니다." />}
               </div>
               <div className="overflow-x-auto rounded-md border border-line bg-panel">
-                <table className="w-full min-w-[760px] text-sm">
+                <table className="w-full min-w-[760px] text-sm [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
                   <thead className="bg-surface text-left text-xs text-muted">
                     <tr>
                       <th className="px-3 py-2">쇼핑몰 상품명 · 옵션</th>
@@ -491,7 +548,7 @@ function Make({ onGoList }: { onGoList: () => void }) {
 function RowsTable({ rows }: { rows: OrderRow[] }) {
   return (
     <div className="mt-2 max-h-96 overflow-auto rounded-md border border-line">
-      <table className="w-full min-w-[900px] text-xs">
+      <table className="w-full min-w-[900px] text-xs [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
         <thead className="sticky top-0 bg-surface text-left text-muted">
           <tr>
             {['NO', COL.mall, COL.orderNo, COL.receiver, COL.code, COL.name, COL.option, COL.qty].map((h) => (
@@ -574,24 +631,26 @@ function OrdersList({ admin }: { admin: boolean }) {
     }
   }
 
-  const importInvoices = async (file: File) => {
+  const [view, setView] = useState<'orders' | 'cj'>('orders')
+  const [cjTick, setCjTick] = useState(0)
+  const importCj = async (file: File) => {
     try {
       const t = await readAnyTable(file)
-      const inv = findInvoiceCol(t.cols)
-      const keys = findKeyCols(t.cols)
-      if (!inv) throw new Error('‘송장번호’(또는 ‘운송장번호’) 칸을 찾지 못했습니다.')
-      if (!keys.sabangNo && !keys.orderNo) throw new Error('‘사방넷주문번호’ 또는 ‘주문번호’ 칸이 있어야 주문과 맞출 수 있습니다.')
-      const items = t.rows.map((r) => ({ invoice: r[inv], sabangNo: keys.sabangNo ? r[keys.sabangNo] : undefined, orderNo: keys.orderNo ? r[keys.orderNo] : undefined })).filter((x) => x.invoice)
-      const r = await api<{ matched: number; given: number }>('/orders/invoices', { method: 'POST', body: { items } })
-      toast.success(`송장번호 ${fmt(r.given)}개 중 주문 ${fmt(r.matched)}줄에 넣었습니다.`)
+      if (!t.cols.some((c) => /운송장번호|송장번호/.test(c))) throw new Error('‘운송장번호’ 칸을 찾지 못했습니다. CJ대한통운에서 받은 송장 파일인지 확인해 주세요.')
+      if (!t.cols.some((c) => /고객주문번호|^주문번호$/.test(c))) throw new Error('‘고객주문번호’ 칸이 있어야 주문과 맞출 수 있습니다.')
+      const r = await api<{ day: CjDay; given: number; lines: number; added: number; unmatched: string[] }>('/orders/cj', { method: 'POST', body: { fileName: file.name, rows: t.rows } })
+      toast.success(
+        `${r.day.date} 송장 ${fmt(r.given)}개(${fmt(r.lines)}줄)를 넣었습니다${r.added < r.lines ? `(이미 있던 ${fmt(r.lines - r.added)}줄은 새 내용으로)` : ''}. 그날 주문 ${fmt(r.day.matched)}건에 연결${r.unmatched.length ? ` · 주문서에 없는 주문 ${r.unmatched.length}건` : ''}.`,
+      )
+      setCjTick((n) => n + 1)
       void refresh()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '송장번호를 넣지 못했습니다.')
+      toast.error(err instanceof Error ? err.message : '송장 파일을 넣지 못했습니다.')
     }
   }
 
   const showAmount = Boolean(data?.hasAmount)
-  const colCount = 6 + (showAmount ? 1 : 0) + (admin ? 1 : 0)
+  const colCount = 7 + (showAmount ? 1 : 0) + (admin ? 1 : 0)
   const searching = Boolean(applied.q.trim()) || Boolean(mall)
 
   return (
@@ -639,10 +698,26 @@ function OrdersList({ admin }: { admin: boolean }) {
 
       <Panel className="flex flex-col gap-3 p-4">
         <div className="flex flex-wrap items-center gap-2">
-          <h3 className="text-sm font-bold text-ink">{searching ? `‘${applied.q || mall}’ 주문이 있는 주문서` : '주문서'}</h3>
-          {data && <span className="text-xs text-muted">{fmt(data.batches.length)}개 차수</span>}
-          <Button size="sm" variant="ghost" icon={FileUp} className="ml-auto" onClick={() => invoiceRef.current?.click()}>
-            송장번호 넣기
+          <Segmented<'orders' | 'cj'>
+            label="보기"
+            size="sm"
+            value={view}
+            onValue={setView}
+            options={[
+              { value: 'orders', label: '주문서' },
+              { value: 'cj', label: 'CJ 송장' },
+            ]}
+          />
+          {view === 'orders' ? (
+            <>
+              <h3 className="text-sm font-bold text-ink">{searching ? `‘${applied.q || mall}’ 주문이 있는 주문서` : '날짜·차수별 주문서'}</h3>
+              {data && <span className="text-xs text-muted">{fmt(data.batches.length)}개 차수</span>}
+            </>
+          ) : (
+            <h3 className="text-sm font-bold text-ink">집화 날짜별 CJ 송장</h3>
+          )}
+          <Button size="sm" variant="secondary" icon={Truck} className="ml-auto" onClick={() => invoiceRef.current?.click()}>
+            CJ 송장 파일 올리기
           </Button>
           <input
             ref={invoiceRef}
@@ -652,11 +727,13 @@ function OrdersList({ admin }: { admin: boolean }) {
             onChange={(e) => {
               const f = e.target.files?.[0]
               e.target.value = ''
-              if (f) void importInvoices(f)
+              if (f) void importCj(f)
             }}
           />
         </div>
-        {!data ? (
+        {view === 'cj' ? (
+          <CjList admin={admin} from={from} to={to} tick={cjTick} />
+        ) : !data ? (
           <div className="flex items-center gap-2 py-10 text-muted">
             <Spinner /> 불러오는 중
           </div>
@@ -666,7 +743,7 @@ function OrdersList({ admin }: { admin: boolean }) {
           </EmptyState>
         ) : (
           <div className="overflow-x-auto rounded-lg border border-line">
-            <table className="w-full min-w-[980px] text-sm">
+            <table className="w-full min-w-[980px] text-sm [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
               <thead className="bg-surface text-left text-xs text-muted">
                 <tr>
                   <th className="px-3 py-2.5">주문서 날짜(차수)</th>
@@ -674,6 +751,7 @@ function OrdersList({ admin }: { admin: boolean }) {
                   <th className="px-3 py-2.5 text-right">주문건수</th>
                   <th className="px-3 py-2.5 text-right">주문줄수</th>
                   {showAmount && <th className="px-3 py-2.5 text-right">주문총액</th>}
+                  <th className="px-3 py-2.5 text-right">송장</th>
                   <th className="px-3 py-2.5">첨부파일</th>
                   {admin && <th className="px-3 py-2.5" />}
                 </tr>
@@ -703,6 +781,15 @@ function OrdersList({ admin }: { admin: boolean }) {
                           <td className="num px-3 py-2.5 text-right font-semibold text-ink">{fmt(b.orders)}</td>
                           <td className="num px-3 py-2.5 text-right text-ink-2">{fmt(b.count)}</td>
                           {showAmount && <td className="num px-3 py-2.5 text-right text-ink-2">{b.amount != null ? `${fmt(b.amount)}원` : '-'}</td>}
+                          <td className="num whitespace-nowrap px-3 py-2.5 text-right" title={`송장 ${fmt(b.waybills)}개 · 송장이 붙은 주문 ${fmt(b.invoiceOrders)} / ${fmt(b.orders)}건`}>
+                            {b.waybills ? (
+                              <span className={clsx('font-semibold', b.invoiceOrders >= b.orders ? 'text-brand-ink' : 'text-warn')}>
+                                {fmt(b.invoiceOrders)}/{fmt(b.orders)}건
+                              </span>
+                            ) : (
+                              <span className="text-faint">-</span>
+                            )}
+                          </td>
                           <td className="px-3 py-2">
                             <FileChips
                               load={async () => {
@@ -738,7 +825,10 @@ function OrdersList({ admin }: { admin: boolean }) {
             </table>
           </div>
         )}
-        {admin && <p className="text-xs text-muted">고치기·지우기는 전체마스터(관리자)에게만 보입니다.</p>}
+        <p className="text-xs text-muted">
+          CJ 송장 파일은 하루 중간이든 마감 때든 올리면 고객주문번호로 주문에 붙습니다(같은 날 여러 번 올려도 겹치지 않게 합칩니다). 한 주문에 송장이 여러 개면 모두 보입니다.
+          {admin && ' 고치기·지우기는 전체마스터(관리자)에게만 보입니다.'}
+        </p>
       </Panel>
       {editing && (
         <EditBatch
@@ -806,16 +896,15 @@ const DETAIL_COLS: Array<[string, string]> = [
   [COL.name, '상품명'],
   [COL.option, '옵션'],
   [COL.qty, '수량'],
-  [COL.invoice, '송장번호'],
 ]
 
 function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin: boolean }) {
-  const [batch, setBatch] = useState<(BatchBrief & { cols: string[]; rows: OrderRow[] }) | null>(null)
+  const [batch, setBatch] = useState<(BatchBrief & { cols: string[]; rows: OrderRow[]; waybills: Record<string, Waybill[]> }) | null>(null)
   const [all, setAll] = useState(!lines)
   const [open, setOpen] = useState<number | null>(null)
   const [edit, setEdit] = useState<number | null>(null)
   const load = useCallback(() => {
-    api<{ batch: BatchBrief & { cols: string[]; rows: OrderRow[] } }>(`/orders/batches/${id}`)
+    api<{ batch: BatchBrief & { cols: string[]; rows: OrderRow[]; waybills: Record<string, Waybill[]> } }>(`/orders/batches/${id}`)
       .then((r) => setBatch(r.batch))
       .catch((err) => toast.error(err instanceof Error ? err.message : '불러오지 못했습니다.'))
   }, [id])
@@ -847,14 +936,15 @@ function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin
         )}
       </div>
       <div className="overflow-x-auto rounded-md border border-line bg-panel">
-        <table className="w-full min-w-[1100px] text-sm">
+        <table className="w-full min-w-[1100px] text-sm [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
           <thead className="bg-surface text-left text-xs text-muted">
             <tr>
               <th className="px-2 py-1.5">NO</th>
-              {DETAIL_COLS.map(([, l]) => (
-                <th key={l} className="px-2 py-1.5">
-                  {l}
-                </th>
+              {DETAIL_COLS.map(([c, l]) => (
+                <Fragment key={l}>
+                  <th className="px-2 py-1.5">{l}</th>
+                  {c === COL.orderNo && <th className="px-2 py-1.5">송장번호(CJ)</th>}
+                </Fragment>
               ))}
             </tr>
           </thead>
@@ -864,14 +954,25 @@ function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin
                 <tr className={clsx('cursor-pointer border-t border-line hover:bg-surface', open === n && 'bg-surface', pick.has(n) && all && lines && 'bg-mark-soft')} onClick={() => setOpen(open === n ? null : n)}>
                   <td className="num px-2 py-1.5 text-muted">{n}</td>
                   {DETAIL_COLS.map(([c]) => (
-                    <td key={c} className={clsx('px-2 py-1.5', [COL.qty, COL.orderNo, COL.code, COL.invoice, COL.phone1].includes(c as never) && 'num', c === COL.qty && 'text-right')}>
-                      {str(r[c])}
-                    </td>
+                    <Fragment key={c}>
+                      <td className={clsx('px-2 py-1.5', [COL.qty, COL.orderNo, COL.code, COL.phone1].includes(c as never) && 'num', c === COL.qty && 'text-right')}>{str(r[c])}</td>
+                      {c === COL.orderNo && (
+                        <td className="px-2 py-1.5">
+                          <WaybillChips list={batch.waybills[str(r[COL.orderNo])] ?? []} />
+                        </td>
+                      )}
+                    </Fragment>
                   ))}
                 </tr>
                 {open === n && (
                   <tr className="border-t border-line bg-sunken">
-                    <td colSpan={DETAIL_COLS.length + 1} className="px-3 py-2">
+                    <td colSpan={DETAIL_COLS.length + 2} className="px-3 py-2">
+                      {(batch.waybills[str(r[COL.orderNo])] ?? []).length > 0 && (
+                        <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+                          <span className="font-semibold text-ink-2">주문번호 {str(r[COL.orderNo])}의 송장 {batch.waybills[str(r[COL.orderNo])].length}개</span>
+                          <WaybillChips list={batch.waybills[str(r[COL.orderNo])]} />
+                        </div>
+                      )}
                       <dl className="grid gap-x-6 gap-y-1 text-xs sm:grid-cols-2 lg:grid-cols-3">
                         {Object.entries(r)
                           .filter(([key]) => key !== 'NO')
@@ -956,5 +1057,157 @@ function EditRow({ batchId, line, row, cols, onClose, onDone }: { batchId: strin
         ))}
       </div>
     </Dialog>
+  )
+}
+
+// ── CJ 송장: 집화 날짜별 목록 → 펼치면 그날 운송장 ──────────────
+function CjList({ admin, from, to, tick }: { admin: boolean; from: string; to: string; tick: number }) {
+  const [days, setDays] = useState<CjDay[] | null>(null)
+  const [open, setOpen] = useState<string | null>(null)
+  const load = useCallback(async () => {
+    try {
+      setDays((await api<{ days: CjDay[] }>(`/orders/cj?${new URLSearchParams({ from, to })}`)).days)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '송장 목록을 불러오지 못했습니다.')
+    }
+  }, [from, to])
+  useEffect(() => {
+    void load()
+  }, [load, tick])
+  const remove = async (d: CjDay) => {
+    if (!confirm(`${d.date} CJ 송장 ${d.waybills}개를 지울까요? 주문 조회에서 이 날 송장번호가 사라집니다.`)) return
+    try {
+      await api(`/orders/cj/${d.date}`, { method: 'DELETE' })
+      toast.success('지웠습니다.')
+      void load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '지우지 못했습니다.')
+    }
+  }
+  if (!days)
+    return (
+      <div className="flex items-center gap-2 py-10 text-muted">
+        <Spinner /> 불러오는 중
+      </div>
+    )
+  if (!days.length)
+    return (
+      <EmptyState icon={Truck} title="올린 CJ 송장 파일이 없습니다">
+        ‘CJ 송장 파일 올리기’로 CJ대한통운에서 받은 송장 엑셀을 올리면 집화 날짜별로 쌓이고, 주문 조회에 송장번호가 붙습니다.
+      </EmptyState>
+    )
+  const cols = 6 + (admin ? 1 : 0)
+  return (
+    <div className="overflow-x-auto rounded-lg border border-line">
+      <table className="w-full min-w-[860px] text-sm [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
+        <thead className="bg-surface text-left text-xs text-muted">
+          <tr>
+            <th className="px-3 py-2.5">집화 날짜</th>
+            <th className="px-3 py-2.5">마지막 업로드</th>
+            <th className="px-3 py-2.5 text-right">송장</th>
+            <th className="px-3 py-2.5 text-right">주문</th>
+            <th className="px-3 py-2.5 text-right">주문서와 연결</th>
+            <th className="px-3 py-2.5 text-right">운임 합계</th>
+            {admin && <th className="px-3 py-2.5" />}
+          </tr>
+        </thead>
+        <tbody>
+          {days.map((d) => (
+            <Fragment key={d.date}>
+              <tr className={clsx('cursor-pointer border-t border-line transition-colors duration-150 hover:bg-surface', open === d.date && 'bg-surface')} onClick={() => setOpen(open === d.date ? null : d.date)}>
+                <td className="whitespace-nowrap px-3 py-2.5">
+                  <span className="inline-flex items-center gap-1.5 font-semibold text-ink">
+                    {open === d.date ? <ChevronDown className="size-4 text-muted" aria-hidden /> : <ChevronRight className="size-4 text-muted" aria-hidden />}
+                    <span className="num">{d.date}</span>
+                    <span className="text-xs font-normal text-muted">({weekday(d.date)})</span>
+                  </span>
+                </td>
+                <td className="num whitespace-nowrap px-3 py-2.5 text-ink-2" title={d.fileNames.join(', ')}>
+                  {d.lastUploadAt ? dateTimeKst(d.lastUploadAt) : '-'}
+                  {d.uploads > 1 && <span className="ml-1 text-xs text-muted">({d.uploads}번 올림)</span>}
+                </td>
+                <td className="num px-3 py-2.5 text-right" title={`상품 ${fmt(d.lines)}줄`}>
+                  <span className="font-semibold text-ink">{fmt(d.waybills)}개</span> <span className="text-xs text-muted">({fmt(d.lines)}줄)</span>
+                </td>
+                <td className="num px-3 py-2.5 text-right text-ink-2">{fmt(d.orders)}</td>
+                <td className={clsx('num px-3 py-2.5 text-right font-semibold', d.matched >= d.orders ? 'text-brand-ink' : 'text-warn')}>
+                  {fmt(d.matched)}/{fmt(d.orders)}건
+                </td>
+                <td className="num px-3 py-2.5 text-right text-ink-2">{fmt(d.fare)}원</td>
+                {admin && (
+                  <td className="px-2 py-2 text-right" onClick={(e) => e.stopPropagation()}>
+                    <Button size="sm" variant="ghost" icon={Trash2} aria-label="이 날 송장 지우기" title="지우기" onClick={() => void remove(d)} />
+                  </td>
+                )}
+              </tr>
+              {open === d.date && (
+                <tr className="border-t border-line">
+                  <td colSpan={cols} className="bg-paper px-3 py-3">
+                    <div className="w-0 min-w-full">
+                      <CjDayDetail date={d.date} />
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </Fragment>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function CjDayDetail({ date }: { date: string }) {
+  const [list, setList] = useState<CjWaybill[] | null>(null)
+  useEffect(() => {
+    api<{ waybills: CjWaybill[] }>(`/orders/cj/${date}`)
+      .then((r) => setList(r.waybills))
+      .catch((err) => toast.error(err instanceof Error ? err.message : '불러오지 못했습니다.'))
+  }, [date])
+  if (!list)
+    return (
+      <div className="flex items-center gap-2 py-4 text-muted">
+        <Spinner /> 송장 불러오는 중
+      </div>
+    )
+  return (
+    <div className="overflow-x-auto rounded-md border border-line bg-panel">
+      <table className="w-full min-w-[1000px] text-sm [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
+        <thead className="bg-surface text-left text-xs text-muted">
+          <tr>
+            {['운송장번호', '고객주문번호', '쇼핑몰', '받는분', '상품명', '단품', '내품수량', '상태', '주문서'].map((h) => (
+              <th key={h} className="px-2 py-1.5">
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {list.map((w) => (
+            <tr key={`${w.invoice}|${w.name}|${w.option}`} className="border-t border-line">
+              <td className="px-2 py-1.5">
+                <WaybillChips list={[w]} />
+              </td>
+              <td className="num px-2 py-1.5">{w.orderNo}</td>
+              <td className="px-2 py-1.5 text-ink-2">{w.mall || w.home?.mall}</td>
+              <td className="px-2 py-1.5">{w.receiver}</td>
+              <td className="px-2 py-1.5">{w.name}</td>
+              <td className="px-2 py-1.5 text-ink-2">{w.option}</td>
+              <td className="num px-2 py-1.5 text-right">{w.qty ? fmt(w.qty) : ''}</td>
+              <td className="px-2 py-1.5 text-ink-2">{w.status}</td>
+              <td className="whitespace-nowrap px-2 py-1.5">
+                {w.home ? (
+                  <span className="num text-ink-2">
+                    {w.home.date} <Badge tone="brand">{w.home.seq}차</Badge>
+                  </span>
+                ) : (
+                  <span className="text-xs text-warn">주문서 없음</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   )
 }

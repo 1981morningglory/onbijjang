@@ -81,6 +81,46 @@ export default async function ordersRoutes(app, ctx) {
   /** 쇼핑몰 상품명|옵션 → { code, name, option, warehouse } */
   let products = await readJson(PRODUCTS, {})
 
+  // ── CJ대한통운 송장(운송장) — 집화 날짜별 하나: orders/cj/<날짜>.json ──
+  // 하루 중간에 올리고 마감 때 다시 올려도 같은 날짜에 합친다(운송장번호가 같으면 나중 것으로).
+  const cjFile = (date) => path.join(DIR, 'cj', `${date}.json`)
+  /**
+   * 날짜 → { date, uploads: [{ fileName, uploadedAt, by, count, added }], waybills: { '운송장번호|상품코드|단품명': 줄 } }
+   * CJ 파일은 상품 한 줄마다 한 줄이라 한 상자(같은 운송장번호)에 상품이 여럿이면 여러 줄이 된다.
+   */
+  const cjDays = new Map()
+  try {
+    for (const f of await fsp.readdir(path.join(DIR, 'cj'))) {
+      if (!f.endsWith('.json')) continue
+      const d = await readJson(path.join(DIR, 'cj', f), null)
+      if (d?.date) cjDays.set(d.date, d)
+    }
+  } catch {
+    // 아직 없다
+  }
+  /** 주문번호 → 그 주문의 운송장들 */
+  let waybillsByOrder = new Map()
+  function reindexCj() {
+    const m = new Map()
+    for (const d of [...cjDays.values()].sort((a, b) => a.date.localeCompare(b.date))) {
+      for (const w of Object.values(d.waybills)) {
+        const key = str(w.orderNo)
+        if (!key) continue
+        const list = m.get(key) ?? new Map()
+        list.set(w.invoice, { invoice: w.invoice, date: d.date, pickupDate: w.pickupDate, status: w.status, box: w.box, fare: w.fare, receiver: w.receiver })
+        m.set(key, list)
+      }
+    }
+    waybillsByOrder = new Map([...m].map(([k, v]) => [k, [...v.values()]]))
+  }
+  reindexCj()
+  /** 한 줄(주문)의 운송장 — CJ 파일에서 + 예전 방식으로 넣은 송장번호 칸 */
+  const waybillsOf = (r) => {
+    const list = waybillsByOrder.get(str(r['주문번호'])) ?? []
+    const legacy = str(r['송장번호'])
+    return legacy && !list.some((w) => digits(w.invoice) === digits(legacy)) ? [...list, { invoice: legacy }] : list
+  }
+
   // 차수 번호를 정할 때 두 사람이 동시에 올려도 겹치지 않게 줄 세운다
   let chain = Promise.resolve()
   const serial = (fn) => {
@@ -119,7 +159,9 @@ export default async function ordersRoutes(app, ctx) {
       qty: b.rows.reduce((s, r) => s + (Number(r['수량']) || 0), 0),
       /** 주문총액(결제금액 칸이 있을 때만) */
       amount: amountCol ? b.rows.reduce((s, r) => s + num(r[amountCol]), 0) : null,
-      invoices: b.rows.filter((r) => str(r['송장번호'])).length,
+      /** 송장이 붙은 주문 수 · 송장(운송장) 수 */
+      invoiceOrders: new Set(b.rows.filter((r) => waybillsOf(r).length).map((r) => `${str(r['쇼핑몰'])}|${str(r['주문번호'])}`)).size,
+      waybills: new Set(b.rows.flatMap((r) => waybillsOf(r).map((w) => w.invoice))).size,
     }
   }
   /** 검색어에 맞는 줄인지 */
@@ -129,8 +171,10 @@ export default async function ordersRoutes(app, ctx) {
     const f = Object.hasOwn(FIELDS, field) ? field : 'all'
     return (r) => {
       const keys = f === 'all' ? Object.keys(r) : FIELDS[f]
-      const hay = keys.map((k) => str(r[k]).toLowerCase()).join('\n')
-      const hayDigits = keys.map((k) => digits(r[k])).join('\n')
+      // 송장번호는 CJ 파일에서 붙은 것까지 함께 본다
+      const inv = f === 'all' || f === 'invoice' ? waybillsOf(r).map((w) => w.invoice) : []
+      const hay = [...keys.map((k) => str(r[k]).toLowerCase()), ...inv].join('\n')
+      const hayDigits = [...keys.map((k) => digits(r[k])), ...inv.map(digits)].join('\n')
       return words.every((w) => hay.includes(w) || (/\d/.test(w) && digits(w).length >= 3 && hayDigits.includes(digits(w))))
     }
   }
@@ -231,7 +275,128 @@ export default async function ordersRoutes(app, ctx) {
   app.get('/api/orders/batches/:id', requireAllowed, (req, res) => {
     const b = ID_RE.test(req.params.id) ? batches.get(req.params.id) : null
     if (!b) return res.status(404).json({ error: '없는 주문서입니다.' })
-    res.json({ batch: { ...brief(b), cols: b.cols, rows: b.rows } })
+    // 이 주문서의 주문번호마다 붙은 운송장 전부
+    const waybills = {}
+    for (const r of b.rows) {
+      const list = waybillsOf(r)
+      if (list.length) waybills[str(r['주문번호'])] = list
+    }
+    res.json({ batch: { ...brief(b), cols: b.cols, rows: b.rows, waybills } })
+  })
+
+  // ── CJ 송장 파일 ────────────────────────────────────────
+  /** 주문번호 → 그 주문이 든 주문서(날짜·차수) */
+  function orderHome() {
+    const m = new Map()
+    for (const b of batches.values()) for (const r of b.rows) if (!m.has(str(r['주문번호']))) m.set(str(r['주문번호']), { batchId: b.id, date: b.date, seq: b.seq, buyer: str(r['주문자명']), mall: str(r['쇼핑몰']) })
+    return m
+  }
+  const cjBrief = (d, home = orderHome()) => {
+    const ws = Object.values(d.waybills)
+    const orders = new Set(ws.map((w) => str(w.orderNo)).filter(Boolean))
+    // 운임은 상자(운송장)마다 한 번 — 같은 운송장의 여러 줄은 한 번만 더한다
+    const fareBy = new Map(ws.map((w) => [w.invoice, num(w.fare)]))
+    return {
+      date: d.date,
+      uploads: d.uploads.length,
+      lastUploadAt: d.uploads.at(-1)?.uploadedAt ?? null,
+      lastBy: d.uploads.at(-1)?.by ?? '',
+      fileNames: [...new Set(d.uploads.map((u) => u.fileName))],
+      /** 운송장(상자) 수 · 상품 줄 수 */
+      waybills: fareBy.size,
+      lines: ws.length,
+      orders: orders.size,
+      matched: [...orders].filter((o) => home.has(o)).length,
+      fare: [...fareBy.values()].reduce((s, v) => s + v, 0),
+    }
+  }
+
+  /**
+   * CJ대한통운 송장 파일 올리기: { fileName, rows } — rows 는 CJ 파일 칸 이름 → 값(운송장번호·고객주문번호·집화예정일자…)
+   * 집화예정일자(가장 많은 날짜)로 그날 기록에 합친다.
+   */
+  app.post('/api/orders/cj', requireAllowed, async (req, res) => {
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows.slice(0, 20000) : []
+    const pick = (r, ...names) => {
+      for (const n of names) if (str(r[n])) return str(r[n])
+      return ''
+    }
+    const list = []
+    for (const raw of rows) {
+      const r = cleanRow(raw)
+      const invoice = pick(r, '운송장번호', '송장번호')
+      if (!invoice) continue
+      const pickup = pick(r, '집화예정일자', '집하예정일자', '집화일자', '발송일자').slice(0, 10)
+      list.push({
+        invoice,
+        orderNo: pick(r, '고객주문번호', '주문번호'),
+        // CJ 파일의 기타3 칸에 사방넷주문번호가 들어 있다(우리 CJ택배 파일 순서대로)
+        sabangNo: pick(r, '사방넷주문번호', '기타3'),
+        mall: pick(r, '쇼핑몰', '기타2'),
+        pickupDate: DATE_RE.test(pickup) ? pickup : '',
+        status: pick(r, '상태'),
+        box: pick(r, '박스타입'),
+        fare: num(pick(r, '운임합계')),
+        receiver: pick(r, '받는분'),
+        phone: pick(r, '받는분전화번호'),
+        address: pick(r, '받는분주소'),
+        code: pick(r, '상품코드'),
+        name: pick(r, '상품명'),
+        option: pick(r, '단품명'),
+        qty: num(pick(r, '내품수량')),
+        message: pick(r, '배송메시지'),
+      })
+    }
+    if (!list.length) return res.status(400).json({ error: '‘운송장번호’가 있는 줄이 없습니다. CJ대한통운에서 받은 송장 파일인지 확인해 주세요.' })
+    const count = new Map()
+    for (const w of list) if (w.pickupDate) count.set(w.pickupDate, (count.get(w.pickupDate) ?? 0) + 1)
+    const date = [...count].sort((a, b) => b[1] - a[1])[0]?.[0] ?? new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10)
+    const day = await serial(async () => {
+      const d = cjDays.get(date) ?? { date, uploads: [], waybills: {} }
+      const before = Object.keys(d.waybills).length
+      for (const w of list) d.waybills[`${w.invoice}|${w.code || w.name}|${w.option}`] = w
+      d.uploads.push({ fileName: str(req.body?.fileName).slice(0, 200), uploadedAt: new Date().toISOString(), by: who(req), count: list.length, added: Object.keys(d.waybills).length - before })
+      await writeJson(cjFile(date), d)
+      cjDays.set(date, d)
+      reindexCj()
+      return d
+    })
+    const home = orderHome()
+    const orders = [...new Set(list.map((w) => str(w.orderNo)).filter(Boolean))]
+    res.json({ day: cjBrief(day, home), given: new Set(list.map((w) => w.invoice)).size, lines: list.length, added: day.uploads.at(-1).added, unmatched: orders.filter((o) => !home.has(o)) })
+  })
+
+  /** CJ 송장 날짜 목록: ?from=&to= */
+  app.get('/api/orders/cj', requireAllowed, (req, res) => {
+    const from = String(req.query.from ?? '')
+    const to = String(req.query.to ?? '')
+    const home = orderHome()
+    const days = [...cjDays.values()]
+      .filter((d) => (!DATE_RE.test(from) || d.date >= from) && (!DATE_RE.test(to) || d.date <= to))
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .map((d) => cjBrief(d, home))
+    res.json({ days })
+  })
+
+  /** 그날 운송장 전부(주문서 날짜·차수와 함께) */
+  app.get('/api/orders/cj/:date', requireAllowed, (req, res) => {
+    const d = DATE_RE.test(req.params.date) ? cjDays.get(req.params.date) : null
+    if (!d) return res.status(404).json({ error: '그 날짜의 송장 파일이 없습니다.' })
+    const home = orderHome()
+    const waybills = Object.values(d.waybills).map((w) => ({ ...w, home: home.get(str(w.orderNo)) ?? null }))
+    res.json({ day: { ...cjBrief(d, home), uploadsDetail: d.uploads }, waybills })
+  })
+
+  /** 그날 송장 기록 지우기(전체마스터만) */
+  app.delete('/api/orders/cj/:date', requireAdmin, async (req, res) => {
+    const d = DATE_RE.test(req.params.date) ? cjDays.get(req.params.date) : null
+    if (!d) return res.status(404).json({ error: '그 날짜의 송장 파일이 없습니다.' })
+    await serial(async () => {
+      cjDays.delete(d.date)
+      await fsp.rm(cjFile(d.date), { force: true })
+      reindexCj()
+    })
+    res.json({ ok: true })
   })
 
   /** 차수 고치기(전체마스터만): { date?, seq? } — 같은 날짜·차수가 이미 있으면 거절 */
