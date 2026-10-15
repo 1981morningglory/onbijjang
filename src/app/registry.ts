@@ -1,6 +1,6 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react'
 import {
-  Barcode, Blend, Calculator, Camera, Clapperboard, ClipboardCheck, Crop, Download, Eraser, FileText, Files, Film, Gavel,
+  Barcode, Blend, Calculator, Camera, ClipboardList, Clapperboard, ClipboardCheck, Crop, Download, Eraser, FileText, Files, Film, Gavel,
   Grid3x3, Image as ImageIcon, Images, LayoutTemplate, MonitorPlay, NotebookPen, Package, PenLine, QrCode,
   ReceiptText, Rocket, Scale, Scissors, ShoppingBag, ShoppingCart, Signature, Store, Tags, FilePenLine, Megaphone, Trophy,
   type LucideIcon,
@@ -156,6 +156,13 @@ export const TOOLS: ToolDef[] = [
     keywords: ['word', 'excel', 'ppt', '병합', '정리', '순서', '분할', 'ocr', '압축', '용량', '암호', '한글'],
     icon: Files, art: 'pdf', local: true, accepts: ['pdf', 'image'],
     component: lazy(() => import('@/tools/pdf')),
+  },
+  {
+    id: 'orders', group: 'doc', title: '주문서만들기(온비팀전용)',
+    summary: '사방넷 주문서로 창고 전달·CJ대한통운·구글 드라이브 파일을 한 번에 만들고, 날짜·차수별로 쌓아 고객·상품·주문을 조회',
+    keywords: ['사방넷', '주문서', '발주서', '창고', 'CJ', '대한통운', '택배', '송장', '구글드라이브', '주문조회', '고객조회', '온비'],
+    icon: ClipboardList, art: 'quote', local: false, wide: true, roles: ['member', 'staff', 'admin'],
+    component: lazy(() => import('@/tools/orders')),
   },
   {
     id: 'quote', group: 'doc', title: '견적서·거래명세서',
