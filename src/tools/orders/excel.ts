@@ -76,8 +76,9 @@ export async function readAnyTable(file: File): Promise<{ cols: string[]; rows: 
   if (!head) throw new Error('‘송장번호’(또는 ‘운송장번호’) 칸이 있는 머리줄을 찾지 못했습니다.')
   const at: Array<[number, string]> = []
   ws.getRow(head).eachCell((c, i) => {
-    const h = text(c.value).trim()
-    if (h) at.push([i, h])
+    // CJ 파일 머리줄은 '접수\r\n순서'처럼 줄바꿈이 섞여 있다
+    const h = text(c.value).replace(/\s+/g, '')
+    if (h && !at.some(([, x]) => x === h)) at.push([i, h])
   })
   const rows: Array<Record<string, string>> = []
   for (let r = head + 1; r <= ws.rowCount; r++) {
