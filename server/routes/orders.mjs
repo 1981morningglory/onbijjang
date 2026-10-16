@@ -10,7 +10,7 @@ import path from 'node:path'
 
 const ID_RE = /^[a-f0-9]{16}$/
 /** 센터주문서 양식 판 — 화면에 같이 보여 배포가 반영됐는지 알 수 있게 */
-const CENTER_FORM = '센터주문서 v4(제주도 확인·옵션 8.5·요약 베스트 30 두 가지)'
+const CENTER_FORM = '센터주문서 v5(옵션 열 10)'
 const DATE_RE = /^20\d{2}-\d{2}-\d{2}$/
 const MAX_ROWS = 5000
 const MAX_RESULTS = 2000

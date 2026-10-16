@@ -140,9 +140,9 @@ describe('센터주문서 쪽 나누기·요약', () => {
 describe('센터주문서 열 너비', () => {
   it('정해 준 너비로 넣고 남는 폭은 상품명에, 한 쪽 폭을 넘지 않는다', () => {
     const base = OUTPUTS.find((o) => o.kind === 'warehouse')!.widths
-    expect(base).toEqual([4, 11, 15.7, 36, 8.5, 4, 10])
+    expect(base).toEqual([4, 11, 15.7, 36, 10, 4, 10])
     const w = centerWidths(base)
-    expect(w.filter((_, i) => i !== 3)).toEqual([4, 11, 15.7, 8.5, 4, 10])
+    expect(w.filter((_, i) => i !== 3)).toEqual([4, 11, 15.7, 10, 4, 10])
     expect(w[3]).toBeGreaterThan(36)
     const used = w.reduce((t, x) => t + colPx(x), 0)
     expect(used).toBeLessThanOrEqual(A4_PRINT_PX)

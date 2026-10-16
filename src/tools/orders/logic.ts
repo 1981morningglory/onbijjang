@@ -127,8 +127,8 @@ export const OUTPUTS: OutputSpec[] = [
     label: '센터주문서',
     suffix: '센터주문서',
     cols: [COL.no, COL.receiver, COL.code, COL.name, COL.option, COL.qty, COL.message],
-    // NO 4 · 수취인명 11 · 상품코드 15.7 · 상품명 36(남는 폭은 상품명에, centerWidths) · 옵션 8.5 · 수량 4 · 배송메세지 10
-    widths: [4, 11, 15.7, 36, 8.5, 4, 10],
+    // NO 4 · 수취인명 11 · 상품코드 15.7 · 상품명 36(남는 폭은 상품명에, centerWidths) · 옵션 10 · 수량 4 · 배송메세지 10
+    widths: [4, 11, 15.7, 36, 10, 4, 10],
     message: 'jeju',
   },
   {
