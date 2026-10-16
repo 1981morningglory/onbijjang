@@ -82,6 +82,11 @@ export function dateFromName(...names: string[]): string | null {
 export const todayKst = (now = Date.now()) => new Date(now + 9 * 3600_000).toISOString().slice(0, 10)
 
 export const isJeju = (r: OrderRow) => s(r[COL.address]).includes('제주')
+/** 제주 주소인데 핫트랙스·텐바이텐 주문이면 출고 전에 확인이 필요하다 */
+export const JEJU_CHECK_NOTE = '제주도 확인'
+export const isJejuCheckMall = (r: OrderRow) => /핫\s*트[랙렉]스|hottracks|텐\s*바이\s*텐|10\s*x\s*10/i.test(s(r[COL.mall]))
+/** 센터주문서·구글드라이브용 배송메세지: 제주 주소면 ‘제주도출고O’, 그중 핫트랙스·텐바이텐 주문은 ‘제주도 확인’ */
+export const jejuNote = (r: OrderRow) => (isJeju(r) ? (isJejuCheckMall(r) ? JEJU_CHECK_NOTE : JEJU_NOTE) : null)
 
 /** 상품코드가 없는 줄(사방넷이 상품을 못 맞춘 것) — 사람이 채워야 한다 */
 export const needsProduct = (r: OrderRow) => !s(r[COL.code])
@@ -122,8 +127,8 @@ export const OUTPUTS: OutputSpec[] = [
     label: '센터주문서',
     suffix: '센터주문서',
     cols: [COL.no, COL.receiver, COL.code, COL.name, COL.option, COL.qty, COL.message],
-    // NO 4 · 수취인명 11 · 상품코드 15.7 · 상품명 36(남는 폭은 상품명에, centerWidths) · 옵션 7.3 · 수량 4 · 배송메세지 10
-    widths: [4, 11, 15.7, 36, 7.3, 4, 10],
+    // NO 4 · 수취인명 11 · 상품코드 15.7 · 상품명 36(남는 폭은 상품명에, centerWidths) · 옵션 8.5 · 수량 4 · 배송메세지 10
+    widths: [4, 11, 15.7, 36, 8.5, 4, 10],
     message: 'jeju',
   },
   {
@@ -237,8 +242,11 @@ export interface ProductSummaryRow {
   /** 주문건수(주문자명 수) */
   buyers: number
 }
-/** 많이 나가는 순서(주문수량 → 주문건수) 상위 n개. 같은 수량·건수면 같은 순위 */
-export function productSummary(rows: OrderRow[], top = 20): ProductSummaryRow[] {
+/**
+ * 많이 나가는 순서 상위 n개. by='qty' 는 주문수량 → 주문건수, by='buyers' 는 주문건수(주문자 수) → 주문수량.
+ * 두 기준 값이 모두 같으면 같은 순위.
+ */
+export function productSummary(rows: OrderRow[], top = 30, by: 'qty' | 'buyers' = 'qty'): ProductSummaryRow[] {
   const m = new Map<string, { code: string; name: string; option: string; qty: number; buyers: Set<string> }>()
   for (const r of rows) {
     const name = s(r[COL.name]) || s(r[COL.rawName])
@@ -249,7 +257,11 @@ export function productSummary(rows: OrderRow[], top = 20): ProductSummaryRow[] 
     e.buyers.add(s(r[COL.buyer]) || s(r[COL.receiver]))
     m.set(key, e)
   }
-  const list = [...m.values()].sort((a, b) => b.qty - a.qty || b.buyers.size - a.buyers.size || a.name.localeCompare(b.name, 'ko'))
+  const list = [...m.values()].sort((a, b) =>
+    by === 'qty'
+      ? b.qty - a.qty || b.buyers.size - a.buyers.size || a.name.localeCompare(b.name, 'ko')
+      : b.buyers.size - a.buyers.size || b.qty - a.qty || a.name.localeCompare(b.name, 'ko'),
+  )
   const out: ProductSummaryRow[] = []
   list.slice(0, top).forEach((e, i) => {
     const prev = out[i - 1]
@@ -271,7 +283,7 @@ export function buildOutput(spec: OutputSpec, rows: OrderRow[]): Array<Array<str
     out.push(
       spec.cols.map((c) => {
         if (c === COL.no) return String(i + 1)
-        if (c === COL.message) return spec.message === 'jeju' ? (isJeju(r) ? JEJU_NOTE : null) : (r[c] ?? null)
+        if (c === COL.message) return spec.message === 'jeju' ? jejuNote(r) : (r[c] ?? null)
         const v = r[c]
         if (c === COL.qty || c === COL.sabangNo) return v == null || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : v
         return v == null ? null : String(v)

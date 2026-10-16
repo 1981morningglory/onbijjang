@@ -177,30 +177,44 @@ async function writeCenter(spec: OutputSpec, rows: OrderRow[], date: string, seq
   // 쪽 나누기: 쪽의 마지막 주문 줄 다음에서(머리줄 1줄을 더한 행 번호)
   for (const end of layout.pageEnds.slice(0, -1)) ws.getRow(end + 1).addPageBreak()
 
-  // ── 출고제품 요약 ──
+  // ── 출고제품 요약: 주문수량 베스트 30, 그 아래 주문건수 베스트 30 ──
   const sum = wb.addWorksheet('출고제품 요약')
-  // 요약 탭은 쪽 번호 없이(주문서 탭 쪽 번호 1/2, 2/2 와 섞이지 않게)
-  a4(sum, `${header} · 출고제품 요약`, '&C&10출고제품 요약(상위 20)')
+  // 요약 탭은 쪽 번호 없이(주문서 탭 쪽 번호 1/2, 2/2 와 섞이지 않게), 표 제목이 있어 머리줄 반복은 하지 않는다
+  a4(sum, `${header} · 출고제품 요약`, '&C&10출고제품 요약(주문수량·주문건수 베스트 30)')
+  sum.pageSetup.printTitlesRow = undefined
   SUMMARY_WIDTHS.forEach((w, i) => (sum.getColumn(i + 1).width = w))
-  const head = sum.addRow(SUMMARY_COLS)
-  head.height = 24
-  head.eachCell((c) => {
-    c.font = HEAD_FONT
-    c.fill = HEAD_FILL
-    c.alignment = { horizontal: 'center', vertical: 'middle', shrinkToFit: true }
-    c.border = BORDER
-  })
-  productSummary(rows).forEach((p, i) => {
-    const r = sum.addRow([p.rank, i + 1, p.name, p.option || null, p.qty, p.buyers, p.code || null])
-    r.height = 20
-    r.eachCell({ includeEmpty: true }, (c, ci) => {
-      if (ci > SUMMARY_COLS.length) return
-      c.font = ci === 1 || ci === 5 ? { ...FONT, bold: true } : FONT
+  const section = (title: string, by: 'qty' | 'buyers') => {
+    const t = sum.addRow([title])
+    t.height = 26
+    t.getCell(1).font = { ...FONT, size: 12, bold: true }
+    t.getCell(1).alignment = { vertical: 'middle' }
+    const head = sum.addRow(SUMMARY_COLS)
+    head.height = 24
+    head.eachCell((c) => {
+      c.font = HEAD_FONT
+      c.fill = HEAD_FILL
+      c.alignment = { horizontal: 'center', vertical: 'middle', shrinkToFit: true }
       c.border = BORDER
-      c.alignment = { vertical: 'middle', shrinkToFit: true, horizontal: ci === 3 || ci === 4 || ci === 7 ? 'left' : 'center' }
-      if (ci === 5 || ci === 6) c.numFmt = '#,##0'
     })
-  })
+    // 이 표의 기준 칸(주문수량 5 / 주문건수 6)을 굵게
+    const key = by === 'qty' ? 5 : 6
+    productSummary(rows, 30, by).forEach((p, i) => {
+      const r = sum.addRow([p.rank, i + 1, p.name, p.option || null, p.qty, p.buyers, p.code || null])
+      r.height = 20
+      r.eachCell({ includeEmpty: true }, (c, ci) => {
+        if (ci > SUMMARY_COLS.length) return
+        c.font = ci === 1 || ci === key ? { ...FONT, bold: true } : FONT
+        c.border = BORDER
+        c.alignment = { vertical: 'middle', shrinkToFit: true, horizontal: ci === 3 || ci === 4 || ci === 7 ? 'left' : 'center' }
+        if (ci === 5 || ci === 6) c.numFmt = '#,##0'
+      })
+    })
+  }
+  section('주문수량 베스트 30', 'qty')
+  // 둘째 표는 새 쪽에서(한 표가 두 쪽에 갈리지 않게)
+  sum.addRow([])
+  sum.getRow(sum.rowCount).addPageBreak()
+  section('주문건수 베스트 30 (주문자 수 기준)', 'buyers')
   const buf = await wb.xlsx.writeBuffer()
   return new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
 }
