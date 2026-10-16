@@ -402,7 +402,7 @@ export function LibraryMenu<T>({ kind, noun, getData, onLoad, size = 'md' }: Lib
       await deleteLibraryItem(kind, entry)
       setItems((prev) => (prev ?? []).filter((i) => i.id !== entry.id))
     } catch (err) {
-      toast.error(err instanceof Error && 'status' in err && err.status === 401 ? '팀 보관함 항목은 관리자만 삭제할 수 있습니다.' : '삭제하지 못했습니다.')
+      toast.error(err instanceof Error && 'status' in err && err.status === 401 ? '팀 보관함 항목은 스탭 이상만 삭제할 수 있습니다.' : '삭제하지 못했습니다.')
     }
   }
 

@@ -71,7 +71,7 @@ const FIELDS = {
 }
 
 export default async function ordersRoutes(app, ctx) {
-  const { isAdmin, requireAdmin, currentUser, DATA_DIR, TRUSTED } = ctx
+  const { isAdmin, isStaff, requireStaff, currentUser, DATA_DIR, TRUSTED } = ctx
   const DIR = path.join(DATA_DIR, 'orders')
   const batchFile = (id) => path.join(DIR, 'batches', `${id}.json`)
   const PRODUCTS = path.join(DIR, 'products.json')
@@ -206,9 +206,9 @@ export default async function ordersRoutes(app, ctx) {
   }
 
   app.get('/api/orders/status', async (req, res) => {
-    // admin: 전체마스터(관리자) — 주문서 수정·삭제는 관리자만
+    // admin: 스탭 이상(스탭·전체마스터) — 주문서 수정·삭제는 스탭 이상만
     // version: 지금 돌고 있는 배포본(Railway 가 넣어 주는 커밋 번호) — 새 버전이 반영됐는지 화면에서 확인용
-    res.json({ allowed: await allowed(req), admin: isAdmin(req), version: (process.env.RAILWAY_GIT_COMMIT_SHA ?? '').slice(0, 7) || 'local', form: CENTER_FORM })
+    res.json({ allowed: await allowed(req), admin: isStaff(req), version: (process.env.RAILWAY_GIT_COMMIT_SHA ?? '').slice(0, 7) || 'local', form: CENTER_FORM })
   })
 
   /** 이 날짜에 올리면 몇 차가 되는지 */
@@ -404,8 +404,8 @@ export default async function ordersRoutes(app, ctx) {
     res.json({ day: { ...cjBrief(d, home), uploadsDetail: d.uploads }, waybills })
   })
 
-  /** 그날 송장 기록 지우기(전체마스터만) */
-  app.delete('/api/orders/cj/:date', requireAdmin, async (req, res) => {
+  /** 그날 송장 기록 지우기(스탭 이상) */
+  app.delete('/api/orders/cj/:date', requireStaff, async (req, res) => {
     const d = DATE_RE.test(req.params.date) ? cjDays.get(req.params.date) : null
     if (!d) return res.status(404).json({ error: '그 날짜의 송장 파일이 없습니다.' })
     await serial(async () => {
@@ -416,8 +416,8 @@ export default async function ordersRoutes(app, ctx) {
     res.json({ ok: true })
   })
 
-  /** 차수 고치기(전체마스터만): { date?, seq? } — 같은 날짜·차수가 이미 있으면 거절 */
-  app.patch('/api/orders/batches/:id', requireAdmin, async (req, res) => {
+  /** 차수 고치기(스탭 이상): { date?, seq? } — 같은 날짜·차수가 이미 있으면 거절 */
+  app.patch('/api/orders/batches/:id', requireStaff, async (req, res) => {
     const b = ID_RE.test(req.params.id) ? batches.get(req.params.id) : null
     if (!b) return res.status(404).json({ error: '없는 주문서입니다.' })
     const date = req.body?.date === undefined ? b.date : String(req.body.date)
@@ -484,8 +484,8 @@ export default async function ordersRoutes(app, ctx) {
     res.json({ row: b.rows[i] })
   })
 
-  /** 주문 한 줄 고치기(전체마스터만): { row } — 칸 이름 → 값 */
-  app.patch('/api/orders/batches/:id/rows/:line', requireAdmin, async (req, res) => {
+  /** 주문 한 줄 고치기(스탭 이상): { row } — 칸 이름 → 값 */
+  app.patch('/api/orders/batches/:id/rows/:line', requireStaff, async (req, res) => {
     const b = ID_RE.test(req.params.id) ? batches.get(req.params.id) : null
     const i = Number(req.params.line) - 1
     if (!b || !Number.isInteger(i) || !b.rows[i]) return res.status(404).json({ error: '없는 주문입니다.' })
@@ -500,8 +500,8 @@ export default async function ordersRoutes(app, ctx) {
     res.json({ row: next })
   })
 
-  /** 잘못 올린 차수 지우기(전체마스터만). 차수 번호는 다시 매기지 않는다 — 이미 보낸 파일 이름과 어긋나지 않게 */
-  app.delete('/api/orders/batches/:id', requireAdmin, async (req, res) => {
+  /** 잘못 올린 차수 지우기(스탭 이상). 차수 번호는 다시 매기지 않는다 — 이미 보낸 파일 이름과 어긋나지 않게 */
+  app.delete('/api/orders/batches/:id', requireStaff, async (req, res) => {
     const b = ID_RE.test(req.params.id) ? batches.get(req.params.id) : null
     if (!b) return res.status(404).json({ error: '없는 주문서입니다.' })
     await serial(async () => {

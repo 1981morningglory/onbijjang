@@ -872,7 +872,7 @@ function OrdersList({ admin }: { admin: boolean }) {
         )}
         <p className="text-xs text-muted">
           CJ 송장 파일은 하루 중간이든 마감 때든 올리면 고객주문번호로 주문에 붙습니다(같은 날 여러 번 올려도 겹치지 않게 합칩니다). 한 주문에 송장이 여러 개면 모두 보입니다.
-          {admin && ' 고치기·지우기는 전체마스터(관리자)에게만 보입니다.'}
+          {admin && ' 고치기·지우기는 스탭·전체마스터에게만 보입니다.'}
         </p>
       </Panel>
       {editing && (
@@ -1468,9 +1468,9 @@ function EditRow({
           </div>
         </section>
 
-        {/* 주문 세부내역(전체마스터만 고칠 수 있음) */}
+        {/* 주문 세부내역(스탭 이상만 고칠 수 있음) */}
         <section className="flex flex-col gap-2">
-          <h3 className="text-sm font-bold text-ink">주문 세부내역{!admin && <span className="ml-1 text-xs font-normal text-muted">(고치기는 전체마스터만)</span>}</h3>
+          <h3 className="text-sm font-bold text-ink">주문 세부내역{!admin && <span className="ml-1 text-xs font-normal text-muted">(고치기는 스탭 이상만)</span>}</h3>
           <div className="grid gap-3 sm:grid-cols-2">
             {keys.map((k) => (
               <Field key={k} label={k}>

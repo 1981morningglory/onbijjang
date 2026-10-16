@@ -255,13 +255,14 @@ function cleanRoleList(v: unknown): Role[] {
   return ALL_ROLES.filter((r) => v.includes(r))
 }
 
-/** 이 사람에게 보이는가: 꺼짐·삭제면 아무에게도 안 보이고, 그 밖에는 계정별 예외 → 등급 순서로 정한다. */
+/** 이 사람에게 보이는가: 꺼짐·삭제면 아무에게도 안 보이고, 그 밖에는 계정별 예외 → 등급 순서로 정한다. 스탭은 켜진 앱을 모두 쓴다. */
 export function canSee(entry: MenuEntry | undefined, id: string, viewer: Viewer): boolean {
   if (!entry) return true
   if (!entry.enabled || entry.deleted) return false
   const ov = viewer.access[id]
   if (ov === 'deny') return false
   if (ov === 'allow') return true
+  if (viewer.role === 'staff') return true
   return entry.roles.includes(viewer.role)
 }
 
