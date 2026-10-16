@@ -36,6 +36,7 @@ import {
   dateFromName,
   dateTimeKst,
   DEFAULT_WAREHOUSE,
+  isCenterRow,
   isJeju,
   needsProduct,
   OUTPUTS,
@@ -141,7 +142,7 @@ const fmt = (n: number) => n.toLocaleString('ko-KR')
 const WEEK = ['일', '월', '화', '수', '목', '금', '토']
 const weekday = (date: string) => WEEK[new Date(`${date}T00:00:00Z`).getUTCDay()]
 /** 화면 쪽 센터주문서 양식 판(서버 쪽 CENTER_FORM 과 같이 올린다) */
-const CENTER_FORM_UI = '센터주문서 v5'
+const CENTER_FORM_UI = '센터주문서 v6'
 const AMOUNT_RE = /결제\s*금액|주문\s*금액|총\s*금액|판매\s*금액|결제액/
 
 export default function OrdersTool() {
@@ -314,6 +315,8 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'wa
 // ── 주문서 만들기 ─────────────────────────────────────────
 function Make({ onGoList }: { onGoList: () => void }) {
   const [src, setSrc] = useState<(SourceSheet & { fileName: string }) | null>(null)
+  /** 다른 물류처라서 받지 않은 줄(화면에 알리기만) */
+  const [excluded, setExcluded] = useState<OrderRow[]>([])
   const [rows, setRows] = useState<OrderRow[]>([])
   const [date, setDate] = useState(todayKst())
   const [seq, setSeq] = useState<number | null>(null)
@@ -340,14 +343,20 @@ function Make({ onGoList }: { onGoList: () => void }) {
     try {
       const [s, k] = await Promise.all([readSabangnet(file), api<typeof known>('/orders/products').catch(() => known)])
       setKnown(k)
+      // 물류처명이 ‘모닝글로리-일산센터’이거나 비어 있는 주문만 받는다. 다른 물류처 주문은 저장·파일 어디에도 넣지 않는다
+      const mine = s.rows.filter(isCenterRow)
+      const others = s.rows.filter((r) => !isCenterRow(r))
+      if (!mine.length) throw new Error(`이 파일에는 ‘${DEFAULT_WAREHOUSE}’(또는 물류처명 빈칸) 주문이 없습니다. 다른 물류처 주문 ${others.length}줄은 받지 않습니다.`)
       // 전에 맞춰 둔 상품은 자동으로 채운다
-      const filled = s.rows.map((r) => {
+      const filled = mine.map((r) => {
         if (!needsProduct(r)) return { ...r, [COL.warehouse]: r[COL.warehouse] ?? DEFAULT_WAREHOUSE }
         const m = k.products[productKey(r)]
-        return m ? { ...r, [COL.code]: m.code, [COL.name]: m.name, [COL.option]: m.option || '단품', [COL.warehouse]: r[COL.warehouse] ?? m.warehouse ?? DEFAULT_WAREHOUSE, _auto: m.code } : { ...r, _fix: 1 }
+        return m ? { ...r, [COL.code]: m.code, [COL.name]: m.name, [COL.option]: m.option || '단품', [COL.warehouse]: r[COL.warehouse] ?? DEFAULT_WAREHOUSE, _auto: m.code } : { ...r, _fix: 1 }
       })
       setSrc({ ...s, fileName: file.name })
       setRows(filled)
+      setExcluded(others)
+      if (others.length) toast.info(`다른 물류처 주문 ${others.length}줄은 빼고 ${DEFAULT_WAREHOUSE} 주문 ${mine.length}줄만 불러왔습니다.`)
       setDate(dateFromName(s.sheetName, file.name) ?? todayKst())
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '파일을 읽지 못했습니다.')
@@ -453,6 +462,21 @@ function Make({ onGoList }: { onGoList: () => void }) {
               </span>
             ))}
           </div>
+
+          {excluded.length > 0 && (
+            <details className="rounded-lg border border-line bg-surface px-3 py-2 text-sm">
+              <summary className="cursor-pointer font-semibold text-ink-2">
+                다른 물류처 주문 {excluded.length}줄은 받지 않았습니다 <span className="font-normal text-muted">(물류처명이 ‘{DEFAULT_WAREHOUSE}’이거나 빈칸인 주문만 받습니다)</span>
+              </summary>
+              <ul className="mt-2 flex flex-col gap-0.5 text-xs text-muted">
+                {excluded.map((r, i) => (
+                  <li key={i}>
+                    {str(r[COL.warehouse])} · {str(r[COL.mall])} · {str(r[COL.orderNo])} · {str(r[COL.receiver])} · {str(r[COL.name]) || str(r[COL.rawName])} × {str(r[COL.qty])}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
 
           {fixRows.length > 0 && !saved && (
             <div className={clsx('flex flex-col gap-3 rounded-lg border p-3', missing ? 'border-warn/40 bg-warn-soft/40' : 'border-line bg-surface')}>
