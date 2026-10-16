@@ -36,10 +36,12 @@ export interface SourceSheet {
 }
 
 export const DEFAULT_WAREHOUSE = '모닝글로리-일산센터'
-/** 센터주문서로 받을 주문: 물류처명이 ‘모닝글로리-일산센터’이거나 비어 있는 줄만(다른 물류처 주문은 받지 않는다) */
+/** 받는 물류처: 모닝글로리-일산센터·모닝글로리-파주센터(그리고 물류처명 빈칸) */
+export const CENTER_WAREHOUSES = [DEFAULT_WAREHOUSE, '모닝글로리-파주센터']
+/** 센터주문서로 받을 주문: 물류처명이 일산센터·파주센터이거나 비어 있는 줄만(다른 물류처 주문은 받지 않는다) */
 export const isCenterRow = (r: OrderRow) => {
   const w = (r[COL.warehouse] == null ? '' : String(r[COL.warehouse])).replace(/\s+/g, '')
-  return !w || w === DEFAULT_WAREHOUSE.replace(/\s+/g, '')
+  return !w || CENTER_WAREHOUSES.some((c) => c.replace(/\s+/g, '') === w)
 }
 export const JEJU_NOTE = '제주도출고O'
 

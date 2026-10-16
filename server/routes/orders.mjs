@@ -9,8 +9,10 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 
 const ID_RE = /^[a-f0-9]{16}$/
+/** 담당자가 적는 비고(CS내용) 칸 이름 */
+const CS_COL = '비고(CS내용)'
 /** 센터주문서 양식 판 — 화면에 같이 보여 배포가 반영됐는지 알 수 있게 */
-const CENTER_FORM = '센터주문서 v6(일산센터·빈칸 물류처만)'
+const CENTER_FORM = '센터주문서 v7(파주센터 포함·송장 수정·비고(CS)·정렬·엑셀/웹 보기)'
 const DATE_RE = /^20\d{2}-\d{2}-\d{2}$/
 const MAX_ROWS = 5000
 const MAX_RESULTS = 2000
@@ -117,10 +119,16 @@ export default async function ordersRoutes(app, ctx) {
   }
   reindexCj()
   /** 한 줄(주문)의 운송장 — CJ 파일에서 + 예전 방식으로 넣은 송장번호 칸 */
+  // 담당자가 고친 송장번호(주문번호 → { invoices, by, at }) — CJ 파일보다 앞선다
+  const EDITS = path.join(DIR, 'waybill-edits.json')
+  let waybillEdits = await readJson(EDITS, {})
   const waybillsOf = (r) => {
-    const list = waybillsByOrder.get(str(r['주문번호'])) ?? []
+    const orderNo = str(r['주문번호'])
+    const cj = waybillsByOrder.get(orderNo) ?? []
+    const edit = waybillEdits[orderNo]
+    if (edit) return edit.invoices.map((inv) => ({ ...(cj.find((w) => digits(w.invoice) === digits(inv)) ?? {}), invoice: inv, manual: true, editedBy: edit.by, editedAt: edit.at }))
     const legacy = str(r['송장번호'])
-    return legacy && !list.some((w) => digits(w.invoice) === digits(legacy)) ? [...list, { invoice: legacy }] : list
+    return legacy && !cj.some((w) => digits(w.invoice) === digits(legacy)) ? [...cj, { invoice: legacy }] : cj
   }
 
   // 차수 번호를 정할 때 두 사람이 동시에 올려도 겹치지 않게 줄 세운다
@@ -417,6 +425,38 @@ export default async function ordersRoutes(app, ctx) {
     })
     res.json({ batch: brief(b) })
   })
+  /**
+   * 송장번호 고치기(담당자 누구나): { orderNo, invoices: [...] } — 그 주문번호의 송장을 이 목록으로 바꾼다(빠진 송장 넣기·잘못된 번호 고치기).
+   * reset: true 면 고친 것을 지우고 CJ 파일 값으로 되돌린다.
+   */
+  app.put('/api/orders/waybills', requireAllowed, async (req, res) => {
+    const orderNo = str(req.body?.orderNo).slice(0, 80)
+    if (!orderNo) return res.status(400).json({ error: '주문번호가 없습니다.' })
+    await serial(async () => {
+      if (req.body?.reset) delete waybillEdits[orderNo]
+      else {
+        const invoices = [...new Set((Array.isArray(req.body?.invoices) ? req.body.invoices : []).map((v) => str(v).slice(0, 40)).filter(Boolean))].slice(0, 50)
+        waybillEdits[orderNo] = { invoices, by: who(req), at: new Date().toISOString() }
+      }
+      await writeJson(EDITS, waybillEdits)
+    })
+    res.json({ waybills: waybillsOf({ 주문번호: orderNo }) })
+  })
+
+  /** 비고(CS내용) 적기(담당자 누구나): { memo } — 주문 한 줄에 */
+  app.patch('/api/orders/batches/:id/rows/:line/memo', requireAllowed, async (req, res) => {
+    const b = ID_RE.test(req.params.id) ? batches.get(req.params.id) : null
+    const i = Number(req.params.line) - 1
+    if (!b || !Number.isInteger(i) || !b.rows[i]) return res.status(404).json({ error: '없는 주문입니다.' })
+    const memo = str(req.body?.memo).slice(0, 200)
+    await serial(async () => {
+      b.rows[i] = { ...b.rows[i], [CS_COL]: memo || null }
+      if (!b.cols.includes(CS_COL)) b.cols.push(CS_COL)
+      await writeJson(batchFile(b.id), b)
+    })
+    res.json({ memo })
+  })
+
   /** 주문 한 줄 고치기(전체마스터만): { row } — 칸 이름 → 값 */
   app.patch('/api/orders/batches/:id/rows/:line', requireAdmin, async (req, res) => {
     const b = ID_RE.test(req.params.id) ? batches.get(req.params.id) : null

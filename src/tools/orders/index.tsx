@@ -5,10 +5,14 @@
 import clsx from 'clsx'
 import {
   Archive,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   ChevronDown,
   ChevronRight,
   ClipboardList,
   Cloud,
+  ExternalLink,
   FileSpreadsheet,
   FileUp,
   History,
@@ -28,14 +32,15 @@ import { Link } from 'react-router'
 import { useLoginDialog } from '@/app/LoginDialog'
 import { api, ApiError } from '@/lib/api'
 import { downloadBlob, makeZip } from '@/lib/files'
-import { Badge, Button, Callout, Dialog, Dropzone, EmptyState, Field, Panel, Segmented, Select, Spinner, Switch, Tabs, TextInput, toast } from '@/ui'
-import { readAnyTable, readSabangnet, writeOutput } from './excel'
+import { Badge, Button, Callout, Dialog, Dropzone, EmptyState, Field, Panel, Segmented, Select, Spinner, Switch, Tabs, Textarea, TextInput, toast } from '@/ui'
+import { readAnyTable, readSabangnet, writeOutput, writeTable } from './excel'
 import {
   batchStamp,
   COL,
   dateFromName,
   dateTimeKst,
   DEFAULT_WAREHOUSE,
+  CENTER_WAREHOUSES,
   isCenterRow,
   isJeju,
   needsProduct,
@@ -73,6 +78,8 @@ interface BatchBrief {
 }
 interface Waybill {
   invoice: string
+  /** 담당자가 고친 송장 */
+  manual?: boolean
   date?: string
   pickupDate?: string
   status?: string
@@ -142,7 +149,7 @@ const fmt = (n: number) => n.toLocaleString('ko-KR')
 const WEEK = ['일', '월', '화', '수', '목', '금', '토']
 const weekday = (date: string) => WEEK[new Date(`${date}T00:00:00Z`).getUTCDay()]
 /** 화면 쪽 센터주문서 양식 판(서버 쪽 CENTER_FORM 과 같이 올린다) */
-const CENTER_FORM_UI = '센터주문서 v6'
+const CENTER_FORM_UI = '센터주문서 v7'
 const AMOUNT_RE = /결제\s*금액|주문\s*금액|총\s*금액|판매\s*금액|결제액/
 
 export default function OrdersTool() {
@@ -343,10 +350,10 @@ function Make({ onGoList }: { onGoList: () => void }) {
     try {
       const [s, k] = await Promise.all([readSabangnet(file), api<typeof known>('/orders/products').catch(() => known)])
       setKnown(k)
-      // 물류처명이 ‘모닝글로리-일산센터’이거나 비어 있는 주문만 받는다. 다른 물류처 주문은 저장·파일 어디에도 넣지 않는다
+      // 물류처명이 일산센터·파주센터이거나 비어 있는 주문만 받는다. 다른 물류처 주문은 저장·파일 어디에도 넣지 않는다
       const mine = s.rows.filter(isCenterRow)
       const others = s.rows.filter((r) => !isCenterRow(r))
-      if (!mine.length) throw new Error(`이 파일에는 ‘${DEFAULT_WAREHOUSE}’(또는 물류처명 빈칸) 주문이 없습니다. 다른 물류처 주문 ${others.length}줄은 받지 않습니다.`)
+      if (!mine.length) throw new Error(`이 파일에는 ${CENTER_WAREHOUSES.join('·')}(또는 물류처명 빈칸) 주문이 없습니다. 다른 물류처 주문 ${others.length}줄은 받지 않습니다.`)
       // 전에 맞춰 둔 상품은 자동으로 채운다
       const filled = mine.map((r) => {
         if (!needsProduct(r)) return { ...r, [COL.warehouse]: r[COL.warehouse] ?? DEFAULT_WAREHOUSE }
@@ -356,7 +363,7 @@ function Make({ onGoList }: { onGoList: () => void }) {
       setSrc({ ...s, fileName: file.name })
       setRows(filled)
       setExcluded(others)
-      if (others.length) toast.info(`다른 물류처 주문 ${others.length}줄은 빼고 ${DEFAULT_WAREHOUSE} 주문 ${mine.length}줄만 불러왔습니다.`)
+      if (others.length) toast.info(`다른 물류처 주문 ${others.length}줄은 빼고 일산·파주센터 주문 ${mine.length}줄만 불러왔습니다.`)
       setDate(dateFromName(s.sheetName, file.name) ?? todayKst())
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '파일을 읽지 못했습니다.')
@@ -466,7 +473,7 @@ function Make({ onGoList }: { onGoList: () => void }) {
           {excluded.length > 0 && (
             <details className="rounded-lg border border-line bg-surface px-3 py-2 text-sm">
               <summary className="cursor-pointer font-semibold text-ink-2">
-                다른 물류처 주문 {excluded.length}줄은 받지 않았습니다 <span className="font-normal text-muted">(물류처명이 ‘{DEFAULT_WAREHOUSE}’이거나 빈칸인 주문만 받습니다)</span>
+                다른 물류처 주문 {excluded.length}줄은 받지 않았습니다 <span className="font-normal text-muted">(물류처명이 {CENTER_WAREHOUSES.join('·')}이거나 빈칸인 주문만 받습니다)</span>
               </summary>
               <ul className="mt-2 flex flex-col gap-0.5 text-xs text-muted">
                 {excluded.map((r, i) => (
@@ -926,14 +933,33 @@ const DETAIL_COLS: Array<[string, string]> = [
   [COL.option, '옵션'],
   [COL.qty, '수량'],
 ]
+/** 담당자가 적는 비고(CS내용) 칸(서버 CS_COL 과 같게) */
+const CS_COL = '비고(CS내용)'
+/** 정렬 열쇠: 'NO' · 칸 이름 · 'waybill' */
+type SortKey = string
+const NUM_SORT = new Set<string>(['NO', COL.qty])
+
+type BatchFull = Omit<BatchBrief, 'waybills'> & { cols: string[]; rows: OrderRow[]; waybills: Record<string, Waybill[]> }
+
+/** 한 차수의 전체 표(엑셀·웹 보기용): 원본 칸 + 송장번호(CJ) + 비고(CS내용) */
+function fullTable(batch: BatchFull) {
+  const cols = [...new Set(['NO', ...batch.cols.filter((c) => c !== 'NO' && c !== CS_COL && c !== COL.invoice), '송장번호(CJ)', CS_COL])]
+  const rows = batch.rows.map((r, i) =>
+    cols.map((c) => (c === 'NO' ? i + 1 : c === '송장번호(CJ)' ? (batch.waybills[str(r[COL.orderNo])] ?? []).map((w) => w.invoice).join(', ') || null : (r[c] ?? null))),
+  )
+  return { cols, rows }
+}
+const esc = (v: unknown) => str(v).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]!)
 
 function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin: boolean }) {
-  const [batch, setBatch] = useState<(BatchBrief & { cols: string[]; rows: OrderRow[]; waybills: Record<string, Waybill[]> }) | null>(null)
+  const [batch, setBatch] = useState<BatchFull | null>(null)
   const [all, setAll] = useState(!lines)
   const [open, setOpen] = useState<number | null>(null)
   const [edit, setEdit] = useState<number | null>(null)
+  const [editWaybill, setEditWaybill] = useState<string | null>(null)
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 } | null>(null)
   const load = useCallback(() => {
-    api<{ batch: BatchBrief & { cols: string[]; rows: OrderRow[]; waybills: Record<string, Waybill[]> } }>(`/orders/batches/${id}`)
+    api<{ batch: BatchFull }>(`/orders/batches/${id}`)
       .then((r) => setBatch(r.batch))
       .catch((err) => toast.error(err instanceof Error ? err.message : '불러오지 못했습니다.'))
   }, [id])
@@ -945,7 +971,42 @@ function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin
       </div>
     )
   const pick = new Set(lines ?? [])
+  const value = (r: OrderRow, n: number, key: SortKey): string | number =>
+    key === 'NO' ? n : key === 'waybill' ? (batch.waybills[str(r[COL.orderNo])] ?? []).map((w) => w.invoice).join(',') : NUM_SORT.has(key) ? Number(r[key]) || 0 : str(r[key])
   const shown = batch.rows.map((r, i) => [r, i + 1] as const).filter(([, n]) => all || pick.has(n))
+  if (sort)
+    shown.sort(([a, na], [b, nb]) => {
+      const x = value(a, na, sort.key)
+      const y = value(b, nb, sort.key)
+      const c = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), 'ko', { numeric: true })
+      return c * sort.dir || na - nb
+    })
+  const toggleSort = (key: SortKey) => setSort((cur) => (cur?.key !== key ? { key, dir: 1 } : cur.dir === 1 ? { key, dir: -1 } : null))
+  const head = (key: SortKey, label: string, cls?: string) => (
+    <th className={clsx('px-2 py-1.5', cls)} aria-sort={sort?.key === key ? (sort.dir === 1 ? 'ascending' : 'descending') : 'none'}>
+      <button type="button" className="inline-flex items-center gap-0.5 font-semibold hover:text-ink" onClick={() => toggleSort(key)} title="눌러서 오름차순·내림차순 정렬">
+        {label}
+        {sort?.key === key ? sort.dir === 1 ? <ArrowUp className="size-3" aria-hidden /> : <ArrowDown className="size-3" aria-hidden /> : <ArrowUpDown className="size-3 opacity-40" aria-hidden />}
+      </button>
+    </th>
+  )
+
+  const exportExcel = async () => {
+    const t = fullTable(batch)
+    downloadBlob(await writeTable(`${batch.date} ${batch.seq}차`, t.cols, t.rows), `${batchStamp(batch.date, batch.seq)}_주문내역.xlsx`)
+  }
+  const openWeb = () => {
+    const t = fullTable(batch)
+    const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${esc(`${batch.date} ${batch.seq}차 주문내역`)}</title>
+<style>body{font-family:'Malgun Gothic',sans-serif;margin:16px;color:#222}h1{font-size:18px}table{border-collapse:collapse;font-size:12px}th,td{border:1px solid #ccc;padding:4px 6px;white-space:nowrap}th{background:#993300;color:#fff;position:sticky;top:0}tr:nth-child(even) td{background:#faf7f2}</style></head>
+<body><h1>${esc(`${batch.date} ${batch.seq}차 주문내역`)} <small style="font-weight:normal;color:#777">${batch.rows.length}줄 · 수량 ${fmt(batch.qty)}</small></h1>
+<table><thead><tr>${t.cols.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${t.rows.map((r) => `<tr>${r.map((v) => `<td>${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody></table></body></html>`
+    const url = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }))
+    window.open(url, '_blank', 'noopener')
+    setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  }
+
+  const colSpan = DETAIL_COLS.length + 3
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
@@ -955,8 +1016,14 @@ function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin
         <span>
           {batch.uploadedBy} · {dateTimeKst(batch.uploadedAt)} 업로드{batch.editedAt && ` · ${dateTimeKst(batch.editedAt)} 고침`}
         </span>
-        <span>
+        <span className="inline-flex items-center gap-1.5">
           수량 합계 <b className="num text-ink-2">{fmt(batch.qty)}</b>
+          <button type="button" className="inline-flex items-center gap-0.5 rounded-sm border border-line bg-surface px-1.5 py-0.5 text-2xs font-semibold text-ink-2 hover:bg-panel hover:text-ink" onClick={() => void exportExcel()}>
+            <FileSpreadsheet className="size-3" aria-hidden /> 엑셀로 받기
+          </button>
+          <button type="button" className="inline-flex items-center gap-0.5 rounded-sm border border-line bg-surface px-1.5 py-0.5 text-2xs font-semibold text-ink-2 hover:bg-panel hover:text-ink" onClick={openWeb}>
+            <ExternalLink className="size-3" aria-hidden /> 웹에서 보기
+          </button>
         </span>
         {lines && (
           <button type="button" className="ml-auto font-semibold text-brand-ink underline" onClick={() => setAll((v) => !v)}>
@@ -965,63 +1032,100 @@ function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin
         )}
       </div>
       <div className="overflow-x-auto rounded-md border border-line bg-panel">
-        <table className="w-full min-w-[1100px] text-sm [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
+        {/* 상품명 칸이 남는 폭을 가져가고 나머지 칸은 내용만큼(주문자·수취인·전화번호가 벌어지지 않게) */}
+        <table className="w-full text-sm [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
           <thead className="bg-surface text-left text-xs text-muted">
             <tr>
-              <th className="px-2 py-1.5">NO</th>
+              {head('NO', 'NO')}
               {DETAIL_COLS.map(([c, l]) => (
                 <Fragment key={l}>
-                  <th className="px-2 py-1.5">{l}</th>
-                  {c === COL.orderNo && <th className="px-2 py-1.5">송장번호(CJ)</th>}
+                  {head(c, l, c === COL.name ? 'w-full' : c === COL.qty ? 'text-right' : undefined)}
+                  {c === COL.orderNo && head('waybill', '송장번호(CJ)')}
                 </Fragment>
               ))}
+              <th className="px-2 py-1.5">비고(CS내용)</th>
             </tr>
           </thead>
           <tbody>
-            {shown.map(([r, n]) => (
-              <Fragment key={n}>
-                <tr className={clsx('cursor-pointer border-t border-line hover:bg-surface', open === n && 'bg-surface', pick.has(n) && all && lines && 'bg-mark-soft')} onClick={() => setOpen(open === n ? null : n)}>
-                  <td className="num px-2 py-1.5 text-muted">{n}</td>
-                  {DETAIL_COLS.map(([c]) => (
-                    <Fragment key={c}>
-                      <td className={clsx('px-2 py-1.5', [COL.qty, COL.orderNo, COL.code, COL.phone1].includes(c as never) && 'num', c === COL.qty && 'text-right')}>{str(r[c])}</td>
-                      {c === COL.orderNo && (
-                        <td className="px-2 py-1.5">
-                          <WaybillChips list={batch.waybills[str(r[COL.orderNo])] ?? []} />
+            {shown.map(([r, n]) => {
+              const orderNo = str(r[COL.orderNo])
+              const wbs = batch.waybills[orderNo] ?? []
+              return (
+                <Fragment key={n}>
+                  <tr className={clsx('cursor-pointer border-t border-line hover:bg-surface', open === n && 'bg-surface', pick.has(n) && all && lines && 'bg-mark-soft')} onClick={() => setOpen(open === n ? null : n)}>
+                    <td className="num px-2 py-1.5 text-muted">{n}</td>
+                    {DETAIL_COLS.map(([c]) => (
+                      <Fragment key={c}>
+                        <td
+                          className={clsx(
+                            'px-2 py-1.5',
+                            [COL.qty, COL.orderNo, COL.code, COL.phone1].includes(c as never) && 'num',
+                            c === COL.qty && 'text-right',
+                            // 상품명·옵션은 길면 줄을 바꿔 표가 화면 폭을 넘지 않게
+                            c === COL.name && 'min-w-40 whitespace-normal! break-keep',
+                            // 주문자·수취인은 길면 말줄임(마우스를 올리면 전체)
+                            (c === COL.buyer || c === COL.receiver) && 'max-w-32 truncate',
+                            c === COL.option && 'max-w-20 truncate',
+                          )}
+                        >
+                          <span title={c === COL.buyer || c === COL.receiver || c === COL.option ? str(r[c]) : undefined}>{str(r[c])}</span>
                         </td>
-                      )}
-                    </Fragment>
-                  ))}
-                </tr>
-                {open === n && (
-                  <tr className="border-t border-line bg-sunken">
-                    <td colSpan={DETAIL_COLS.length + 2} className="px-3 py-2">
-                      {(batch.waybills[str(r[COL.orderNo])] ?? []).length > 0 && (
-                        <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
-                          <span className="font-semibold text-ink-2">주문번호 {str(r[COL.orderNo])}의 송장 {batch.waybills[str(r[COL.orderNo])].length}개</span>
-                          <WaybillChips list={batch.waybills[str(r[COL.orderNo])]} />
-                        </div>
-                      )}
-                      <dl className="grid gap-x-6 gap-y-1 text-xs sm:grid-cols-2 lg:grid-cols-3">
-                        {Object.entries(r)
-                          .filter(([key]) => key !== 'NO')
-                          .map(([key, v]) => (
-                            <div key={key} className="flex gap-2">
-                              <dt className="w-28 shrink-0 text-muted">{key}</dt>
-                              <dd className="min-w-0 break-all text-ink">{str(v) || '-'}</dd>
+                        {c === COL.orderNo && (
+                          <td className="px-2 py-1.5">
+                            <div className="flex items-center gap-1">
+                              <WaybillChips list={wbs} />
+                              <button
+                                type="button"
+                                className="inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-muted hover:bg-panel hover:text-ink"
+                                aria-label={`주문번호 ${orderNo} 송장번호 수정`}
+                                title={wbs.some((w) => w.manual) ? '송장번호 수정(담당자가 고친 값)' : '송장번호 수정'}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setEditWaybill(orderNo)
+                                }}
+                              >
+                                <Pencil className={clsx('size-3.5', wbs.some((w) => w.manual) && 'text-accent')} aria-hidden />
+                              </button>
                             </div>
-                          ))}
-                      </dl>
-                      {admin && (
-                        <Button size="sm" variant="ghost" icon={Pencil} className="mt-2" onClick={() => setEdit(n)}>
-                          이 주문 고치기
-                        </Button>
-                      )}
+                          </td>
+                        )}
+                      </Fragment>
+                    ))}
+                    <td className="px-2 py-1" onClick={(e) => e.stopPropagation()}>
+                      <CsMemo batchId={batch.id} line={n} value={str(r[CS_COL])} onSaved={(memo) => setBatch((b) => (b ? { ...b, rows: b.rows.map((x, i) => (i === n - 1 ? { ...x, [CS_COL]: memo || null } : x)) } : b))} />
                     </td>
                   </tr>
-                )}
-              </Fragment>
-            ))}
+                  {open === n && (
+                    <tr className="border-t border-line bg-sunken">
+                      <td colSpan={colSpan} className="px-3 py-2">
+                        {wbs.length > 0 && (
+                          <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+                            <span className="font-semibold text-ink-2">주문번호 {orderNo}의 송장 {wbs.length}개</span>
+                            <WaybillChips list={wbs} />
+                            {wbs.some((w) => w.manual) && <span className="text-accent">담당자가 고침</span>}
+                          </div>
+                        )}
+                        <dl className="grid gap-x-6 gap-y-1 text-xs sm:grid-cols-2 lg:grid-cols-3">
+                          {Object.entries(r)
+                            .filter(([key]) => key !== 'NO')
+                            .map(([key, v]) => (
+                              <div key={key} className="flex gap-2">
+                                <dt className="w-28 shrink-0 text-muted">{key}</dt>
+                                <dd className="min-w-0 break-all text-ink">{str(v) || '-'}</dd>
+                              </div>
+                            ))}
+                        </dl>
+                        {admin && (
+                          <Button size="sm" variant="ghost" icon={Pencil} className="mt-2" onClick={() => setEdit(n)}>
+                            이 주문 고치기
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              )
+            })}
           </tbody>
         </table>
       </div>
@@ -1038,7 +1142,109 @@ function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin
           }}
         />
       )}
+      {editWaybill != null && (
+        <EditWaybills
+          orderNo={editWaybill}
+          current={batch.waybills[editWaybill] ?? []}
+          onClose={() => setEditWaybill(null)}
+          onDone={(list) => {
+            const key = editWaybill
+            setEditWaybill(null)
+            setBatch((b): BatchFull | null => (b ? { ...b, waybills: { ...b.waybills, [key]: list } } : null))
+          }}
+        />
+      )}
     </div>
+  )
+}
+
+/** 비고(CS내용): 칸을 벗어나거나 Enter 를 누르면 저장 */
+function CsMemo({ batchId, line, value, onSaved }: { batchId: string; line: number; value: string; onSaved: (memo: string) => void }) {
+  const [text, setText] = useState(value)
+  const [state, setState] = useState<'idle' | 'saving' | 'saved'>('idle')
+  useEffect(() => setText(value), [value])
+  const save = async () => {
+    const memo = text.trim()
+    if (memo === value) return
+    setState('saving')
+    try {
+      await api(`/orders/batches/${batchId}/rows/${line}/memo`, { method: 'PATCH', body: { memo } })
+      onSaved(memo)
+      setState('saved')
+      setTimeout(() => setState('idle'), 1500)
+    } catch (err) {
+      setState('idle')
+      toast.error(err instanceof Error ? err.message : '비고를 저장하지 못했습니다.')
+    }
+  }
+  return (
+    <div className="flex items-center gap-1">
+      <input
+        aria-label={`NO ${line} 비고(CS내용)`}
+        value={text}
+        maxLength={200}
+        placeholder="CS 내용 입력"
+        onChange={(e) => setText(e.target.value)}
+        onBlur={() => void save()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+          if (e.key === 'Escape') setText(value)
+        }}
+        className="h-7 w-[20em] rounded-sm border border-line bg-panel px-1.5 text-xs text-ink placeholder:text-faint focus:border-brand focus:outline-none"
+      />
+      <span className="w-8 text-2xs text-muted">{state === 'saving' ? '저장…' : state === 'saved' ? '저장됨' : ''}</span>
+    </div>
+  )
+}
+
+/** 송장번호 고치기: 한 줄에 하나씩. 저장하면 이 주문번호의 송장은 이 목록이 된다 */
+function EditWaybills({ orderNo, current, onClose, onDone }: { orderNo: string; current: Waybill[]; onClose: () => void; onDone: (list: Waybill[]) => void }) {
+  const [text, setText] = useState(current.map((w) => w.invoice).join('\n'))
+  const [busy, setBusy] = useState(false)
+  const manual = current.some((w) => w.manual)
+  const send = async (body: { orderNo: string; invoices?: string[]; reset?: boolean }) => {
+    setBusy(true)
+    try {
+      const r = await api<{ waybills: Waybill[] }>('/orders/waybills', { method: 'PUT', body })
+      toast.success(body.reset ? 'CJ 파일 값으로 되돌렸습니다.' : '송장번호를 고쳤습니다.')
+      onDone(r.waybills)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '송장번호를 고치지 못했습니다.')
+    } finally {
+      setBusy(false)
+    }
+  }
+  const invoices = text
+    .split(/[\n,]/)
+    .map((v) => v.trim())
+    .filter(Boolean)
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      size="sm"
+      title={`송장번호 수정 · 주문번호 ${orderNo}`}
+      footer={
+        <>
+          {manual && (
+            <Button variant="ghost" className="mr-auto" loading={busy} onClick={() => void send({ orderNo, reset: true })}>
+              CJ 파일 값으로 되돌리기
+            </Button>
+          )}
+          <Button onClick={onClose}>닫기</Button>
+          <Button variant="primary" loading={busy} onClick={() => void send({ orderNo, invoices })}>
+            저장
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-2 text-sm">
+        <Field label="송장번호(한 줄에 하나씩)" hint="빠진 송장은 줄을 더해 넣고, 잘못된 번호는 고치거나 지우세요. 이 주문번호의 모든 줄에 같이 적용됩니다.">
+          {(id) => <Textarea id={id} value={text} onChange={(e) => setText(e.target.value)} className="num min-h-32! font-mono" placeholder="6009-0769-6075" />}
+        </Field>
+        <p className="text-xs text-muted">송장 {invoices.length}개로 저장됩니다.{manual && ' 지금 값은 담당자가 고친 것입니다.'}</p>
+      </div>
+    </Dialog>
   )
 }
 
