@@ -137,16 +137,12 @@ async function writeCenter(spec: OutputSpec, rows: OrderRow[], date: string, seq
   spec.widths.forEach((w, i) => (ws.getColumn(i + 1).width = w))
   const layout = layoutCenter(rows)
   const table = buildOutput(spec, rows)
-  // 여러 줄 주문의 첫 줄·끝 줄(굵은 선으로 묶음)
-  const first = new Set<number>()
+  // 주문자가 바뀌는 곳(각 주문자의 마지막 줄)마다 굵은 아랫줄
   const last = new Set<number>()
   let at = 0
   for (const g of layout.groups) {
-    if (g.length > 1) {
-      first.add(at)
-      last.add(at + g.length - 1)
-    }
     at += g.length
+    last.add(at - 1)
   }
   table.forEach((vals, ri) => {
     const row = ws.addRow(vals)
@@ -164,7 +160,7 @@ async function writeCenter(spec: OutputSpec, rows: OrderRow[], date: string, seq
       cell.font = FONT
       if (typeof cell.value !== 'number') cell.numFmt = '@'
       cell.alignment = { vertical: 'middle', shrinkToFit: true, horizontal: ci === 1 || ci === vals.length - 1 ? 'center' : undefined }
-      cell.border = { ...BORDER, ...(first.has(i) ? { top: THICK } : {}), ...(last.has(i) ? { bottom: THICK } : {}) }
+      cell.border = last.has(i) ? { ...BORDER, bottom: THICK } : BORDER
     }
   })
   // 쪽 나누기: 쪽의 마지막 주문 줄 다음에서(머리줄 1줄을 더한 행 번호)

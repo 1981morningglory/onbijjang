@@ -9,6 +9,8 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 
 const ID_RE = /^[a-f0-9]{16}$/
+/** 센터주문서 양식 판 — 화면에 같이 보여 배포가 반영됐는지 알 수 있게 */
+const CENTER_FORM = '센터주문서 v2(주문서+출고제품 요약 탭, A4 좁은 여백, 머릿말·꼬릿말)'
 const DATE_RE = /^20\d{2}-\d{2}-\d{2}$/
 const MAX_ROWS = 5000
 const MAX_RESULTS = 2000
@@ -191,7 +193,8 @@ export default async function ordersRoutes(app, ctx) {
 
   app.get('/api/orders/status', async (req, res) => {
     // admin: 전체마스터(관리자) — 주문서 수정·삭제는 관리자만
-    res.json({ allowed: await allowed(req), admin: isAdmin(req) })
+    // version: 지금 돌고 있는 배포본(Railway 가 넣어 주는 커밋 번호) — 새 버전이 반영됐는지 화면에서 확인용
+    res.json({ allowed: await allowed(req), admin: isAdmin(req), version: (process.env.RAILWAY_GIT_COMMIT_SHA ?? '').slice(0, 7) || 'local', form: CENTER_FORM })
   })
 
   /** 이 날짜에 올리면 몇 차가 되는지 */
