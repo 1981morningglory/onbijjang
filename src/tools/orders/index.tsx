@@ -72,6 +72,8 @@ interface BatchBrief {
   amount: number | null
   /** 송장이 붙은 주문 수 · 송장(운송장) 수 */
   invoiceOrders: number
+  /** 미출고 갯수: 송장이 없는 주문 수(취소요청·취소완료 줄은 빼고) */
+  unshipped?: number
   waybills: number
   /** 검색어에 맞는 줄 번호(검색할 때만) */
   lines?: number[]
@@ -113,7 +115,7 @@ interface CjWaybill extends Waybill {
 const trackUrl = (invoice: string) => `https://trace.cjlogistics.com/next/tracking.html?wblNo=${invoice.replace(/\D/g, '')}`
 
 /** 운송장 번호 칩(누르면 CJ 배송조회) */
-function WaybillChips({ list }: { list: Waybill[] }) {
+function WaybillChips({ list, compact }: { list: Waybill[]; compact?: boolean }) {
   if (!list.length) return <span className="text-xs text-faint">-</span>
   return (
     <div className="flex flex-wrap gap-1">
@@ -125,9 +127,12 @@ function WaybillChips({ list }: { list: Waybill[] }) {
           rel="noreferrer"
           onClick={(e) => e.stopPropagation()}
           title={[w.pickupDate && `집화 ${w.pickupDate}`, w.status, w.box && `박스 ${w.box}`].filter(Boolean).join(' · ') || 'CJ대한통운 배송조회'}
-          className="num inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-line bg-surface px-2 py-0.5 text-xs text-ink-2 transition-colors duration-150 hover:border-brand/50 hover:bg-brand-soft hover:text-brand-ink"
+          className={clsx(
+            'num inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-line bg-surface py-0.5 text-xs text-ink-2 transition-colors duration-150 hover:border-brand/50 hover:bg-brand-soft hover:text-brand-ink',
+            compact ? 'px-1.5' : 'px-2',
+          )}
         >
-          <Truck className="size-3" aria-hidden />
+          {!compact && <Truck className="size-3" aria-hidden />}
           {w.invoice}
         </a>
       ))}
@@ -149,7 +154,7 @@ const fmt = (n: number) => n.toLocaleString('ko-KR')
 const WEEK = ['일', '월', '화', '수', '목', '금', '토']
 const weekday = (date: string) => WEEK[new Date(`${date}T00:00:00Z`).getUTCDay()]
 /** 화면 쪽 센터주문서 양식 판(서버 쪽 CENTER_FORM 과 같이 올린다) */
-const CENTER_FORM_UI = '센터주문서 v7'
+const CENTER_FORM_UI = '센터주문서 v8'
 const AMOUNT_RE = /결제\s*금액|주문\s*금액|총\s*금액|판매\s*금액|결제액/
 
 export default function OrdersTool() {
@@ -686,7 +691,7 @@ function OrdersList({ admin }: { admin: boolean }) {
   }
 
   const showAmount = Boolean(data?.hasAmount)
-  const colCount = 7 + (showAmount ? 1 : 0) + (admin ? 1 : 0)
+  const colCount = 8 + (showAmount ? 1 : 0) + (admin ? 1 : 0)
   const searching = Boolean(applied.q.trim()) || Boolean(mall)
 
   return (
@@ -788,6 +793,7 @@ function OrdersList({ admin }: { admin: boolean }) {
                   <th className="px-3 py-2.5 text-right">주문줄수</th>
                   {showAmount && <th className="px-3 py-2.5 text-right">주문총액</th>}
                   <th className="px-3 py-2.5 text-right">송장</th>
+                  <th className="px-3 py-2.5 text-right">미출고 갯수</th>
                   <th className="px-3 py-2.5">첨부파일</th>
                   {admin && <th className="px-3 py-2.5" />}
                 </tr>
@@ -825,6 +831,9 @@ function OrdersList({ admin }: { admin: boolean }) {
                             ) : (
                               <span className="text-faint">-</span>
                             )}
+                          </td>
+                          <td className="num whitespace-nowrap px-3 py-2.5 text-right" title="송장번호가 아직 없는 주문 수(취소요청·취소완료는 빼고)">
+                            {b.unshipped ? <span className="font-bold text-danger">{fmt(b.unshipped)}건</span> : <span className="text-faint">0</span>}
                           </td>
                           <td className="px-3 py-2">
                             <FileChips
@@ -939,13 +948,30 @@ const CS_COL = '비고(CS내용)'
 type SortKey = string
 const NUM_SORT = new Set<string>(['NO', COL.qty])
 
-type BatchFull = Omit<BatchBrief, 'waybills'> & { cols: string[]; rows: OrderRow[]; waybills: Record<string, Waybill[]> }
+interface CsEntry {
+  text: string
+  by: string
+  at: string
+}
+type BatchFull = Omit<BatchBrief, 'waybills'> & { cols: string[]; rows: OrderRow[]; waybills: Record<string, Waybill[]>; csLog: Record<string, CsEntry[]> }
+/** CS 수정 시각 '26.10.16 16:33'(한국 시각) */
+const csTime = (iso: string) => (iso ? dateTimeKst(iso).slice(2).replace(/-/g, '.') : '')
+const CS_BY = 'CS수정자'
+const CS_AT = 'CS수정시각'
+const CANCEL_COL = '취소내용'
 
-/** 한 차수의 전체 표(엑셀·웹 보기용): 원본 칸 + 송장번호(CJ) + 비고(CS내용) */
+/** 한 차수의 전체 표(엑셀·웹 보기용): 원본 칸 + 송장번호(CJ) + 취소내용 + 비고(CS내용) + CS 수정자·시각 */
 function fullTable(batch: BatchFull) {
-  const cols = [...new Set(['NO', ...batch.cols.filter((c) => c !== 'NO' && c !== CS_COL && c !== COL.invoice), '송장번호(CJ)', CS_COL])]
+  const extra = ['송장번호(CJ)', CANCEL_COL, CS_COL, 'CS 수정자·시각']
+  const internal = new Set(['NO', COL.invoice, CANCEL_COL, CS_COL, CS_BY, CS_AT, '취소처리'])
+  const cols = ['NO', ...batch.cols.filter((c) => !internal.has(c)), ...extra]
   const rows = batch.rows.map((r, i) =>
-    cols.map((c) => (c === 'NO' ? i + 1 : c === '송장번호(CJ)' ? (batch.waybills[str(r[COL.orderNo])] ?? []).map((w) => w.invoice).join(', ') || null : (r[c] ?? null))),
+    cols.map((c) => {
+      if (c === 'NO') return i + 1
+      if (c === '송장번호(CJ)') return (batch.waybills[str(r[COL.orderNo])] ?? []).map((w) => w.invoice).join(', ') || null
+      if (c === 'CS 수정자·시각') return str(r[CS_BY]) ? `${str(r[CS_BY])} ${csTime(str(r[CS_AT]))}` : null
+      return r[c] ?? null
+    }),
   )
   return { cols, rows }
 }
@@ -1006,7 +1032,10 @@ function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin
     setTimeout(() => URL.revokeObjectURL(url), 60_000)
   }
 
-  const colSpan = DETAIL_COLS.length + 3
+  const colSpan = DETAIL_COLS.length + 5
+  /** 한 줄 고친 결과를 화면에 바로 반영 */
+  const patchRow = (n: number, row: OrderRow, log?: CsEntry[]) =>
+    setBatch((b) => (b ? { ...b, rows: b.rows.map((x, i) => (i === n - 1 ? row : x)), csLog: log ? { ...b.csLog, [n]: log } : b.csLog } : b))
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
@@ -1033,17 +1062,20 @@ function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin
       </div>
       <div className="overflow-x-auto rounded-md border border-line bg-panel">
         {/* 상품명 칸이 남는 폭을 가져가고 나머지 칸은 내용만큼(주문자·수취인·전화번호가 벌어지지 않게) */}
-        <table className="w-full text-sm [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
+        {/* 칸은 내용만큼(상품명·옵션이 벌어지지 않게). 남는 폭은 오른쪽에 둔다 */}
+        <table className="w-max text-sm [&_td]:px-1.5 [&_td]:whitespace-nowrap [&_th]:px-1.5 [&_th]:whitespace-nowrap">
           <thead className="bg-surface text-left text-xs text-muted">
             <tr>
               {head('NO', 'NO')}
               {DETAIL_COLS.map(([c, l]) => (
                 <Fragment key={l}>
-                  {head(c, l, c === COL.name ? 'w-full' : c === COL.qty ? 'text-right' : undefined)}
+                  {head(c, l, c === COL.qty ? 'text-right' : undefined)}
                   {c === COL.orderNo && head('waybill', '송장번호(CJ)')}
                 </Fragment>
               ))}
-              <th className="px-2 py-1.5">비고(CS내용)</th>
+              {head(CANCEL_COL, '취소내용')}
+              {head(CS_COL, '비고(CS내용)')}
+              {head(CS_AT, '수정자·시각')}
             </tr>
           </thead>
           <tbody>
@@ -1060,20 +1092,27 @@ function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin
                           className={clsx(
                             'px-2 py-1.5',
                             [COL.qty, COL.orderNo, COL.code, COL.phone1].includes(c as never) && 'num',
+                            // 번호 칸은 한 단계 작은 글자로(표가 한 화면에 들어가게)
+                            [COL.orderNo, COL.code, COL.phone1].includes(c as never) && 'text-xs',
                             c === COL.qty && 'text-right',
                             // 상품명·옵션은 길면 줄을 바꿔 표가 화면 폭을 넘지 않게
-                            c === COL.name && 'min-w-40 whitespace-normal! break-keep',
+                            c === COL.name && 'whitespace-normal! break-keep',
                             // 주문자·수취인은 길면 말줄임(마우스를 올리면 전체)
-                            (c === COL.buyer || c === COL.receiver) && 'max-w-32 truncate',
-                            c === COL.option && 'max-w-20 truncate',
+                            (c === COL.buyer || c === COL.receiver) && 'max-w-24 truncate',
+                            c === COL.option && 'max-w-16 truncate',
                           )}
                         >
-                          <span title={c === COL.buyer || c === COL.receiver || c === COL.option ? str(r[c]) : undefined}>{str(r[c])}</span>
+                          {c === COL.name ? (
+                            // 상품명은 약 13글자 폭에서 줄을 바꿔 표가 화면 폭을 넘지 않게
+                            <div className="w-40">{str(r[c])}</div>
+                          ) : (
+                            <span title={c === COL.buyer || c === COL.receiver || c === COL.option ? str(r[c]) : undefined}>{str(r[c])}</span>
+                          )}
                         </td>
                         {c === COL.orderNo && (
                           <td className="px-2 py-1.5">
                             <div className="flex items-center gap-1">
-                              <WaybillChips list={wbs} />
+                              <WaybillChips list={wbs} compact />
                               <button
                                 type="button"
                                 className="inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-muted hover:bg-panel hover:text-ink"
@@ -1092,12 +1131,24 @@ function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin
                       </Fragment>
                     ))}
                     <td className="px-2 py-1" onClick={(e) => e.stopPropagation()}>
-                      <CsMemo batchId={batch.id} line={n} value={str(r[CS_COL])} onSaved={(memo) => setBatch((b) => (b ? { ...b, rows: b.rows.map((x, i) => (i === n - 1 ? { ...x, [CS_COL]: memo || null } : x)) } : b))} />
+                      <CancelButton batchId={batch.id} line={n} value={str(r[CANCEL_COL])} onSaved={(row) => patchRow(n, row)} />
+                    </td>
+                    <td className="px-2 py-1" onClick={(e) => e.stopPropagation()}>
+                      <CsMemo batchId={batch.id} line={n} value={str(r[CS_COL])} open={open === n} onToggle={() => setOpen(open === n ? null : n)} onSaved={(row, log) => patchRow(n, row, log)} />
+                    </td>
+                    <td className="num px-2 py-1 text-2xs leading-tight text-muted" title={str(r[CS_BY]) ? `${str(r[CS_BY])} ${csTime(str(r[CS_AT]))}` : undefined}>
+                      {str(r[CS_BY]) && (
+                        <>
+                          <div className="max-w-24 truncate font-semibold text-ink-2">{str(r[CS_BY])}</div>
+                          <div>{csTime(str(r[CS_AT]))}</div>
+                        </>
+                      )}
                     </td>
                   </tr>
                   {open === n && (
                     <tr className="border-t border-line bg-sunken">
-                      <td colSpan={colSpan} className="px-3 py-2">
+                      {/* 펼친 세부내역은 표 폭 안에서 줄을 바꿔 표를 넓히지 않게 */}
+                      <td colSpan={colSpan} className="w-0 whitespace-normal! px-3 py-2">
                         {wbs.length > 0 && (
                           <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
                             <span className="font-semibold text-ink-2">주문번호 {orderNo}의 송장 {wbs.length}개</span>
@@ -1107,7 +1158,7 @@ function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin
                         )}
                         <dl className="grid gap-x-6 gap-y-1 text-xs sm:grid-cols-2 lg:grid-cols-3">
                           {Object.entries(r)
-                            .filter(([key]) => key !== 'NO')
+                            .filter(([key]) => !['NO', CS_BY, CS_AT, '취소처리'].includes(key))
                             .map(([key, v]) => (
                               <div key={key} className="flex gap-2">
                                 <dt className="w-28 shrink-0 text-muted">{key}</dt>
@@ -1115,11 +1166,9 @@ function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin
                               </div>
                             ))}
                         </dl>
-                        {admin && (
-                          <Button size="sm" variant="ghost" icon={Pencil} className="mt-2" onClick={() => setEdit(n)}>
-                            이 주문 고치기
-                          </Button>
-                        )}
+                        <Button size="sm" variant="secondary" icon={Pencil} className="mt-2" onClick={() => setEdit(n)}>
+                          세부내역 조회 및 CS내용
+                        </Button>
                       </td>
                     </tr>
                   )}
@@ -1135,6 +1184,9 @@ function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin
           line={edit}
           row={batch.rows[edit - 1]}
           cols={batch.cols}
+          log={batch.csLog[edit] ?? []}
+          admin={admin}
+          onCs={(row, log) => patchRow(edit, row, log)}
           onClose={() => setEdit(null)}
           onDone={() => {
             setEdit(null)
@@ -1158,8 +1210,8 @@ function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin
   )
 }
 
-/** 비고(CS내용): 칸을 벗어나거나 Enter 를 누르면 저장 */
-function CsMemo({ batchId, line, value, onSaved }: { batchId: string; line: number; value: string; onSaved: (memo: string) => void }) {
+/** 비고(CS내용): 칸을 벗어나거나 Enter 를 누르면 저장(누가·언제 적었는지 기록). ▶ 를 누르면 그 주문의 세부내역이 펼쳐진다 */
+function CsMemo({ batchId, line, value, open, onToggle, onSaved }: { batchId: string; line: number; value: string; open: boolean; onToggle: () => void; onSaved: (row: OrderRow, log: CsEntry[]) => void }) {
   const [text, setText] = useState(value)
   const [state, setState] = useState<'idle' | 'saving' | 'saved'>('idle')
   useEffect(() => setText(value), [value])
@@ -1168,8 +1220,8 @@ function CsMemo({ batchId, line, value, onSaved }: { batchId: string; line: numb
     if (memo === value) return
     setState('saving')
     try {
-      await api(`/orders/batches/${batchId}/rows/${line}/memo`, { method: 'PATCH', body: { memo } })
-      onSaved(memo)
+      const r = await api<{ row: OrderRow; log: CsEntry[] }>(`/orders/batches/${batchId}/rows/${line}/memo`, { method: 'PATCH', body: { memo } })
+      onSaved(r.row, r.log)
       setState('saved')
       setTimeout(() => setState('idle'), 1500)
     } catch (err) {
@@ -1179,10 +1231,20 @@ function CsMemo({ batchId, line, value, onSaved }: { batchId: string; line: numb
   }
   return (
     <div className="flex items-center gap-1">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-label={open ? '세부내역 닫기' : '세부내역 열기'}
+        title={open ? '세부내역 닫기' : '세부내역 열기'}
+        className="inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:bg-panel hover:text-ink"
+      >
+        {open ? <ChevronDown className="size-4" aria-hidden /> : <ChevronRight className="size-4" aria-hidden />}
+      </button>
       <input
         aria-label={`NO ${line} 비고(CS내용)`}
         value={text}
-        maxLength={200}
+        maxLength={500}
         placeholder="CS 내용 입력"
         onChange={(e) => setText(e.target.value)}
         onBlur={() => void save()}
@@ -1190,10 +1252,47 @@ function CsMemo({ batchId, line, value, onSaved }: { batchId: string; line: numb
           if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
           if (e.key === 'Escape') setText(value)
         }}
-        className="h-7 w-[20em] rounded-sm border border-line bg-panel px-1.5 text-xs text-ink placeholder:text-faint focus:border-brand focus:outline-none"
+        title={state === 'saving' ? '저장 중' : state === 'saved' ? '저장했습니다' : undefined}
+        className={clsx(
+          'h-7 w-[20em] rounded-sm border bg-panel px-1.5 text-xs text-ink transition-colors duration-200 placeholder:text-faint focus:border-brand focus:outline-none',
+          state === 'saved' ? 'border-success bg-success-soft' : state === 'saving' ? 'border-warn' : 'border-line',
+        )}
       />
-      <span className="w-8 text-2xs text-muted">{state === 'saving' ? '저장…' : state === 'saved' ? '저장됨' : ''}</span>
     </div>
+  )
+}
+
+/** 취소내용: 누를 때마다 빈칸 → [취소요청](분홍) → [취소완료](초록) → 빈칸 */
+const CANCEL_NEXT: Record<string, string> = { '': '취소요청', 취소요청: '취소완료', 취소완료: '' }
+function CancelButton({ batchId, line, value, onSaved }: { batchId: string; line: number; value: string; onSaved: (row: OrderRow) => void }) {
+  const [busy, setBusy] = useState(false)
+  const click = async () => {
+    setBusy(true)
+    try {
+      const r = await api<{ row: OrderRow }>(`/orders/batches/${batchId}/rows/${line}/cancel`, { method: 'PATCH', body: { status: CANCEL_NEXT[value] ?? '' } })
+      onSaved(r.row)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '취소내용을 바꾸지 못했습니다.')
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => void click()}
+      disabled={busy}
+      aria-label={`NO ${line} 취소내용: ${value || '없음'} (누르면 ${CANCEL_NEXT[value] || '빈칸'})`}
+      title={value ? `누르면 ${CANCEL_NEXT[value] || '빈칸'}으로` : '누르면 취소요청'}
+      className={clsx(
+        'inline-flex h-7 min-w-18 items-center justify-center rounded-sm border px-2 text-xs font-bold transition-colors duration-150 disabled:opacity-60',
+        value === '취소요청' && 'border-pink/40 bg-pink-soft text-pink hover:border-pink/70',
+        value === '취소완료' && 'border-brand/50 bg-brand-soft text-brand-ink hover:bg-brand hover:text-on-brand',
+        !value && 'border-transparent bg-transparent hover:border-line',
+      )}
+    >
+      {value ? `[${value}]` : ''}
+    </button>
   )
 }
 
@@ -1248,10 +1347,54 @@ function EditWaybills({ orderNo, current, onClose, onDone }: { orderNo: string; 
   )
 }
 
-function EditRow({ batchId, line, row, cols, onClose, onDone }: { batchId: string; line: number; row: OrderRow; cols: string[]; onClose: () => void; onDone: () => void }) {
-  const keys = [...new Set([...cols, ...Object.keys(row)])].filter((k) => k !== 'NO')
+function EditRow({
+  batchId,
+  line,
+  row,
+  cols,
+  log,
+  admin,
+  onCs,
+  onClose,
+  onDone,
+}: {
+  batchId: string
+  line: number
+  row: OrderRow
+  cols: string[]
+  log: CsEntry[]
+  admin: boolean
+  onCs: (row: OrderRow, log: CsEntry[]) => void
+  onClose: () => void
+  onDone: () => void
+}) {
+  const hidden = new Set(['NO', CS_COL, CS_BY, CS_AT, CANCEL_COL, '취소처리'])
+  const keys = [...new Set([...cols, ...Object.keys(row)])].filter((k) => !hidden.has(k))
   const [vals, setVals] = useState<Record<string, string>>(() => Object.fromEntries(keys.map((k) => [k, str(row[k])])))
   const [busy, setBusy] = useState(false)
+  // CS 내용: 지난 기록 + 새로 적는 줄들
+  const [entries, setEntries] = useState<CsEntry[]>(log)
+  const [drafts, setDrafts] = useState<string[]>([''])
+  const [csBusy, setCsBusy] = useState(false)
+  const saveCs = async () => {
+    const texts = drafts.map((d) => d.trim()).filter(Boolean)
+    if (!texts.length) return
+    setCsBusy(true)
+    try {
+      let last: { row: OrderRow; log: CsEntry[] } | null = null
+      for (const memo of texts) last = await api<{ row: OrderRow; log: CsEntry[] }>(`/orders/batches/${batchId}/rows/${line}/memo`, { method: 'PATCH', body: { memo } })
+      if (last) {
+        setEntries(last.log)
+        onCs(last.row, last.log)
+      }
+      setDrafts([''])
+      toast.success('CS 내용을 저장했습니다.')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'CS 내용을 저장하지 못했습니다.')
+    } finally {
+      setCsBusy(false)
+    }
+  }
   const save = async () => {
     setBusy(true)
     try {
@@ -1274,22 +1417,68 @@ function EditRow({ batchId, line, row, cols, onClose, onDone }: { batchId: strin
       open
       onClose={onClose}
       size="lg"
-      title={`주문 고치기 (NO ${line})`}
+      title={`세부내역 조회 및 CS내용 (NO ${line})`}
       footer={
         <>
           <Button onClick={onClose}>닫기</Button>
-          <Button variant="primary" loading={busy} onClick={() => void save()}>
-            저장
-          </Button>
+          {admin && (
+            <Button variant="primary" loading={busy} onClick={() => void save()}>
+              주문 내용 저장
+            </Button>
+          )}
         </>
       }
     >
-      <div className="grid gap-3 sm:grid-cols-2">
-        {keys.map((k) => (
-          <Field key={k} label={k}>
-            {(id) => <TextInput id={id} value={vals[k]} onChange={(e) => setVals((v) => ({ ...v, [k]: e.target.value }))} />}
-          </Field>
-        ))}
+      <div className="flex flex-col gap-5">
+        {/* CS 내용(한 줄 구조, 적은 사람·시각 기록) */}
+        <section className="flex flex-col gap-2 rounded-lg border border-line bg-surface p-3">
+          <h3 className="text-sm font-bold text-ink">CS 내용</h3>
+          {entries.length ? (
+            <ol className="flex flex-col gap-1.5">
+              {entries.map((e, i) => (
+                <li key={i} className="rounded-md border border-line bg-panel px-2.5 py-1.5">
+                  <div className="whitespace-pre-wrap break-all text-sm text-ink">{e.text || <span className="text-faint">(내용 지움)</span>}</div>
+                  <div className="num mt-0.5 text-2xs text-muted">
+                    {e.by} · {csTime(e.at)}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="text-xs text-muted">아직 적은 CS 내용이 없습니다.</p>
+          )}
+          {drafts.map((d, i) => (
+            <Textarea
+              key={i}
+              aria-label={`새 CS 내용 ${i + 1}`}
+              value={d}
+              maxLength={500}
+              onChange={(e) => setDrafts((list) => list.map((x, j) => (j === i ? e.target.value : x)))}
+              placeholder="바뀐 CS 내용을 적으세요(저장하면 적은 사람·시각이 남습니다)"
+              className="min-h-16!"
+            />
+          ))}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="ghost" onClick={() => setDrafts((list) => [...list, ''])}>
+              CS 추가
+            </Button>
+            <Button size="sm" variant="primary" loading={csBusy} disabled={!drafts.some((d) => d.trim())} onClick={() => void saveCs()} className="ml-auto">
+              CS 내용 저장
+            </Button>
+          </div>
+        </section>
+
+        {/* 주문 세부내역(전체마스터만 고칠 수 있음) */}
+        <section className="flex flex-col gap-2">
+          <h3 className="text-sm font-bold text-ink">주문 세부내역{!admin && <span className="ml-1 text-xs font-normal text-muted">(고치기는 전체마스터만)</span>}</h3>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {keys.map((k) => (
+              <Field key={k} label={k}>
+                {(id) => <TextInput id={id} value={vals[k]} readOnly={!admin} onChange={(e) => setVals((v) => ({ ...v, [k]: e.target.value }))} />}
+              </Field>
+            ))}
+          </div>
+        </section>
       </div>
     </Dialog>
   )

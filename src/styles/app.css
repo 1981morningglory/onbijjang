@@ -47,6 +47,9 @@
 
   --color-danger: #c22f1c;
   --color-danger-soft: #fbe3de;
+  /* 주문서 ‘취소요청’ 표시 */
+  --color-pink: #c2185b;
+  --color-pink-soft: #fde4ee;
   --color-warn: #96590a;
   --color-warn-soft: #fbedc9;
   --color-info: #1f4fbf;
