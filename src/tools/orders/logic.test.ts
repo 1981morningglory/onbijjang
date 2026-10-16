@@ -125,6 +125,9 @@ describe('센터주문서 쪽 나누기·요약', () => {
       row({ [COL.code]: 'P4', [COL.name]: '펜', [COL.qty]: 1, [COL.buyer]: '박' }),
     ]
     const s = productSummary(rows, 3)
+    // 주문건수 기준: 펜은 1개씩 두 사람(건수 2) → 1위
+    const byBuyers = productSummary([...rows, row({ [COL.code]: 'P4', [COL.name]: '펜', [COL.qty]: 1, [COL.buyer]: '최' })], 30, 'buyers')
+    expect(byBuyers.map((p) => [p.rank, p.name, p.buyers])[0]).toEqual([1, '펜', 2])
     expect(s.map((p) => [p.rank, p.name, p.qty, p.buyers])).toEqual([
       [1, '필통', 5, 1],
       [2, '자', 4, 1],
@@ -137,12 +140,24 @@ describe('센터주문서 쪽 나누기·요약', () => {
 describe('센터주문서 열 너비', () => {
   it('정해 준 너비로 넣고 남는 폭은 상품명에, 한 쪽 폭을 넘지 않는다', () => {
     const base = OUTPUTS.find((o) => o.kind === 'warehouse')!.widths
-    expect(base).toEqual([4, 11, 15.7, 36, 7.3, 4, 10])
+    expect(base).toEqual([4, 11, 15.7, 36, 8.5, 4, 10])
     const w = centerWidths(base)
-    expect(w.filter((_, i) => i !== 3)).toEqual([4, 11, 15.7, 7.3, 4, 10])
+    expect(w.filter((_, i) => i !== 3)).toEqual([4, 11, 15.7, 8.5, 4, 10])
     expect(w[3]).toBeGreaterThan(36)
     const used = w.reduce((t, x) => t + colPx(x), 0)
     expect(used).toBeLessThanOrEqual(A4_PRINT_PX)
     expect(A4_PRINT_PX - used).toBeLessThan(7)
+  })
+})
+
+describe('제주 배송메세지', () => {
+  it('제주 주소: 보통은 제주도출고O, 핫트랙스·텐바이텐 주문은 제주도 확인', async () => {
+    const { jejuNote } = await import('./logic')
+    const jeju = { [COL.address]: '제주특별자치도 제주시 구산로 50' }
+    expect(jejuNote(row({ ...jeju, [COL.mall]: '스마트스토어' }))).toBe('제주도출고O')
+    expect(jejuNote(row({ ...jeju, [COL.mall]: '교보핫트랙스' }))).toBe('제주도 확인')
+    expect(jejuNote(row({ ...jeju, [COL.mall]: '핫트렉스' }))).toBe('제주도 확인')
+    expect(jejuNote(row({ ...jeju, [COL.mall]: '텐바이텐' }))).toBe('제주도 확인')
+    expect(jejuNote(row({ [COL.mall]: '텐바이텐' }))).toBeNull()
   })
 })

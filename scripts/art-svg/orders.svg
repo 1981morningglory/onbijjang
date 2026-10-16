@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <filter id="drop" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="10" dy="18" stdDeviation="16" flood-color="#3b2a14" flood-opacity="0.28"/>
+    </filter>
+    <filter id="soft" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="3" dy="6" stdDeviation="5" flood-color="#2a1d0e" flood-opacity="0.25"/>
+    </filter>
+    <filter id="blur"><feGaussianBlur stdDeviation="22"/></filter>
+    <linearGradient id="board" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3f8a60"/><stop offset="0.55" stop-color="#2a6b48"/><stop offset="1" stop-color="#1c4f35"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fbf3e2"/><stop offset="1" stop-color="#eadbbd"/>
+    </linearGradient>
+    <linearGradient id="clip" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2f6f4b"/><stop offset="1" stop-color="#173f2a"/>
+    </linearGradient>
+    <radialGradient id="check" cx="0.35" cy="0.3" r="0.8">
+      <stop offset="0" stop-color="#4f9c70"/><stop offset="1" stop-color="#1f5a3c"/>
+    </radialGradient>
+    <linearGradient id="top" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f0c48b"/><stop offset="1" stop-color="#dba567"/>
+    </linearGradient>
+    <linearGradient id="left" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d79c5c"/><stop offset="1" stop-color="#c0834a"/>
+    </linearGradient>
+    <linearGradient id="right" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b9783f"/><stop offset="1" stop-color="#9c6131"/>
+    </linearGradient>
+    <linearGradient id="tape" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#2e7550"/><stop offset="1" stop-color="#1f5a3c"/>
+    </linearGradient>
+    <linearGradient id="label" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f26b3a"/><stop offset="1" stop-color="#d9481f"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 바닥 그림자 -->
+  <ellipse cx="560" cy="900" rx="370" ry="58" fill="#3b2a14" opacity="0.22" filter="url(#blur)"/>
+
+  <!-- 주문서 클립보드 -->
+  <g transform="rotate(-9 380 470)" filter="url(#drop)">
+    <rect x="150" y="170" width="440" height="590" rx="46" fill="url(#board)"/>
+    <rect x="164" y="182" width="412" height="40" rx="20" fill="#ffffff" opacity="0.12"/>
+    <rect x="186" y="240" width="368" height="490" rx="22" fill="url(#paper)"/>
+    <rect x="200" y="252" width="200" height="16" rx="8" fill="#ffffff" opacity="0.55"/>
+    <!-- 머리 띠 -->
+    <rect x="226" y="286" width="210" height="26" rx="13" fill="#e8d23a"/>
+    <!-- 체크 줄 3개 -->
+    <g>
+      <circle cx="252" cy="380" r="34" fill="url(#check)" filter="url(#soft)"/>
+      <path d="M236 381 l12 12 l22 -26" fill="none" stroke="#fbf3e2" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="304" y="358" width="214" height="20" rx="10" fill="#3a3530"/>
+      <rect x="304" y="390" width="150" height="18" rx="9" fill="#e8d23a"/>
+    </g>
+    <g>
+      <circle cx="252" cy="486" r="34" fill="url(#check)" filter="url(#soft)"/>
+      <path d="M236 487 l12 12 l22 -26" fill="none" stroke="#fbf3e2" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="304" y="464" width="214" height="20" rx="10" fill="#3a3530"/>
+      <rect x="304" y="496" width="120" height="18" rx="9" fill="#e8d23a"/>
+    </g>
+    <g>
+      <circle cx="252" cy="592" r="34" fill="none" stroke="#2a6b48" stroke-width="9"/>
+      <rect x="304" y="570" width="214" height="20" rx="10" fill="#3a3530"/>
+      <rect x="304" y="602" width="170" height="18" rx="9" fill="#e8d23a"/>
+    </g>
+    <!-- 집게 -->
+    <rect x="290" y="132" width="160" height="86" rx="30" fill="url(#clip)" filter="url(#soft)"/>
+    <rect x="304" y="142" width="132" height="16" rx="8" fill="#ffffff" opacity="0.18"/>
+    <circle cx="370" cy="176" r="15" fill="#e8d23a"/>
+  </g>
+
+  <!-- 택배 상자 -->
+  <g filter="url(#drop)">
+    <!-- 왼쪽 면 -->
+    <path d="M430 590 L690 676 L690 900 Q690 912 678 908 L442 830 Q430 826 430 814 Z" fill="url(#left)"/>
+    <!-- 오른쪽 면 -->
+    <path d="M690 676 L912 594 L912 816 Q912 828 900 832 L702 906 Q690 912 690 900 Z" fill="url(#right)"/>
+    <!-- 윗면 -->
+    <path d="M430 590 Q426 578 440 574 L656 504 Q668 500 680 504 L904 578 Q918 584 908 592 L700 672 Q690 676 680 672 Z" fill="url(#top)"/>
+    <path d="M470 584 L660 522 L700 534 L510 597 Z" fill="#ffffff" opacity="0.18"/>
+    <!-- 테이프(윗면 → 오른쪽 면) -->
+    <path d="M520 547 L566 532 L828 618 L784 635 Z" fill="url(#tape)"/>
+    <path d="M784 635 L828 618 L828 848 L784 864 Z" fill="#1d5539"/>
+    <path d="M530 548 L560 538 L700 584 L668 595 Z" fill="#ffffff" opacity="0.16"/>
+    <!-- 송장 라벨 -->
+    <path d="M470 676 L638 731 Q648 734 648 744 L648 806 Q648 816 638 813 L470 758 Q460 755 460 745 L460 683 Q460 673 470 676 Z" fill="url(#label)" filter="url(#soft)"/>
+    <path d="M482 698 L600 737" stroke="#fbf3e2" stroke-width="11" stroke-linecap="round"/>
+    <path d="M482 724 L560 750" stroke="#fbf3e2" stroke-width="11" stroke-linecap="round" opacity="0.85"/>
+    <g stroke="#3a2010" stroke-width="5" opacity="0.75">
+      <path d="M584 768 L584 790"/><path d="M596 772 L596 794"/><path d="M604 775 L604 797"/><path d="M616 779 L616 801"/><path d="M626 782 L626 804"/>
+    </g>
+  </g>
+
+  <!-- 출고 표시(주황 동그라미 + 화살표) -->
+  <g filter="url(#drop)">
+    <circle cx="858" cy="470" r="70" fill="url(#label)"/>
+    <circle cx="840" cy="448" r="24" fill="#ffffff" opacity="0.18"/>
+    <path d="M826 472 L886 472 M862 446 L888 472 L862 498" fill="none" stroke="#fbf3e2" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
