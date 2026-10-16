@@ -1,6 +1,18 @@
 /** 사방넷 주문서 읽기와 결과 엑셀 쓰기(exceljs 는 필요할 때 불러온다) */
 import type { Worksheet } from 'exceljs'
-import { buildOutput, cellValue, looksLikeSabangnet, type OrderRow, type OutputSpec, type SourceSheet } from './logic'
+import {
+  buildOutput,
+  cellValue,
+  centerHeader,
+  layoutCenter,
+  looksLikeSabangnet,
+  productSummary,
+  SUMMARY_COLS,
+  SUMMARY_WIDTHS,
+  type OrderRow,
+  type OutputSpec,
+  type SourceSheet,
+} from './logic'
 
 const text = (v: unknown): string => {
   if (v == null) return ''
@@ -92,8 +104,103 @@ export async function readAnyTable(file: File): Promise<{ cols: string[]; rows: 
 const FONT = { name: '맑은 고딕', size: 10 }
 const BORDER = { top: { style: 'thin' as const }, left: { style: 'thin' as const }, bottom: { style: 'thin' as const }, right: { style: 'thin' as const } }
 
+const HEAD_FILL = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FF993300' } }
+const HEAD_FONT = { ...FONT, bold: true, color: { argb: 'FFFFFFFF' } }
+const THICK = { style: 'medium' as const }
+
+/** A4 세로 · 좁은 여백 · 한 쪽 폭에 맞춤 · 머리줄 반복 · 머릿말 ‘2026.10.16 주문서 2차’ · 꼬릿말 ‘1/3’ */
+function a4(ws: Worksheet, header: string, footer = '&C&10&P/&N') {
+  ws.pageSetup = {
+    paperSize: 9,
+    orientation: 'portrait',
+    fitToPage: true,
+    fitToWidth: 1,
+    fitToHeight: 0,
+    horizontalCentered: true,
+    printTitlesRow: '1:1',
+    // 엑셀 ‘좁게’ 여백(인치)
+    margins: { left: 0.25, right: 0.25, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 },
+  }
+  ws.headerFooter = { oddHeader: `&C&B&12 ${header}`, oddFooter: footer }
+}
+
+/** 센터주문서: 주문서 탭(쪽마다 주문이 나뉘지 않게) + 출고제품 요약 탭 */
+async function writeCenter(spec: OutputSpec, rows: OrderRow[], date: string, seq: number): Promise<Blob> {
+  const ExcelJS = (await import('exceljs')).default
+  const wb = new ExcelJS.Workbook()
+  wb.creator = '온비짱'
+  const header = centerHeader(date, seq)
+
+  // ── 주문서 ──
+  const ws = wb.addWorksheet('주문서')
+  a4(ws, header)
+  spec.widths.forEach((w, i) => (ws.getColumn(i + 1).width = w))
+  const layout = layoutCenter(rows)
+  const table = buildOutput(spec, rows)
+  // 여러 줄 주문의 첫 줄·끝 줄(굵은 선으로 묶음)
+  const first = new Set<number>()
+  const last = new Set<number>()
+  let at = 0
+  for (const g of layout.groups) {
+    if (g.length > 1) {
+      first.add(at)
+      last.add(at + g.length - 1)
+    }
+    at += g.length
+  }
+  table.forEach((vals, ri) => {
+    const row = ws.addRow(vals)
+    row.height = ri === 0 ? 24 : 18
+    const i = ri - 1
+    for (let ci = 1; ci <= vals.length; ci++) {
+      const cell = row.getCell(ci)
+      if (ri === 0) {
+        cell.font = HEAD_FONT
+        cell.fill = HEAD_FILL
+        cell.alignment = { horizontal: 'center', vertical: 'middle' }
+        cell.border = BORDER
+        continue
+      }
+      cell.font = FONT
+      if (typeof cell.value !== 'number') cell.numFmt = '@'
+      cell.alignment = { vertical: 'middle', shrinkToFit: true, horizontal: ci === 1 || ci === vals.length - 1 ? 'center' : undefined }
+      cell.border = { ...BORDER, ...(first.has(i) ? { top: THICK } : {}), ...(last.has(i) ? { bottom: THICK } : {}) }
+    }
+  })
+  // 쪽 나누기: 쪽의 마지막 주문 줄 다음에서(머리줄 1줄을 더한 행 번호)
+  for (const end of layout.pageEnds.slice(0, -1)) ws.getRow(end + 1).addPageBreak()
+
+  // ── 출고제품 요약 ──
+  const sum = wb.addWorksheet('출고제품 요약')
+  // 요약 탭은 쪽 번호 없이(주문서 탭 쪽 번호 1/2, 2/2 와 섞이지 않게)
+  a4(sum, `${header} · 출고제품 요약`, '&C&10출고제품 요약(상위 20)')
+  SUMMARY_WIDTHS.forEach((w, i) => (sum.getColumn(i + 1).width = w))
+  const head = sum.addRow(SUMMARY_COLS)
+  head.height = 24
+  head.eachCell((c) => {
+    c.font = HEAD_FONT
+    c.fill = HEAD_FILL
+    c.alignment = { horizontal: 'center', vertical: 'middle' }
+    c.border = BORDER
+  })
+  productSummary(rows).forEach((p, i) => {
+    const r = sum.addRow([p.rank, i + 1, p.name, p.option || null, p.qty, p.buyers, p.code || null])
+    r.height = 20
+    r.eachCell({ includeEmpty: true }, (c, ci) => {
+      if (ci > SUMMARY_COLS.length) return
+      c.font = ci === 1 || ci === 5 ? { ...FONT, bold: true } : FONT
+      c.border = BORDER
+      c.alignment = { vertical: 'middle', shrinkToFit: ci === 3, horizontal: ci === 3 || ci === 4 || ci === 7 ? 'left' : 'center' }
+      if (ci === 5 || ci === 6) c.numFmt = '#,##0'
+    })
+  })
+  const buf = await wb.xlsx.writeBuffer()
+  return new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+}
+
 /** 결과 파일 한 개(사방넷 발주서와 같은 모양: 갈색 머리줄, 가는 테두리, 글자 서식) */
-export async function writeOutput(spec: OutputSpec, rows: OrderRow[], sheetName: string): Promise<Blob> {
+export async function writeOutput(spec: OutputSpec, rows: OrderRow[], sheetName: string, batch?: { date: string; seq: number }): Promise<Blob> {
+  if (spec.kind === 'warehouse' && batch) return writeCenter(spec, rows, batch.date, batch.seq)
   const ExcelJS = (await import('exceljs')).default
   const wb = new ExcelJS.Workbook()
   wb.creator = '온비짱'

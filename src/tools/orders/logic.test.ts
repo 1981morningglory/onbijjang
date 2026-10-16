@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildOutput, cellValue, COL, dateFromName, JEJU_NOTE, looksLikeSabangnet, needsProduct, OUTPUTS, outputFileName, productKey, sortRows, timeKst, type OrderRow } from './logic'
+import { buildOutput, cellValue, centerHeader, COL, layoutCenter, productSummary, dateFromName, JEJU_NOTE, looksLikeSabangnet, needsProduct, OUTPUTS, outputFileName, productKey, sortRows, timeKst, type OrderRow } from './logic'
 
 const row = (o: Partial<Record<string, string | number | null>>): OrderRow => ({
   [COL.orderNo]: '1',
@@ -85,5 +85,51 @@ describe('결과 파일', () => {
     expect(productKey(r)).toBe('점착메모지 블루|100매:블루')
     expect(outputFileName(spec('cj'), '2026-10-15', 2)).toBe('20261015_2차_CJ택배.xlsx')
     expect(timeKst('2026-10-15T04:05:00.000Z')).toBe('13:05')
+  })
+})
+
+describe('센터주문서 쪽 나누기·요약', () => {
+  // 주문 하나 = 같은 쇼핑몰·주문번호 줄 묶음
+  const order = (no: string, n: number, buyer = no) => Array.from({ length: n }, (_, i) => row({ [COL.orderNo]: no, [COL.buyer]: buyer, [COL.receiver]: buyer, [COL.code]: `${10000 + i}-0000${i}` }))
+  it('한 주문이 두 쪽에 나뉘지 않게, 남은 칸은 뒤의 작은 주문으로 채운다', () => {
+    // 쪽당 5줄: A(2) B(2) 다음 C(3)는 1칸에 안 들어가므로 D(1)를 끌어와 채우고 C는 다음 쪽
+    const rows = [...order('A', 2), ...order('B', 2), ...order('C', 3), ...order('D', 1), ...order('E', 1)]
+    const l = layoutCenter(rows, 5)
+    expect(l.rows.map((r) => r[COL.orderNo])).toEqual(['A', 'A', 'B', 'B', 'D', 'C', 'C', 'C', 'E'])
+    expect(l.pageEnds).toEqual([5, 9])
+    // 어느 주문도 쪽 경계를 넘지 않는다
+    let start = 0
+    for (const end of l.pageEnds) {
+      const keys = new Set(l.rows.slice(start, end).map((r) => r[COL.orderNo]))
+      for (const k of keys) expect(l.rows.slice(end).some((r) => r[COL.orderNo] === k)).toBe(false)
+      start = end
+    }
+  })
+  it('같은 사람이 주문을 여러 건 하면(쇼핑몰이 달라도) 한 묶음으로 모은다', () => {
+    const rows = [...order('A', 1, '홍길동'), ...order('B', 2), ...order('C', 1, '홍길동').map((r) => ({ ...r, [COL.mall]: '지마켓' }))]
+    const l = layoutCenter(rows, 5)
+    expect(l.groups.map((g) => g.map((r) => r[COL.orderNo]).join(''))).toEqual(['AC', 'BB'])
+  })
+  it('한 쪽보다 긴 주문은 새 쪽에서 시작', () => {
+    const l = layoutCenter([...order('A', 2), ...order('B', 7)], 5)
+    expect(l.oversized).toBe(1)
+    expect(l.rows[0][COL.orderNo]).toBe('A')
+    expect(l.pageEnds[0]).toBe(2)
+  })
+  it('출고제품 요약: 주문수량 순, 주문건수는 주문자 수, 같으면 같은 순위', () => {
+    const rows = [
+      row({ [COL.code]: 'P1', [COL.name]: '필통', [COL.qty]: 3, [COL.buyer]: '홍길동' }),
+      row({ [COL.code]: 'P1', [COL.name]: '필통', [COL.qty]: 2, [COL.buyer]: '홍길동' }),
+      row({ [COL.code]: 'P2', [COL.name]: '자', [COL.qty]: 4, [COL.buyer]: '김' }),
+      row({ [COL.code]: 'P3', [COL.name]: '풀', [COL.qty]: 4, [COL.buyer]: '이' }),
+      row({ [COL.code]: 'P4', [COL.name]: '펜', [COL.qty]: 1, [COL.buyer]: '박' }),
+    ]
+    const s = productSummary(rows, 3)
+    expect(s.map((p) => [p.rank, p.name, p.qty, p.buyers])).toEqual([
+      [1, '필통', 5, 1],
+      [2, '자', 4, 1],
+      [2, '풀', 4, 1],
+    ])
+    expect(centerHeader('2026-10-16', 2)).toBe('2026.10.16 주문서 2차')
   })
 })
