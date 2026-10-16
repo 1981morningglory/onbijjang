@@ -42,7 +42,7 @@ import {
   outputFileName,
   productKey,
   SEARCH_FIELDS,
-  sortRows,
+  layoutCenter,
   timeKst,
   todayKst,
   type OrderRow,
@@ -229,7 +229,7 @@ function Gate({ onIn }: { onIn: () => void }) {
 const FILE_ICON: Record<OutputKind, LucideIcon> = { warehouse: Warehouse, cj: Truck, drive: Cloud }
 
 async function makeFiles(rows: OrderRow[], sheetName: string, date: string, seq: number): Promise<FileSet> {
-  return Promise.all(OUTPUTS.map(async (spec) => ({ kind: spec.kind, name: outputFileName(spec, date, seq), blob: await writeOutput(spec, rows, sheetName) })))
+  return Promise.all(OUTPUTS.map(async (spec) => ({ kind: spec.kind, name: outputFileName(spec, date, seq), blob: await writeOutput(spec, rows, sheetName, { date, seq }) })))
 }
 
 function Chip({ icon: Icon, label, onClick, busy, accent }: { icon: LucideIcon; label: string; onClick: () => void; busy?: boolean; accent?: boolean }) {
@@ -512,9 +512,9 @@ function Make({ onGoList }: { onGoList: () => void }) {
           <div>
             <button type="button" className="flex items-center gap-1 text-sm font-semibold text-ink-2 hover:text-ink" onClick={() => setShowRows((v) => !v)}>
               {showRows ? <ChevronDown className="size-4" aria-hidden /> : <ChevronRight className="size-4" aria-hidden />}
-              센터주문서 순서로 미리 보기
+              센터주문서 순서로 미리 보기 <span className="font-normal text-muted">(A4 {layoutCenter(rows).pageEnds.length}쪽 · 한 사람 주문은 한 쪽 안에)</span>
             </button>
-            {showRows && <RowsTable rows={sortRows(rows)} />}
+            {showRows && <RowsTable rows={layoutCenter(rows).rows} />}
           </div>
 
           {saved ? (

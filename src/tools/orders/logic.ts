@@ -122,7 +122,8 @@ export const OUTPUTS: OutputSpec[] = [
     label: '센터주문서',
     suffix: '센터주문서',
     cols: [COL.no, COL.receiver, COL.code, COL.name, COL.option, COL.qty, COL.message],
-    widths: [3.5, 15.6, 14.5, 31.2, 13.2, 4, 9.4],
+    // A4 세로·좁은 여백 한 장 폭(글자 약 100칸)에 꼭 맞게
+    widths: [4, 16, 13, 37, 10, 5, 10],
     message: 'jeju',
   },
   {
@@ -143,10 +144,110 @@ export const OUTPUTS: OutputSpec[] = [
   },
 ]
 
+// ── 센터주문서: A4 쪽 나누기 ─────────────────────────────
+/** A4 세로·좁은 여백에서 한 쪽에 들어가는 주문 줄 수(머리줄 반복, 줄 높이 18pt 기준. 넉넉히 1줄 여유) */
+export const CENTER_PAGE_ROWS = 38
+/** 한 주문(쇼핑몰+주문번호) */
+export const orderKey = (r: OrderRow) => `${s(r[COL.mall])}|${s(r[COL.orderNo])}`
+/** 같은 사람(주문자·수취인·주소가 같으면 한 상자로 포장될 수 있다) */
+export const customerKey = (r: OrderRow) => `${s(r[COL.buyer])}|${s(r[COL.receiver])}|${s(r[COL.address]).replace(/\s+/g, '')}`
+/**
+ * 정렬된 줄을 사람 단위로 묶는다. 같은 사람이 주문을 여러 건 했으면(쇼핑몰이 달라도) 처음 나온 자리로 모은다.
+ * 피킹할 때 한 사람 물건이 앞뒤 쪽으로 갈려 따로 포장되는 일을 막기 위해서다.
+ */
+export function orderGroups(sorted: OrderRow[]): OrderRow[][] {
+  const m = new Map<string, OrderRow[]>()
+  for (const r of sorted) {
+    const k = customerKey(r)
+    const g = m.get(k)
+    if (g) g.push(r)
+    else m.set(k, [r])
+  }
+  return [...m.values()]
+}
+
+/**
+ * 한 사람의 주문이 두 쪽에 나뉘지 않게 쪽을 채운다.
+ * 정렬 순서대로 넣다가 다음 사람 묶음이 남은 칸에 안 들어가면, 뒤에서 남은 칸에 들어가는 작은 묶음(낱개 주문)을 끌어와 채우고
+ * 큰 묶음은 다음 쪽 맨 위로 보낸다. 한 쪽보다 긴 묶음은 어쩔 수 없이 새 쪽에서 시작해 넘어간다.
+ */
+export function layoutCenter(rows: OrderRow[], perPage = CENTER_PAGE_ROWS): { rows: OrderRow[]; pageEnds: number[]; groups: OrderRow[][]; oversized: number } {
+  const left = orderGroups(sortRows(rows))
+  const pages: OrderRow[][][] = []
+  let oversized = 0
+  while (left.length) {
+    const page: OrderRow[][] = []
+    let room = perPage
+    if (left[0].length > perPage) {
+      // 한 쪽보다 긴 주문: 혼자 새 쪽에서 시작
+      oversized++
+      const g = left.shift()!
+      page.push(g)
+      room = perPage - (g.length % perPage || perPage)
+    }
+    for (let i = 0; i < left.length && room > 0; ) {
+      if (left[i].length <= room) {
+        room -= left[i].length
+        page.push(left.splice(i, 1)[0])
+      } else i++
+    }
+    pages.push(page)
+  }
+  const groups = pages.flat()
+  const pageEnds: number[] = []
+  let n = 0
+  for (const p of pages) {
+    n += p.reduce((t, g) => t + g.length, 0)
+    pageEnds.push(n)
+  }
+  return { rows: groups.flat(), pageEnds, groups, oversized }
+}
+
+/** 출력 순서: 센터주문서는 쪽 나누기를 고려한 순서, 나머지는 정렬 순서 */
+export const outputRows = (spec: OutputSpec, rows: OrderRow[]) => (spec.kind === 'warehouse' ? layoutCenter(rows).rows : sortRows(rows))
+
+// ── 센터주문서 둘째 탭: 출고제품 요약 ────────────────────
+export interface ProductSummaryRow {
+  rank: number
+  code: string
+  name: string
+  option: string
+  /** 주문수량(합계) */
+  qty: number
+  /** 주문건수(주문자명 수) */
+  buyers: number
+}
+/** 많이 나가는 순서(주문수량 → 주문건수) 상위 n개. 같은 수량·건수면 같은 순위 */
+export function productSummary(rows: OrderRow[], top = 20): ProductSummaryRow[] {
+  const m = new Map<string, { code: string; name: string; option: string; qty: number; buyers: Set<string> }>()
+  for (const r of rows) {
+    const name = s(r[COL.name]) || s(r[COL.rawName])
+    const option = s(r[COL.option])
+    const key = `${s(r[COL.code])}|${name}|${option}`
+    const e = m.get(key) ?? { code: s(r[COL.code]), name, option, qty: 0, buyers: new Set<string>() }
+    e.qty += Number(r[COL.qty]) || 0
+    e.buyers.add(s(r[COL.buyer]) || s(r[COL.receiver]))
+    m.set(key, e)
+  }
+  const list = [...m.values()].sort((a, b) => b.qty - a.qty || b.buyers.size - a.buyers.size || a.name.localeCompare(b.name, 'ko'))
+  const out: ProductSummaryRow[] = []
+  list.slice(0, top).forEach((e, i) => {
+    const prev = out[i - 1]
+    const rank = prev && prev.qty === e.qty && prev.buyers === e.buyers.size ? prev.rank : i + 1
+    out.push({ rank, code: e.code, name: e.name, option: e.option, qty: e.qty, buyers: e.buyers.size })
+  })
+  return out
+}
+export const SUMMARY_COLS = ['순위', 'NO.', '제품명', '옵션', '주문수량', '주문건수', '비고']
+export const SUMMARY_WIDTHS = [6, 5, 40, 12, 9, 9, 13]
+
+/** 머릿말: '2026.10.16 주문서 2차' */
+export const centerHeader = (date: string, seq: number) => `${date.replace(/-/g, '.')} 주문서 ${seq}차`
+
 /** 내보낼 표(머리줄 + 줄). NO 는 '1','2'… 글자, 수량·사방넷주문번호는 숫자 */
 export function buildOutput(spec: OutputSpec, rows: OrderRow[]): Array<Array<string | number | null>> {
   const out: Array<Array<string | number | null>> = [spec.cols]
-  sortRows(rows).forEach((r, i) => {
+  outputRows(spec, rows).forEach((r, i) => {
     out.push(
       spec.cols.map((c) => {
         if (c === COL.no) return String(i + 1)
