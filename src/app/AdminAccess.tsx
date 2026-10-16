@@ -12,14 +12,16 @@ export function RoleChips({ value, onChange, disabled, size = 'md' }: { value: R
   return (
     <div className="flex flex-wrap gap-1" role="group" aria-label="보이는 등급">
       {ROLE_OPTIONS.map(({ value: r, label }) => {
-        const on = value.includes(r)
+        // 스탭은 켜진 앱을 모두 쓰므로 늘 켜져 있다
+        const fixed = r === 'staff'
+        const on = fixed || value.includes(r)
         return (
           <button
             key={r}
             type="button"
-            disabled={disabled}
+            disabled={disabled || fixed}
             aria-pressed={on}
-            title={on ? `${label}에게 보임 — 누르면 감춤` : `${label}에게 감춤 — 누르면 보임`}
+            title={fixed ? '스탭은 켜진 앱을 모두 씁니다' : on ? `${label}에게 보임 — 누르면 감춤` : `${label}에게 감춤 — 누르면 보임`}
             onClick={() => onChange(on ? value.filter((v) => v !== r) : ALL_ROLES.filter((x) => x === r || value.includes(x)))}
             className={clsx(
               'inline-flex items-center gap-1 rounded-full border font-semibold transition-colors duration-150 disabled:opacity-50',
@@ -321,7 +323,7 @@ export function AccountsEditor() {
   return (
     <div className="flex flex-col gap-5">
       <Callout tone="info" title="등급">
-        등급은 <b>전체마스터 &gt; 스탭 &gt; 직원등급 &gt; 사용자등급 &gt; 전체공개</b> 순서입니다. <b>전체마스터</b>는 이 관리자 화면까지 쓰는 사람, <b>스탭</b>은 직원등급보다 한 단계 위(직원등급이 쓰는 기능은 모두 사용), <b>직원등급</b>은 팀원(팀 보관함 저장 가능), <b>사용자등급</b>은 로그인한 일반 사용자, <b>전체공개</b>는 로그인하지 않은 모든 사람입니다. 도구별로 어떤 등급에게 보일지는 [메뉴·앱 관리]에서, 특정 사람만 다르게 하려면 아래 목록의 [도구 권한]에서 정합니다.
+        등급은 <b>전체마스터 &gt; 스탭 &gt; 직원등급 &gt; 사용자등급 &gt; 전체공개</b> 순서입니다. <b>전체마스터</b>는 이 관리자 화면까지 쓰는 사람, <b>스탭</b>은 켜진 앱을 모두 쓰고 앱 안의 자료 추가·변경·삭제까지 할 수 있는 사람(메뉴·계정·팀회사 자료·SNS 연결·관리자 비밀번호는 전체마스터만), <b>직원등급</b>은 팀원(팀 보관함 저장 가능), <b>사용자등급</b>은 로그인한 일반 사용자, <b>전체공개</b>는 로그인하지 않은 모든 사람입니다. 도구별로 어떤 등급에게 보일지는 [메뉴·앱 관리]에서, 특정 사람만 다르게 하려면 아래 목록의 [도구 권한]에서 정합니다.
       </Callout>
 
       <Panel className="p-5">

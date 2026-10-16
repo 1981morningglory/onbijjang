@@ -149,6 +149,14 @@ function requireAdmin(req, res, next) {
   if (isAdmin(req)) return next()
   res.status(401).json({ error: '관리자 로그인이 필요합니다.' })
 }
+/** 스탭 이상 — 앱 안의 자료 추가·변경·삭제. 메뉴·계정·팀회사 자료·SNS 연결·관리자 비밀번호는 requireAdmin 으로 남긴다. */
+function isStaff(req) {
+  return isAdmin(req) || currentUser(req)?.role === 'staff'
+}
+function requireStaff(req, res, next) {
+  if (isStaff(req)) return next()
+  res.status(401).json({ error: '스탭 이상 계정으로 로그인해야 합니다.' })
+}
 /** 팀원이면 되는 동작. 공개 배포에서는 관리자만, 믿을 수 있는 네트워크에서는 누구나. */
 function requireMember(req, res, next) {
   const role = currentUser(req)?.role
@@ -346,7 +354,7 @@ app.delete('/api/admin/users/:uid', requireAdmin, async (req, res) => {
 })
 
 // ── 팀 보관함 ─────────────────────────────────────────────
-// 불러오기는 누구나. 저장은 팀원(공개 배포에서는 관리자), 삭제는 관리자만. kind 예: canvas-template, label-template, signature
+// 불러오기는 누구나. 저장은 팀원(공개 배포에서는 관리자), 삭제는 스탭 이상. kind 예: canvas-template, label-template, signature
 const KIND_RE = /^[a-z0-9-]{1,40}$/
 const ID_RE = /^[a-z0-9]{8,32}$/
 const MAX_ITEMS_PER_KIND = 300
@@ -394,7 +402,7 @@ app.post('/api/library/:kind', requireMember, async (req, res) => {
   await writeJson(path.join(kindDir(kind), '_index.json'), [entry, ...index])
   res.json({ item: entry })
 })
-app.delete('/api/library/:kind/:id', requireAdmin, async (req, res) => {
+app.delete('/api/library/:kind/:id', requireStaff, async (req, res) => {
   const { kind, id } = req.params
   const index = await readIndex(kind)
   await fsp.rm(path.join(kindDir(kind), `${id}.json`), { force: true })
@@ -408,7 +416,7 @@ app.use('/api/convert', (req, res, next) => (req.method === 'GET' ? next() : req
 const routesDir = path.join(__dirname, 'routes')
 if (fs.existsSync(routesDir)) {
   // 라우트끼리 나눠 쓰는 도구(예: quote.mjs 가 넣는 sessionTeam)를 담는 한 객체. 파일 이름 순서로 불러온다.
-  const ctx = { requireAdmin, isAdmin, currentUser, DATA_DIR, ROOT, TRUSTED }
+  const ctx = { requireAdmin, isAdmin, requireStaff, isStaff, currentUser, DATA_DIR, ROOT, TRUSTED }
   for (const file of fs.readdirSync(routesDir).filter((f) => f.endsWith('.mjs')).sort()) {
     const mod = await import(pathToFileURL(path.join(routesDir, file)).href)
     if (typeof mod.default === 'function') {
