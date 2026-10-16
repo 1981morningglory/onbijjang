@@ -163,12 +163,13 @@ describe('제주 배송메세지', () => {
 })
 
 describe('물류처 거르기', () => {
-  it('모닝글로리-일산센터와 빈칸만 받는다', async () => {
+  it('일산센터·파주센터와 빈칸만 받는다', async () => {
     const { isCenterRow } = await import('./logic')
     expect(isCenterRow(row({ [COL.warehouse]: '모닝글로리-일산센터' }))).toBe(true)
     expect(isCenterRow(row({ [COL.warehouse]: ' 모닝글로리 - 일산센터 ' }))).toBe(true)
     expect(isCenterRow(row({ [COL.warehouse]: null }))).toBe(true)
-    expect(isCenterRow(row({ [COL.warehouse]: '모닝글로리-파주센터' }))).toBe(false)
+    expect(isCenterRow(row({ [COL.warehouse]: '모닝글로리-파주센터' }))).toBe(true)
+    expect(isCenterRow(row({ [COL.warehouse]: '모닝글로리-대구센터' }))).toBe(false)
     expect(isCenterRow(row({ [COL.warehouse]: '업체직배송' }))).toBe(false)
   })
 })
