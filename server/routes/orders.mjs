@@ -9,10 +9,14 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 
 const ID_RE = /^[a-f0-9]{16}$/
-/** 담당자가 적는 비고(CS내용) 칸 이름 */
+/** 담당자가 적는 비고(CS내용) 칸 이름 · 마지막으로 적은 사람·시각 · 취소내용 */
 const CS_COL = '비고(CS내용)'
+const CS_BY = 'CS수정자'
+const CS_AT = 'CS수정시각'
+const CANCEL_COL = '취소내용'
+const CANCEL_STATES = ['', '취소요청', '취소완료']
 /** 센터주문서 양식 판 — 화면에 같이 보여 배포가 반영됐는지 알 수 있게 */
-const CENTER_FORM = '센터주문서 v7(파주센터 포함·송장 수정·비고(CS)·정렬·엑셀/웹 보기)'
+const CENTER_FORM = '센터주문서 v8(CS 기록·취소내용·미출고 갯수)'
 const DATE_RE = /^20\d{2}-\d{2}-\d{2}$/
 const MAX_ROWS = 5000
 const MAX_RESULTS = 2000
@@ -172,6 +176,8 @@ export default async function ordersRoutes(app, ctx) {
       /** 송장이 붙은 주문 수 · 송장(운송장) 수 */
       invoiceOrders: new Set(b.rows.filter((r) => waybillsOf(r).length).map((r) => `${str(r['쇼핑몰'])}|${str(r['주문번호'])}`)).size,
       waybills: new Set(b.rows.flatMap((r) => waybillsOf(r).map((w) => w.invoice))).size,
+      /** 미출고 갯수: 송장이 없는 주문 수. 줄이 모두 [취소요청]·[취소완료]인 주문은 빼고 센다 */
+      unshipped: new Set(b.rows.filter((r) => !waybillsOf(r).length && !str(r[CANCEL_COL])).map((r) => `${str(r['쇼핑몰'])}|${str(r['주문번호'])}`)).size,
     }
   }
   /** 검색어에 맞는 줄인지 */
@@ -292,7 +298,7 @@ export default async function ordersRoutes(app, ctx) {
       const list = waybillsOf(r)
       if (list.length) waybills[str(r['주문번호'])] = list
     }
-    res.json({ batch: { ...brief(b), cols: b.cols, rows: b.rows, waybills } })
+    res.json({ batch: { ...brief(b), cols: b.cols, rows: b.rows, waybills, csLog: b.csLog ?? {} } })
   })
 
   // ── CJ 송장 파일 ────────────────────────────────────────
@@ -443,18 +449,39 @@ export default async function ordersRoutes(app, ctx) {
     res.json({ waybills: waybillsOf({ 주문번호: orderNo }) })
   })
 
-  /** 비고(CS내용) 적기(담당자 누구나): { memo } — 주문 한 줄에 */
+  /**
+   * 비고(CS내용) 적기(담당자 누구나): { memo } — 주문 한 줄에.
+   * 적을 때마다 기록(csLog)에 한 줄씩 쌓고, 표에는 마지막 내용과 마지막으로 적은 사람·시각을 둔다.
+   */
   app.patch('/api/orders/batches/:id/rows/:line/memo', requireAllowed, async (req, res) => {
     const b = ID_RE.test(req.params.id) ? batches.get(req.params.id) : null
     const i = Number(req.params.line) - 1
     if (!b || !Number.isInteger(i) || !b.rows[i]) return res.status(404).json({ error: '없는 주문입니다.' })
-    const memo = str(req.body?.memo).slice(0, 200)
+    const memo = str(req.body?.memo).slice(0, 500)
+    const entry = { text: memo, by: who(req), at: new Date().toISOString() }
     await serial(async () => {
-      b.rows[i] = { ...b.rows[i], [CS_COL]: memo || null }
-      if (!b.cols.includes(CS_COL)) b.cols.push(CS_COL)
+      b.rows[i] = { ...b.rows[i], [CS_COL]: memo || null, [CS_BY]: entry.by, [CS_AT]: entry.at }
+      for (const c of [CS_COL, CS_BY, CS_AT]) if (!b.cols.includes(c)) b.cols.push(c)
+      b.csLog ??= {}
+      b.csLog[i + 1] = [...(b.csLog[i + 1] ?? []), entry].slice(-200)
       await writeJson(batchFile(b.id), b)
     })
-    res.json({ memo })
+    res.json({ memo, entry, log: b.csLog[i + 1], row: b.rows[i] })
+  })
+
+  /** 취소내용(담당자 누구나): { status: '' | '취소요청' | '취소완료' } */
+  app.patch('/api/orders/batches/:id/rows/:line/cancel', requireAllowed, async (req, res) => {
+    const b = ID_RE.test(req.params.id) ? batches.get(req.params.id) : null
+    const i = Number(req.params.line) - 1
+    if (!b || !Number.isInteger(i) || !b.rows[i]) return res.status(404).json({ error: '없는 주문입니다.' })
+    const status = str(req.body?.status)
+    if (!CANCEL_STATES.includes(status)) return res.status(400).json({ error: '취소내용은 취소요청·취소완료·빈칸 중 하나입니다.' })
+    await serial(async () => {
+      b.rows[i] = { ...b.rows[i], [CANCEL_COL]: status || null, 취소처리: status ? `${who(req)} ${new Date().toISOString()}` : null }
+      for (const c of [CANCEL_COL, '취소처리']) if (!b.cols.includes(c)) b.cols.push(c)
+      await writeJson(batchFile(b.id), b)
+    })
+    res.json({ row: b.rows[i] })
   })
 
   /** 주문 한 줄 고치기(전체마스터만): { row } — 칸 이름 → 값 */
