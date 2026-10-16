@@ -122,8 +122,8 @@ export const OUTPUTS: OutputSpec[] = [
     label: '센터주문서',
     suffix: '센터주문서',
     cols: [COL.no, COL.receiver, COL.code, COL.name, COL.option, COL.qty, COL.message],
-    // A4 세로·좁은 여백 한 장 폭(글자 약 100칸)에 꼭 맞게
-    widths: [4, 16, 13, 37, 10, 5, 10],
+    // NO 4 · 수취인명 11 · 상품코드 15.7 · 상품명 36(남는 폭은 상품명에, centerWidths) · 옵션 7.3 · 수량 4 · 배송메세지 10
+    widths: [4, 11, 15.7, 36, 7.3, 4, 10],
     message: 'jeju',
   },
   {
@@ -145,8 +145,28 @@ export const OUTPUTS: OutputSpec[] = [
 ]
 
 // ── 센터주문서: A4 쪽 나누기 ─────────────────────────────
-/** A4 세로·좁은 여백에서 한 쪽에 들어가는 주문 줄 수(머리줄 반복, 줄 높이 18pt 기준. 넉넉히 1줄 여유) */
-export const CENTER_PAGE_ROWS = 38
+/** 센터주문서 행 높이(pt) — 머리줄 포함 전부 */
+export const CENTER_ROW_HEIGHT = 19
+/**
+ * A4 세로·좁은 여백(위아래 0.75in)에서 한 쪽에 들어가는 주문 줄 수.
+ * 인쇄 높이 297mm − 38.1mm = 733.9pt, 머리줄(반복) 1줄 + 주문 37줄 = 38줄 × 19pt = 722pt(약 12pt 여유)
+ */
+export const CENTER_PAGE_ROWS = 37
+
+/** 엑셀 열 너비(글자 수) → 화면 픽셀(기본 글꼴 최대 숫자 폭 7px) */
+export const colPx = (w: number) => Math.trunc(w * 7 + 5)
+/** A4 세로 폭 210mm 에서 좁은 여백(좌우 0.25in)을 뺀 인쇄 폭(96dpi 픽셀). 테두리·반올림 몫으로 12px 남긴다 */
+export const A4_PRINT_PX = Math.floor((210 / 25.4 - 0.5) * 96) - 12
+/** 정해 준 열 너비로 한 쪽에 넣고, 남는 폭은 모두 상품명 열에(0.1 단위로 내림) */
+export function centerWidths(base: number[], nameIndex = 3, printPx = A4_PRINT_PX): number[] {
+  const used = base.reduce((t, w) => t + colPx(w), 0)
+  const extra = printPx - used
+  if (extra <= 0) return base
+  const out = [...base]
+  out[nameIndex] = Math.floor((base[nameIndex] + extra / 7) * 10) / 10
+  while (out.reduce((t, w) => t + colPx(w), 0) > printPx) out[nameIndex] = Math.round((out[nameIndex] - 0.1) * 10) / 10
+  return out
+}
 /** 한 주문(쇼핑몰+주문번호) */
 export const orderKey = (r: OrderRow) => `${s(r[COL.mall])}|${s(r[COL.orderNo])}`
 /** 같은 사람(주문자·수취인·주소가 같으면 한 상자로 포장될 수 있다) */

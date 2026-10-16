@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildOutput, cellValue, centerHeader, COL, layoutCenter, productSummary, dateFromName, JEJU_NOTE, looksLikeSabangnet, needsProduct, OUTPUTS, outputFileName, productKey, sortRows, timeKst, type OrderRow } from './logic'
+import { A4_PRINT_PX, buildOutput, cellValue, centerHeader, centerWidths, COL, colPx, layoutCenter, productSummary, dateFromName, JEJU_NOTE, looksLikeSabangnet, needsProduct, OUTPUTS, outputFileName, productKey, sortRows, timeKst, type OrderRow } from './logic'
 
 const row = (o: Partial<Record<string, string | number | null>>): OrderRow => ({
   [COL.orderNo]: '1',
@@ -131,5 +131,18 @@ describe('센터주문서 쪽 나누기·요약', () => {
       [2, '풀', 4, 1],
     ])
     expect(centerHeader('2026-10-16', 2)).toBe('2026.10.16 주문서 2차')
+  })
+})
+
+describe('센터주문서 열 너비', () => {
+  it('정해 준 너비로 넣고 남는 폭은 상품명에, 한 쪽 폭을 넘지 않는다', () => {
+    const base = OUTPUTS.find((o) => o.kind === 'warehouse')!.widths
+    expect(base).toEqual([4, 11, 15.7, 36, 7.3, 4, 10])
+    const w = centerWidths(base)
+    expect(w.filter((_, i) => i !== 3)).toEqual([4, 11, 15.7, 7.3, 4, 10])
+    expect(w[3]).toBeGreaterThan(36)
+    const used = w.reduce((t, x) => t + colPx(x), 0)
+    expect(used).toBeLessThanOrEqual(A4_PRINT_PX)
+    expect(A4_PRINT_PX - used).toBeLessThan(7)
   })
 })

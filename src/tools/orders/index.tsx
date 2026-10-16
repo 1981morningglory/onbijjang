@@ -141,7 +141,7 @@ const fmt = (n: number) => n.toLocaleString('ko-KR')
 const WEEK = ['일', '월', '화', '수', '목', '금', '토']
 const weekday = (date: string) => WEEK[new Date(`${date}T00:00:00Z`).getUTCDay()]
 /** 화면 쪽 센터주문서 양식 판(서버 쪽 CENTER_FORM 과 같이 올린다) */
-const CENTER_FORM_UI = '센터주문서 v2'
+const CENTER_FORM_UI = '센터주문서 v3'
 const AMOUNT_RE = /결제\s*금액|주문\s*금액|총\s*금액|판매\s*금액|결제액/
 
 export default function OrdersTool() {

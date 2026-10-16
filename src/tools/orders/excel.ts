@@ -3,7 +3,9 @@ import type { Worksheet } from 'exceljs'
 import {
   buildOutput,
   cellValue,
+  CENTER_ROW_HEIGHT,
   centerHeader,
+  centerWidths,
   layoutCenter,
   looksLikeSabangnet,
   productSummary,
@@ -107,6 +109,11 @@ const BORDER = { top: { style: 'thin' as const }, left: { style: 'thin' as const
 const HEAD_FILL = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FF993300' } }
 const HEAD_FONT = { ...FONT, bold: true, color: { argb: 'FFFFFFFF' } }
 const THICK = { style: 'medium' as const }
+/** 센터주문서 주문서 탭: 얇은 선은 모두 점선 */
+const DOT = { style: 'dotted' as const }
+const DOTTED = { top: DOT, left: DOT, bottom: DOT, right: DOT }
+/** 상품코드·상품명·옵션·수량 칸(1부터): 글자 1pt 크게·굵게 */
+const BIG_COLS = new Set([3, 4, 5, 6])
 
 /** A4 세로 · 좁은 여백 · 한 쪽 폭에 맞춤 · 머리줄 반복 · 머릿말 ‘2026.10.16 주문서 2차’ · 꼬릿말 ‘1/3’ */
 function a4(ws: Worksheet, header: string, footer = '&C&10&P/&N') {
@@ -134,7 +141,8 @@ async function writeCenter(spec: OutputSpec, rows: OrderRow[], date: string, seq
   // ── 주문서 ──
   const ws = wb.addWorksheet('주문서')
   a4(ws, header)
-  spec.widths.forEach((w, i) => (ws.getColumn(i + 1).width = w))
+  // 정해 준 너비로 한 쪽 폭에 넣고 남는 폭은 상품명에
+  centerWidths(spec.widths).forEach((w, i) => (ws.getColumn(i + 1).width = w))
   const layout = layoutCenter(rows)
   const table = buildOutput(spec, rows)
   // 주문자가 바뀌는 곳(각 주문자의 마지막 줄)마다 굵은 아랫줄
@@ -146,21 +154,24 @@ async function writeCenter(spec: OutputSpec, rows: OrderRow[], date: string, seq
   }
   table.forEach((vals, ri) => {
     const row = ws.addRow(vals)
-    row.height = ri === 0 ? 24 : 18
+    // 머리줄 포함 모든 행 높이 19
+    row.height = CENTER_ROW_HEIGHT
     const i = ri - 1
     for (let ci = 1; ci <= vals.length; ci++) {
       const cell = row.getCell(ci)
       if (ri === 0) {
         cell.font = HEAD_FONT
         cell.fill = HEAD_FILL
-        cell.alignment = { horizontal: 'center', vertical: 'middle' }
-        cell.border = BORDER
+        // 모든 칸: 글자가 길면 칸에 맞춰 작게(셀 맞춤)
+        cell.alignment = { horizontal: 'center', vertical: 'middle', shrinkToFit: true }
+        cell.border = DOTTED
         continue
       }
-      cell.font = FONT
+      cell.font = BIG_COLS.has(ci) ? { ...FONT, size: FONT.size + 1, bold: true } : FONT
       if (typeof cell.value !== 'number') cell.numFmt = '@'
       cell.alignment = { vertical: 'middle', shrinkToFit: true, horizontal: ci === 1 || ci === vals.length - 1 ? 'center' : undefined }
-      cell.border = last.has(i) ? { ...BORDER, bottom: THICK } : BORDER
+      // 주문자 경계는 굵은 아랫줄, 나머지 선은 점선
+      cell.border = last.has(i) ? { ...DOTTED, bottom: THICK } : DOTTED
     }
   })
   // 쪽 나누기: 쪽의 마지막 주문 줄 다음에서(머리줄 1줄을 더한 행 번호)
@@ -176,7 +187,7 @@ async function writeCenter(spec: OutputSpec, rows: OrderRow[], date: string, seq
   head.eachCell((c) => {
     c.font = HEAD_FONT
     c.fill = HEAD_FILL
-    c.alignment = { horizontal: 'center', vertical: 'middle' }
+    c.alignment = { horizontal: 'center', vertical: 'middle', shrinkToFit: true }
     c.border = BORDER
   })
   productSummary(rows).forEach((p, i) => {
@@ -186,7 +197,7 @@ async function writeCenter(spec: OutputSpec, rows: OrderRow[], date: string, seq
       if (ci > SUMMARY_COLS.length) return
       c.font = ci === 1 || ci === 5 ? { ...FONT, bold: true } : FONT
       c.border = BORDER
-      c.alignment = { vertical: 'middle', shrinkToFit: ci === 3, horizontal: ci === 3 || ci === 4 || ci === 7 ? 'left' : 'center' }
+      c.alignment = { vertical: 'middle', shrinkToFit: true, horizontal: ci === 3 || ci === 4 || ci === 7 ? 'left' : 'center' }
       if (ci === 5 || ci === 6) c.numFmt = '#,##0'
     })
   })
