@@ -109,9 +109,10 @@ const BORDER = { top: { style: 'thin' as const }, left: { style: 'thin' as const
 const HEAD_FILL = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FF993300' } }
 const HEAD_FONT = { ...FONT, bold: true, color: { argb: 'FFFFFFFF' } }
 const THICK = { style: 'medium' as const }
-/** 센터주문서 주문서 탭: 얇은 선은 모두 점선 */
+/** 센터주문서 주문서 탭: 세로줄·바깥 테두리는 보통 실선, 안쪽 가로줄은 점선 */
+const THIN = { style: 'thin' as const }
 const DOT = { style: 'dotted' as const }
-const DOTTED = { top: DOT, left: DOT, bottom: DOT, right: DOT }
+const DOTTED = { top: DOT, left: THIN, bottom: DOT, right: THIN }
 /** 상품코드·상품명·옵션·수량 칸(1부터): 글자 1pt 크게·굵게 */
 const BIG_COLS = new Set([3, 4, 5, 6])
 
@@ -152,6 +153,8 @@ async function writeCenter(spec: OutputSpec, rows: OrderRow[], date: string, seq
     at += g.length
     last.add(at - 1)
   }
+  // 표의 마지막 줄과 인쇄 쪽마다 마지막 줄은 바깥 테두리라 보통 실선
+  const outer = new Set<number>([table.length - 2, ...layout.pageEnds.map((e) => e - 1)])
   table.forEach((vals, ri) => {
     const row = ws.addRow(vals)
     // 머리줄 포함 모든 행 높이 19
@@ -164,14 +167,14 @@ async function writeCenter(spec: OutputSpec, rows: OrderRow[], date: string, seq
         cell.fill = HEAD_FILL
         // 모든 칸: 글자가 길면 칸에 맞춰 작게(셀 맞춤)
         cell.alignment = { horizontal: 'center', vertical: 'middle', shrinkToFit: true }
-        cell.border = DOTTED
+        cell.border = { ...DOTTED, top: THIN }
         continue
       }
       cell.font = BIG_COLS.has(ci) ? { ...FONT, size: FONT.size + 1, bold: true } : FONT
       if (typeof cell.value !== 'number') cell.numFmt = '@'
       cell.alignment = { vertical: 'middle', shrinkToFit: true, horizontal: ci === 1 || ci === vals.length - 1 ? 'center' : undefined }
-      // 주문자 경계는 굵은 아랫줄, 나머지 선은 점선
-      cell.border = last.has(i) ? { ...DOTTED, bottom: THICK } : DOTTED
+      // 바깥 테두리는 보통 실선, 주문자 경계는 굵은 아랫줄, 나머지 가로줄은 점선
+      cell.border = outer.has(i) ? { ...DOTTED, bottom: THIN } : last.has(i) ? { ...DOTTED, bottom: THICK } : DOTTED
     }
   })
   // 쪽 나누기: 쪽의 마지막 주문 줄 다음에서(머리줄 1줄을 더한 행 번호)

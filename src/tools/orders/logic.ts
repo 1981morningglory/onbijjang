@@ -323,6 +323,17 @@ export const SEARCH_FIELDS: ReadonlyArray<{ value: SearchField; label: string }>
 ]
 export const digits = (v: unknown) => s(v).replace(/\D/g, '')
 
+/** 주문 목록에 보일 전화번호: 전화번호1이 비면 전화번호2, 둘 다 있으면 휴대폰(01x) 번호 우선 */
+export function pickPhone(p1: unknown, p2: unknown): string {
+  const a = s(p1)
+  const b = s(p2)
+  const empty = (v: string) => !digits(v)
+  const mobile = (v: string) => /^01[016789]/.test(digits(v))
+  if (empty(a)) return empty(b) ? a : b
+  if (empty(b) || mobile(a)) return a
+  return mobile(b) ? b : a
+}
+
 /** 송장번호 칸 찾기(CJ 결과 파일 등): '운송장번호' '송장번호' */
 export const findInvoiceCol = (cols: string[]) => cols.find((c) => /운송장\s*번호|송장\s*번호|운송장/.test(c)) ?? null
 /** 줄 맞추기 열쇠 칸 */

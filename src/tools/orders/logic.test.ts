@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { A4_PRINT_PX, buildOutput, cellValue, centerHeader, centerWidths, COL, colPx, layoutCenter, productSummary, dateFromName, JEJU_NOTE, looksLikeSabangnet, needsProduct, OUTPUTS, outputFileName, productKey, sortRows, timeKst, type OrderRow } from './logic'
+import { A4_PRINT_PX, buildOutput, cellValue, centerHeader, centerWidths, COL, colPx, layoutCenter, productSummary, dateFromName, JEJU_NOTE, looksLikeSabangnet, needsProduct, OUTPUTS, outputFileName, pickPhone, productKey, sortRows, timeKst, type OrderRow } from './logic'
 
 const row = (o: Partial<Record<string, string | number | null>>): OrderRow => ({
   [COL.orderNo]: '1',
@@ -171,5 +171,24 @@ describe('물류처 거르기', () => {
     expect(isCenterRow(row({ [COL.warehouse]: '모닝글로리-파주센터' }))).toBe(true)
     expect(isCenterRow(row({ [COL.warehouse]: '모닝글로리-대구센터' }))).toBe(false)
     expect(isCenterRow(row({ [COL.warehouse]: '업체직배송' }))).toBe(false)
+  })
+})
+
+describe('pickPhone', () => {
+  it('전화번호1이 비면 전화번호2', () => {
+    expect(pickPhone('', '010-1234-5678')).toBe('010-1234-5678')
+    expect(pickPhone(null, '010-1234-5678')).toBe('010-1234-5678')
+    expect(pickPhone('-', '010-1234-5678')).toBe('010-1234-5678')
+    expect(pickPhone('', '')).toBe('')
+  })
+  it('유선과 휴대폰이 함께 있으면 휴대폰', () => {
+    expect(pickPhone('02-123-4567', '010-1234-5678')).toBe('010-1234-5678')
+    expect(pickPhone('031-123-4567', '01012345678')).toBe('01012345678')
+    expect(pickPhone('010-1234-5678', '041-123-4567')).toBe('010-1234-5678')
+  })
+  it('둘 다 유선이거나 둘 다 휴대폰이면 전화번호1', () => {
+    expect(pickPhone('02-123-4567', '031-123-4567')).toBe('02-123-4567')
+    expect(pickPhone('010-1111-1111', '010-2222-2222')).toBe('010-1111-1111')
+    expect(pickPhone('02-123-4567', '')).toBe('02-123-4567')
   })
 })

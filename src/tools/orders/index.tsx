@@ -46,6 +46,7 @@ import {
   needsProduct,
   OUTPUTS,
   outputFileName,
+  pickPhone,
   productKey,
   SEARCH_FIELDS,
   layoutCenter,
@@ -998,7 +999,7 @@ function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin
     )
   const pick = new Set(lines ?? [])
   const value = (r: OrderRow, n: number, key: SortKey): string | number =>
-    key === 'NO' ? n : key === 'waybill' ? (batch.waybills[str(r[COL.orderNo])] ?? []).map((w) => w.invoice).join(',') : NUM_SORT.has(key) ? Number(r[key]) || 0 : str(r[key])
+    key === 'NO' ? n : key === 'waybill' ? (batch.waybills[str(r[COL.orderNo])] ?? []).map((w) => w.invoice).join(',') : NUM_SORT.has(key) ? Number(r[key]) || 0 : key === COL.phone1 ? pickPhone(r[COL.phone1], r[COL.phone2]) : str(r[key])
   const shown = batch.rows.map((r, i) => [r, i + 1] as const).filter(([, n]) => all || pick.has(n))
   if (sort)
     shown.sort(([a, na], [b, nb]) => {
@@ -1106,7 +1107,7 @@ function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin
                             // 상품명은 약 13글자 폭에서 줄을 바꿔 표가 화면 폭을 넘지 않게
                             <div className="w-40">{str(r[c])}</div>
                           ) : (
-                            <span title={c === COL.buyer || c === COL.receiver || c === COL.option ? str(r[c]) : undefined}>{str(r[c])}</span>
+                            <span title={c === COL.buyer || c === COL.receiver || c === COL.option ? str(r[c]) : undefined}>{c === COL.phone1 ? pickPhone(r[COL.phone1], r[COL.phone2]) : str(r[c])}</span>
                           )}
                         </td>
                         {c === COL.orderNo && (
