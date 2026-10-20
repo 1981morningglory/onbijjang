@@ -6,11 +6,13 @@ import {
   CENTER_ROW_HEIGHT,
   centerHeader,
   centerWidths,
-  layoutCenter,
+  customerKey,
   looksLikeSabangnet,
   productSummary,
+  resolveCenter,
   SUMMARY_COLS,
   SUMMARY_WIDTHS,
+  type CenterOrder,
   type OrderRow,
   type OutputSpec,
   type SourceSheet,
@@ -133,7 +135,7 @@ function a4(ws: Worksheet, header: string, footer = '&C&10&P/&N') {
 }
 
 /** 센터주문서: 주문서 탭(쪽마다 주문이 나뉘지 않게) + 출고제품 요약 탭 */
-async function writeCenter(spec: OutputSpec, rows: OrderRow[], date: string, seq: number): Promise<Blob> {
+async function writeCenter(spec: OutputSpec, rows: OrderRow[], date: string, seq: number, saved?: CenterOrder | null): Promise<Blob> {
   const ExcelJS = (await import('exceljs')).default
   const wb = new ExcelJS.Workbook()
   wb.creator = '온비짱'
@@ -144,15 +146,15 @@ async function writeCenter(spec: OutputSpec, rows: OrderRow[], date: string, seq
   a4(ws, header)
   // 정해 준 너비로 한 쪽 폭에 넣고 남는 폭은 상품명에
   centerWidths(spec.widths).forEach((w, i) => (ws.getColumn(i + 1).width = w))
-  const layout = layoutCenter(rows)
-  const table = buildOutput(spec, rows)
+  // 저장된 순서(주문 조회 NO 와 같은 순서)대로
+  const layout = resolveCenter(rows, saved)
+  const ordered = layout.order.map((n) => rows[n - 1])
+  const table = buildOutput(spec, rows, ordered)
   // 주문자가 바뀌는 곳(각 주문자의 마지막 줄)마다 굵은 아랫줄
   const last = new Set<number>()
-  let at = 0
-  for (const g of layout.groups) {
-    at += g.length
-    last.add(at - 1)
-  }
+  ordered.forEach((r, i) => {
+    if (i === ordered.length - 1 || customerKey(r) !== customerKey(ordered[i + 1])) last.add(i)
+  })
   // 표의 마지막 줄과 인쇄 쪽마다 마지막 줄은 바깥 테두리라 보통 실선
   const outer = new Set<number>([table.length - 2, ...layout.pageEnds.map((e) => e - 1)])
   table.forEach((vals, ri) => {
@@ -223,8 +225,8 @@ async function writeCenter(spec: OutputSpec, rows: OrderRow[], date: string, seq
 }
 
 /** 결과 파일 한 개(사방넷 발주서와 같은 모양: 갈색 머리줄, 가는 테두리, 글자 서식) */
-export async function writeOutput(spec: OutputSpec, rows: OrderRow[], sheetName: string, batch?: { date: string; seq: number }): Promise<Blob> {
-  if (spec.kind === 'warehouse' && batch) return writeCenter(spec, rows, batch.date, batch.seq)
+export async function writeOutput(spec: OutputSpec, rows: OrderRow[], sheetName: string, batch?: { date: string; seq: number; center?: CenterOrder | null }): Promise<Blob> {
+  if (spec.kind === 'warehouse' && batch) return writeCenter(spec, rows, batch.date, batch.seq, batch.center)
   const ExcelJS = (await import('exceljs')).default
   const wb = new ExcelJS.Workbook()
   wb.creator = '온비짱'
@@ -252,7 +254,7 @@ export async function writeOutput(spec: OutputSpec, rows: OrderRow[], sheetName:
 }
 
 /** 조회 결과를 엑셀로 */
-export async function writeTable(sheetName: string, cols: string[], rows: Array<Array<string | number | null>>): Promise<Blob> {
+export async function writeTable(sheetName: string, cols: string[], rows: Array<Array<string | number | null>>, widths?: number[]): Promise<Blob> {
   const ExcelJS = (await import('exceljs')).default
   const wb = new ExcelJS.Workbook()
   const ws = wb.addWorksheet(sheetName.slice(0, 31))
@@ -262,7 +264,7 @@ export async function writeTable(sheetName: string, cols: string[], rows: Array<
     c.alignment = { horizontal: 'center', vertical: 'middle' }
   })
   for (const r of rows) ws.addRow(r).eachCell((c) => (c.font = FONT))
-  cols.forEach((c, i) => (ws.getColumn(i + 1).width = Math.min(50, Math.max(8, c.length * 2 + 2))))
+  cols.forEach((c, i) => (ws.getColumn(i + 1).width = widths?.[i] ?? Math.min(50, Math.max(8, c.length * 2 + 2))))
   ws.views = [{ state: 'frozen', ySplit: 1 }]
   const buf = await wb.xlsx.writeBuffer()
   return new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })

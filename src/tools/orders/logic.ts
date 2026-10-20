@@ -238,6 +238,29 @@ export function layoutCenter(rows: OrderRow[], perPage = CENTER_PAGE_ROWS): { ro
 /** 출력 순서: 센터주문서는 쪽 나누기를 고려한 순서, 나머지는 정렬 순서 */
 export const outputRows = (spec: OutputSpec, rows: OrderRow[]) => (spec.kind === 'warehouse' ? layoutCenter(rows).rows : sortRows(rows))
 
+/**
+ * 센터주문서 순서(주문서를 저장할 때 같이 저장): order 는 줄 번호(1부터)를 센터주문서 NO 순서로, pageEnds 는 쪽마다 마지막 NO.
+ * 저장해 두면 나중에 주문 내용을 고쳐도 센터주문서 NO 와 주문 조회 NO 가 바뀌지 않는다.
+ */
+export interface CenterOrder {
+  order: number[]
+  pageEnds: number[]
+}
+export function centerOrder(rows: OrderRow[]): CenterOrder {
+  const at = new Map(rows.map((r, i) => [r, i + 1]))
+  const l = layoutCenter(rows)
+  return { order: l.rows.map((r) => at.get(r)!), pageEnds: l.pageEnds }
+}
+/** 저장된 순서가 이 줄들에 맞는지(1..n 이 빠짐·겹침 없이) */
+export function validCenterOrder(c: CenterOrder | null | undefined, n: number): c is CenterOrder {
+  if (!c || !Array.isArray(c.order) || !Array.isArray(c.pageEnds) || c.order.length !== n || c.pageEnds.at(-1) !== n) return false
+  return new Set(c.order).size === n && c.order.every((x) => Number.isInteger(x) && x >= 1 && x <= n)
+}
+/** 센터주문서 순서: 저장된 순서가 있으면 그대로, 없으면(예전 주문서) 지금 줄로 계산 */
+export const resolveCenter = (rows: OrderRow[], saved?: CenterOrder | null): CenterOrder => (validCenterOrder(saved, rows.length) ? saved : centerOrder(rows))
+/** 줄 번호(1부터) → 센터주문서 NO */
+export const centerNos = (c: CenterOrder) => new Map(c.order.map((line, i) => [line, i + 1]))
+
 // ── 센터주문서 둘째 탭: 출고제품 요약 ────────────────────
 export interface ProductSummaryRow {
   rank: number
@@ -284,9 +307,9 @@ export const SUMMARY_WIDTHS = [6, 5, 40, 12, 9, 9, 13]
 export const centerHeader = (date: string, seq: number) => `${date.replace(/-/g, '.')} 주문서 ${seq}차`
 
 /** 내보낼 표(머리줄 + 줄). NO 는 '1','2'… 글자, 수량·사방넷주문번호는 숫자 */
-export function buildOutput(spec: OutputSpec, rows: OrderRow[]): Array<Array<string | number | null>> {
+export function buildOutput(spec: OutputSpec, rows: OrderRow[], ordered = outputRows(spec, rows)): Array<Array<string | number | null>> {
   const out: Array<Array<string | number | null>> = [spec.cols]
-  outputRows(spec, rows).forEach((r, i) => {
+  ordered.forEach((r, i) => {
     out.push(
       spec.cols.map((c) => {
         if (c === COL.no) return String(i + 1)

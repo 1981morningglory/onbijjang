@@ -8,6 +8,7 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  CalendarCheck,
   ChevronDown,
   ChevronRight,
   ClipboardList,
@@ -19,6 +20,7 @@ import {
   LogIn,
   PackageCheck,
   Pencil,
+  RotateCcw,
   Search,
   Trash2,
   TriangleAlert,
@@ -36,6 +38,7 @@ import { Badge, Button, Callout, Dialog, Dropzone, EmptyState, Field, Panel, Seg
 import { readAnyTable, readSabangnet, writeOutput, writeTable } from './excel'
 import {
   batchStamp,
+  centerOrder,
   COL,
   dateFromName,
   dateTimeKst,
@@ -48,10 +51,12 @@ import {
   outputFileName,
   pickPhone,
   productKey,
+  resolveCenter,
   SEARCH_FIELDS,
   layoutCenter,
   timeKst,
   todayKst,
+  type CenterOrder,
   type OrderRow,
   type OutputKind,
   type SearchField,
@@ -78,6 +83,11 @@ interface BatchBrief {
   waybills: number
   /** 검색어에 맞는 줄 번호(검색할 때만) */
   lines?: number[]
+}
+/** 일마감한 날 */
+interface DayClose {
+  at: string
+  by: string
 }
 interface Waybill {
   invoice: string
@@ -155,7 +165,7 @@ const fmt = (n: number) => n.toLocaleString('ko-KR')
 const WEEK = ['일', '월', '화', '수', '목', '금', '토']
 const weekday = (date: string) => WEEK[new Date(`${date}T00:00:00Z`).getUTCDay()]
 /** 화면 쪽 센터주문서 양식 판(서버 쪽 CENTER_FORM 과 같이 올린다) */
-const CENTER_FORM_UI = '센터주문서 v8'
+const CENTER_FORM_UI = '센터주문서 v9'
 const AMOUNT_RE = /결제\s*금액|주문\s*금액|총\s*금액|판매\s*금액|결제액/
 
 export default function OrdersTool() {
@@ -247,8 +257,8 @@ function Gate({ onIn }: { onIn: () => void }) {
 // ── 첨부파일 버튼: [센터주문서] [CJ택배] [구글드라이브용] [전체합본] ──
 const FILE_ICON: Record<OutputKind, LucideIcon> = { warehouse: Warehouse, cj: Truck, drive: Cloud }
 
-async function makeFiles(rows: OrderRow[], sheetName: string, date: string, seq: number): Promise<FileSet> {
-  return Promise.all(OUTPUTS.map(async (spec) => ({ kind: spec.kind, name: outputFileName(spec, date, seq), blob: await writeOutput(spec, rows, sheetName, { date, seq }) })))
+async function makeFiles(rows: OrderRow[], sheetName: string, date: string, seq: number, center?: CenterOrder | null): Promise<FileSet> {
+  return Promise.all(OUTPUTS.map(async (spec) => ({ kind: spec.kind, name: outputFileName(spec, date, seq), blob: await writeOutput(spec, rows, sheetName, { date, seq, center }) })))
 }
 
 function Chip({ icon: Icon, label, onClick, busy, accent }: { icon: LucideIcon; label: string; onClick: () => void; busy?: boolean; accent?: boolean }) {
@@ -336,7 +346,7 @@ function Make({ onGoList }: { onGoList: () => void }) {
   const [known, setKnown] = useState<{ products: Record<string, Mapping>; catalog: Record<string, { name: string; option: string }> }>({ products: {}, catalog: {} })
   const [busy, setBusy] = useState(false)
   const [skip, setSkip] = useState(false)
-  const [saved, setSaved] = useState<{ batch: BatchBrief; rows: OrderRow[]; sheetName: string } | null>(null)
+  const [saved, setSaved] = useState<{ batch: BatchBrief; rows: OrderRow[]; sheetName: string; center: CenterOrder } | null>(null)
   const [showRows, setShowRows] = useState(false)
 
   useEffect(() => {
@@ -410,14 +420,16 @@ function Make({ onGoList }: { onGoList: () => void }) {
         // 사람이 상품코드를 넣었는데 옵션을 비워 두면 ‘단품’
         return { ...base, [COL.option]: str(r[COL.option]) || '단품' }
       })
+      // 센터주문서 NO 순서를 같이 저장한다(주문 조회 NO 가 센터주문서 NO 와 같게, 나중에 고쳐도 그대로)
+      const center = centerOrder(clean)
       const mappings = rows
         .filter((r) => r._fix && str(r[COL.code]))
         .map((r) => ({ key: productKey(r), code: str(r[COL.code]), name: str(r[COL.name]), option: str(r[COL.option]), warehouse: str(r[COL.warehouse]) }))
       const { batch } = await api<{ batch: BatchBrief }>('/orders/batches', {
         method: 'POST',
-        body: { date, fileName: src.fileName, sheetName: src.sheetName, cols: src.cols, rows: clean, mappings },
+        body: { date, fileName: src.fileName, sheetName: src.sheetName, cols: src.cols, rows: clean, mappings, center },
       })
-      setSaved({ batch, rows: clean, sheetName: src.sheetName })
+      setSaved({ batch, rows: clean, sheetName: src.sheetName, center })
       toast.success(`${batch.date} ${batch.seq}차로 저장했습니다.`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '저장하지 못했습니다.')
@@ -571,7 +583,7 @@ function Make({ onGoList }: { onGoList: () => void }) {
                   주문 조회에서 보기
                 </Button>
               </div>
-              <FileChips load={() => makeFiles(saved.rows, saved.sheetName, saved.batch.date, saved.batch.seq)} date={saved.batch.date} seq={saved.batch.seq} />
+              <FileChips load={() => makeFiles(saved.rows, saved.sheetName, saved.batch.date, saved.batch.seq, saved.center)} date={saved.batch.date} seq={saved.batch.seq} />
             </div>
           ) : (
             <div className="flex flex-wrap items-center gap-3">
@@ -626,7 +638,7 @@ function OrdersList({ admin }: { admin: boolean }) {
   const [mall, setMall] = useState('')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
-  const [data, setData] = useState<{ batches: BatchBrief[]; malls: string[]; hasAmount: boolean } | null>(null)
+  const [data, setData] = useState<{ batches: BatchBrief[]; malls: string[]; hasAmount: boolean; closed?: Record<string, DayClose> } | null>(null)
   const [busy, setBusy] = useState(false)
   const [open, setOpen] = useState<string | null>(null)
   const [editing, setEditing] = useState<BatchBrief | null>(null)
@@ -670,6 +682,54 @@ function OrdersList({ admin }: { admin: boolean }) {
       void refresh()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '지우지 못했습니다.')
+    }
+  }
+
+  // ── 일마감 ──
+  const closed = data?.closed ?? {}
+  /** 일마감한 날짜에서 차수 버튼으로 다시 펼친 차수 */
+  const [revealed, setRevealed] = useState<Set<string>>(() => new Set())
+  const toggleReveal = (id: string) =>
+    setRevealed((cur) => {
+      const next = new Set(cur)
+      if (!next.delete(id)) next.add(id)
+      return next
+    })
+  const [dayBusy, setDayBusy] = useState<string | null>(null)
+  const closeDay = async (date: string, list: BatchBrief[]) => {
+    const seqs = [...list].sort((a, b) => a.seq - b.seq).map((b) => `${b.seq}차`).join('·')
+    if (!confirm(`${date} ${seqs}를 일마감할까요?\n차수들은 하루 전체 목록 아래로 접히고, 차수 버튼을 누르면 다시 펼쳐집니다.`)) return
+    setDayBusy(date)
+    try {
+      const r = await api<{ closed: Record<string, DayClose> }>(`/orders/days/${date}/close`, { method: 'POST' })
+      setData((d) => d && { ...d, closed: r.closed })
+      setOpen(null)
+      toast.success(`${date} 일마감했습니다.`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '일마감하지 못했습니다.')
+    } finally {
+      setDayBusy(null)
+    }
+  }
+  const reopenDay = async (date: string) => {
+    if (!confirm(`${date} 일마감을 풀까요?\n차수들이 다시 따로 보입니다(주문 내용은 그대로).`)) return
+    try {
+      const r = await api<{ closed: Record<string, DayClose> }>(`/orders/days/${date}/close`, { method: 'DELETE' })
+      setData((d) => d && { ...d, closed: r.closed })
+      toast.success(`${date} 일마감을 풀었습니다.`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '일마감을 풀지 못했습니다.')
+    }
+  }
+  const dayExcel = async (date: string) => {
+    setDayBusy(`x:${date}`)
+    try {
+      const r = await api<{ batches: BatchFull[] }>(`/orders/days/${date}`)
+      await downloadDay(date, r.batches)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '일마감 엑셀을 만들지 못했습니다.')
+    } finally {
+      setDayBusy(null)
     }
   }
 
@@ -800,17 +860,107 @@ function OrdersList({ admin }: { admin: boolean }) {
                 </tr>
               </thead>
               <tbody>
-                {groups.map(([date, list]) => (
+                {groups.map(([date, list]) => {
+                  const done = closed[date]
+                  const dayKey = `day:${date}`
+                  const sum = (f: (b: BatchBrief) => number) => list.reduce((s, b) => s + f(b), 0)
+                  const dayLines = searching ? Object.fromEntries(list.filter((b) => b.lines).map((b) => [b.id, b.lines!])) : undefined
+                  return (
                   <Fragment key={date}>
                     <tr className="border-t border-line bg-sunken">
                       <td colSpan={colCount} className="px-3 py-1.5 text-xs font-semibold text-ink-2">
-                        {date} ({weekday(date)}) · {list.length}개 차수 · 주문 {fmt(list.reduce((s, b) => s + b.orders, 0))}건
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span>
+                            {date} ({weekday(date)}) · {list.length}개 차수 · 주문 {fmt(sum((b) => b.orders))}건
+                            {done && <span className="font-normal text-muted"> · {done.by} {dateTimeKst(done.at)} 일마감</span>}
+                          </span>
+                          {!done && (
+                            <button
+                              type="button"
+                              className="ml-auto inline-flex h-6 items-center gap-1 rounded-full border border-brand/40 bg-brand-soft px-2.5 text-2xs font-bold text-brand-ink transition-colors duration-150 hover:bg-brand hover:text-on-brand disabled:opacity-60"
+                              disabled={dayBusy === date}
+                              onClick={() => void closeDay(date, list)}
+                              title="그날 1차·2차·3차…를 하루 전체 목록으로 묶습니다"
+                            >
+                              <CalendarCheck className="size-3.5" aria-hidden /> 일마감
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
-                    {list.map((b) => (
+                    {done && (
+                      <>
+                        <tr className={clsx('cursor-pointer border-t border-line transition-colors duration-150 hover:bg-surface', open === dayKey && 'bg-surface')} onClick={() => setOpen(open === dayKey ? null : dayKey)}>
+                          <td className="whitespace-nowrap px-3 py-2.5">
+                            <span className="inline-flex flex-wrap items-center gap-1.5 font-semibold text-ink">
+                              {open === dayKey ? <ChevronDown className="size-4 text-muted" aria-hidden /> : <ChevronRight className="size-4 text-muted" aria-hidden />}
+                              <span className="num">{date}</span>
+                              <Badge tone="accent">하루 전체</Badge>
+                              {[...list]
+                                .sort((x, y) => x.seq - y.seq)
+                                .map((b) => (
+                                  <button
+                                    key={b.id}
+                                    type="button"
+                                    aria-pressed={revealed.has(b.id)}
+                                    title={revealed.has(b.id) ? `${b.seq}차 접기` : `${b.seq}차 펼치기`}
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      toggleReveal(b.id)
+                                    }}
+                                    className={clsx(
+                                      'num inline-flex h-6 items-center rounded-full border px-2 text-2xs font-bold transition-colors duration-150',
+                                      revealed.has(b.id) ? 'border-brand bg-brand text-on-brand' : 'border-line bg-surface text-ink-2 hover:border-brand/50 hover:bg-brand-soft hover:text-brand-ink',
+                                    )}
+                                  >
+                                    {b.seq}차
+                                  </button>
+                                ))}
+                            </span>
+                            {dayLines && <span className="ml-2 text-xs text-accent">맞는 주문 {sum((b) => b.lines?.length ?? 0)}줄</span>}
+                          </td>
+                          <td className="num whitespace-nowrap px-3 py-2.5 text-ink-2" title={`${done.by} 일마감`}>
+                            {dateTimeKst(done.at)} 마감
+                          </td>
+                          <td className="num px-3 py-2.5 text-right font-semibold text-ink">{fmt(sum((b) => b.orders))}</td>
+                          <td className="num px-3 py-2.5 text-right text-ink-2">{fmt(sum((b) => b.count))}</td>
+                          {showAmount && <td className="num px-3 py-2.5 text-right text-ink-2">{list.some((b) => b.amount != null) ? `${fmt(sum((b) => b.amount ?? 0))}원` : '-'}</td>}
+                          <td className="num whitespace-nowrap px-3 py-2.5 text-right">
+                            {sum((b) => b.waybills) ? (
+                              <span className={clsx('font-semibold', sum((b) => b.invoiceOrders) >= sum((b) => b.orders) ? 'text-brand-ink' : 'text-warn')}>
+                                {fmt(sum((b) => b.invoiceOrders))}/{fmt(sum((b) => b.orders))}건
+                              </span>
+                            ) : (
+                              <span className="text-faint">-</span>
+                            )}
+                          </td>
+                          <td className="num whitespace-nowrap px-3 py-2.5 text-right">
+                            {sum((b) => b.unshipped ?? 0) ? <span className="font-bold text-danger">{fmt(sum((b) => b.unshipped ?? 0))}건</span> : <span className="text-faint">0</span>}
+                          </td>
+                          <td className="px-3 py-2">
+                            <Chip icon={FileSpreadsheet} label="일마감 엑셀리스트" accent busy={dayBusy === `x:${date}`} onClick={() => void dayExcel(date)} />
+                          </td>
+                          {admin && (
+                            <td className="whitespace-nowrap px-2 py-2 text-right" onClick={(e) => e.stopPropagation()}>
+                              <Button size="sm" variant="ghost" icon={RotateCcw} aria-label="일마감 풀기" title="일마감 풀기(차수를 다시 따로 보이게)" onClick={() => void reopenDay(date)} />
+                            </td>
+                          )}
+                        </tr>
+                        {open === dayKey && (
+                          <tr className="border-t border-line">
+                            <td colSpan={colCount} className="bg-paper px-3 py-3">
+                              <div className="w-0 min-w-full">
+                                <BatchDetail day={date} lines={dayLines} admin={admin} />
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </>
+                    )}
+                    {list.filter((b) => !done || revealed.has(b.id)).map((b) => (
                       <Fragment key={b.id}>
                         <tr className={clsx('cursor-pointer border-t border-line transition-colors duration-150 hover:bg-surface', open === b.id && 'bg-surface')} onClick={() => setOpen(open === b.id ? null : b.id)}>
-                          <td className="whitespace-nowrap px-3 py-2.5">
+                          <td className={clsx('whitespace-nowrap py-2.5 pr-3', done ? 'pl-9' : 'pl-3')}>
                             <span className="inline-flex items-center gap-1.5 font-semibold text-ink">
                               {open === b.id ? <ChevronDown className="size-4 text-muted" aria-hidden /> : <ChevronRight className="size-4 text-muted" aria-hidden />}
                               <span className="num">{b.date}</span>
@@ -839,8 +989,8 @@ function OrdersList({ admin }: { admin: boolean }) {
                           <td className="px-3 py-2">
                             <FileChips
                               load={async () => {
-                                const { batch } = await api<{ batch: BatchBrief & { rows: OrderRow[] } }>(`/orders/batches/${b.id}`)
-                                return makeFiles(batch.rows, batch.sheetName, batch.date, batch.seq)
+                                const { batch } = await api<{ batch: BatchBrief & { rows: OrderRow[]; center?: CenterOrder | null } }>(`/orders/batches/${b.id}`)
+                                return makeFiles(batch.rows, batch.sheetName, batch.date, batch.seq, batch.center)
                               }}
                               date={b.date}
                               seq={b.seq}
@@ -858,7 +1008,7 @@ function OrdersList({ admin }: { admin: boolean }) {
                             <td colSpan={colCount} className="bg-paper px-3 py-3">
                               {/* 펼친 내용이 목록 폭을 넓히지 않게(안에서 가로로 넘김) */}
                               <div className="w-0 min-w-full">
-                                  <BatchDetail id={b.id} lines={b.lines} admin={admin} />
+                                  <BatchDetail id={b.id} lines={b.lines ? { [b.id]: b.lines } : undefined} admin={admin} />
                               </div>
                             </td>
                           </tr>
@@ -866,7 +1016,8 @@ function OrdersList({ admin }: { admin: boolean }) {
                       </Fragment>
                     ))}
                   </Fragment>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -931,7 +1082,7 @@ function EditBatch({ batch, onClose, onDone }: { batch: BatchBrief; onClose: () 
   )
 }
 
-// ── 한 차수의 주문(펼쳤을 때) ─────────────────────────────
+// ── 한 차수의 주문(펼쳤을 때) · 일마감한 하루 전체 ─────────────────
 const DETAIL_COLS: Array<[string, string]> = [
   [COL.buyer, '주문자'],
   [COL.receiver, '수취인'],
@@ -954,59 +1105,119 @@ interface CsEntry {
   by: string
   at: string
 }
-type BatchFull = Omit<BatchBrief, 'waybills'> & { cols: string[]; rows: OrderRow[]; waybills: Record<string, Waybill[]>; csLog: Record<string, CsEntry[]> }
+type BatchFull = Omit<BatchBrief, 'waybills'> & { cols: string[]; rows: OrderRow[]; waybills: Record<string, Waybill[]>; csLog: Record<string, CsEntry[]>; center?: CenterOrder | null }
 /** CS 수정 시각 '26.10.16 16:33'(한국 시각) */
 const csTime = (iso: string) => (iso ? dateTimeKst(iso).slice(2).replace(/-/g, '.') : '')
 const CS_BY = 'CS수정자'
 const CS_AT = 'CS수정시각'
 const CANCEL_COL = '취소내용'
+const csWho = (r: OrderRow) => (str(r[CS_BY]) ? `${str(r[CS_BY])} ${csTime(str(r[CS_AT]))}` : null)
 
-/** 한 차수의 전체 표(엑셀·웹 보기용): 원본 칸 + 송장번호(CJ) + 취소내용 + 비고(CS내용) + CS 수정자·시각 */
+/** 한 차수의 전체 표(엑셀·웹 보기용): 원본 칸 + 송장번호(CJ) + 취소내용 + 비고(CS내용) + CS 수정자·시각. NO·순서는 센터주문서와 같게 */
 function fullTable(batch: BatchFull) {
   const extra = ['송장번호(CJ)', CANCEL_COL, CS_COL, 'CS 수정자·시각']
   const internal = new Set(['NO', COL.invoice, CANCEL_COL, CS_COL, CS_BY, CS_AT, '취소처리'])
   const cols = ['NO', ...batch.cols.filter((c) => !internal.has(c)), ...extra]
-  const rows = batch.rows.map((r, i) =>
-    cols.map((c) => {
+  const rows = resolveCenter(batch.rows, batch.center).order.map((n, i) => {
+    const r = batch.rows[n - 1]
+    return cols.map((c) => {
       if (c === 'NO') return i + 1
       if (c === '송장번호(CJ)') return (batch.waybills[str(r[COL.orderNo])] ?? []).map((w) => w.invoice).join(', ') || null
-      if (c === 'CS 수정자·시각') return str(r[CS_BY]) ? `${str(r[CS_BY])} ${csTime(str(r[CS_AT]))}` : null
+      if (c === 'CS 수정자·시각') return csWho(r)
       return r[c] ?? null
-    }),
-  )
+    })
+  })
   return { cols, rows }
+}
+
+/** 일마감 엑셀리스트: 1차·2차·3차…를 차수 순서(차수 안에서는 센터주문서 NO 순서)로 이어 붙인 하루 전체. NO 는 하루 전체에서 1부터 */
+const DAY_COLS = ['NO.', '주문번호', '수취인명', '상품코드', '상품명', '옵션', '수량', '쇼핑몰', '물류처명', '취소내용', '비고(CS내용)', 'CS 수정자·시각']
+const DAY_WIDTHS = [6, 18, 11, 14, 40, 12, 6, 12, 18, 10, 30, 18]
+function dayTable(list: BatchFull[]) {
+  const rows: Array<Array<string | number | null>> = []
+  for (const b of [...list].sort((x, y) => x.seq - y.seq))
+    for (const n of resolveCenter(b.rows, b.center).order) {
+      const r = b.rows[n - 1]
+      const qty = r[COL.qty]
+      rows.push([
+        rows.length + 1,
+        str(r[COL.orderNo]) || null,
+        str(r[COL.receiver]) || null,
+        str(r[COL.code]) || null,
+        str(r[COL.name]) || null,
+        str(r[COL.option]) || null,
+        qty == null || qty === '' ? null : Number.isFinite(Number(qty)) ? Number(qty) : qty,
+        str(r[COL.mall]) || null,
+        str(r[COL.warehouse]) || null,
+        str(r[CANCEL_COL]) || null,
+        str(r[CS_COL]) || null,
+        csWho(r),
+      ])
+    }
+  return { cols: DAY_COLS, rows }
+}
+const dayFileName = (date: string) => `${date.replace(/-/g, '')}_일마감.xlsx`
+async function downloadDay(date: string, list: BatchFull[]) {
+  const t = dayTable(list)
+  downloadBlob(await writeTable(`${date} 일마감`, t.cols, t.rows, DAY_WIDTHS), dayFileName(date))
 }
 const esc = (v: unknown) => str(v).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]!)
 
-function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin: boolean }) {
-  const [batch, setBatch] = useState<BatchFull | null>(null)
+/** 표 한 줄: 어느 차수의 몇째 줄(서버 줄 번호)인지와 화면 NO */
+interface Item {
+  key: string
+  b: BatchFull
+  /** 서버에 저장된 줄 번호(1부터) — 고치기·CS·취소에 쓴다 */
+  n: number
+  /** 센터주문서 NO */
+  no: number
+  /** 일마감 하루 전체에서의 NO */
+  dayNo: number
+  r: OrderRow
+}
+
+/** 한 차수(id) 또는 일마감한 하루 전체(day)의 주문 */
+function BatchDetail({ id, day, lines, admin }: { id?: string; day?: string; lines?: Record<string, number[]>; admin: boolean }) {
+  const [batches, setBatches] = useState<BatchFull[] | null>(null)
   const [all, setAll] = useState(!lines)
-  const [open, setOpen] = useState<number | null>(null)
-  const [edit, setEdit] = useState<number | null>(null)
+  const [open, setOpen] = useState<string | null>(null)
+  const [edit, setEdit] = useState<string | null>(null)
   const [editWaybill, setEditWaybill] = useState<string | null>(null)
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 } | null>(null)
   const load = useCallback(() => {
-    api<{ batch: BatchFull }>(`/orders/batches/${id}`)
-      .then((r) => setBatch(r.batch))
+    ;(day ? api<{ batches: BatchFull[] }>(`/orders/days/${day}`).then((r) => r.batches) : api<{ batch: BatchFull }>(`/orders/batches/${id}`).then((r) => [r.batch]))
+      .then(setBatches)
       .catch((err) => toast.error(err instanceof Error ? err.message : '불러오지 못했습니다.'))
-  }, [id])
+  }, [id, day])
   useEffect(load, [load])
-  if (!batch)
+  if (!batches)
     return (
       <div className="flex items-center gap-2 py-4 text-muted">
         <Spinner /> 주문 불러오는 중
       </div>
     )
-  const pick = new Set(lines ?? [])
-  const value = (r: OrderRow, n: number, key: SortKey): string | number =>
-    key === 'NO' ? n : key === 'waybill' ? (batch.waybills[str(r[COL.orderNo])] ?? []).map((w) => w.invoice).join(',') : NUM_SORT.has(key) ? Number(r[key]) || 0 : key === COL.phone1 ? pickPhone(r[COL.phone1], r[COL.phone2]) : str(r[key])
-  const shown = batch.rows.map((r, i) => [r, i + 1] as const).filter(([, n]) => all || pick.has(n))
+  // 화면 순서·NO 는 센터주문서와 같게(하루 전체는 차수 순서로 이어서)
+  let d = 0
+  const items: Item[] = [...batches]
+    .sort((x, y) => x.seq - y.seq)
+    .flatMap((b) => resolveCenter(b.rows, b.center).order.map((n, i) => ({ key: `${b.id}:${n}`, b, n, no: i + 1, dayNo: ++d, r: b.rows[n - 1] })))
+  const shownNo = (it: Item) => (day ? it.dayNo : it.no)
+  const matched = (it: Item) => Boolean(lines?.[it.b.id]?.includes(it.n))
+  const matchCount = items.filter(matched).length
+  const value = (it: Item, key: SortKey): string | number => {
+    const r = it.r
+    if (key === 'NO') return shownNo(it)
+    if (key === 'waybill') return (it.b.waybills[str(r[COL.orderNo])] ?? []).map((w) => w.invoice).join(',')
+    if (NUM_SORT.has(key)) return Number(r[key]) || 0
+    return key === COL.phone1 ? pickPhone(r[COL.phone1], r[COL.phone2]) : str(r[key])
+  }
+  const shown = items.filter((it) => all || matched(it))
   if (sort)
-    shown.sort(([a, na], [b, nb]) => {
-      const x = value(a, na, sort.key)
-      const y = value(b, nb, sort.key)
+    shown.sort((a, b) => {
+      const x = value(a, sort.key)
+      const y = value(b, sort.key)
       const c = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), 'ko', { numeric: true })
-      return c * sort.dir || na - nb
+      return c * sort.dir || a.dayNo - b.dayNo
     })
   const toggleSort = (key: SortKey) => setSort((cur) => (cur?.key !== key ? { key, dir: 1 } : cur.dir === 1 ? { key, dir: -1 } : null))
   const head = (key: SortKey, label: string, cls?: string) => (
@@ -1018,38 +1229,54 @@ function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin
     </th>
   )
 
+  const first = batches[0]
+  const title = day ? `${day} 일마감 주문내역` : first ? `${first.date} ${first.seq}차 주문내역` : '주문내역'
+  const table = () => (day ? dayTable(batches) : fullTable(first))
   const exportExcel = async () => {
-    const t = fullTable(batch)
-    downloadBlob(await writeTable(`${batch.date} ${batch.seq}차`, t.cols, t.rows), `${batchStamp(batch.date, batch.seq)}_주문내역.xlsx`)
+    if (day) return downloadDay(day, batches)
+    const t = table()
+    downloadBlob(await writeTable(`${first.date} ${first.seq}차`, t.cols, t.rows), `${batchStamp(first.date, first.seq)}_주문내역.xlsx`)
   }
+  const totalQty = batches.reduce((s, b) => s + b.qty, 0)
   const openWeb = () => {
-    const t = fullTable(batch)
-    const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${esc(`${batch.date} ${batch.seq}차 주문내역`)}</title>
+    const t = table()
+    const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${esc(title)}</title>
 <style>body{font-family:'Malgun Gothic',sans-serif;margin:16px;color:#222}h1{font-size:18px}table{border-collapse:collapse;font-size:12px}th,td{border:1px solid #ccc;padding:4px 6px;white-space:nowrap}th{background:#993300;color:#fff;position:sticky;top:0}tr:nth-child(even) td{background:#faf7f2}</style></head>
-<body><h1>${esc(`${batch.date} ${batch.seq}차 주문내역`)} <small style="font-weight:normal;color:#777">${batch.rows.length}줄 · 수량 ${fmt(batch.qty)}</small></h1>
+<body><h1>${esc(title)} <small style="font-weight:normal;color:#777">${items.length}줄 · 수량 ${fmt(totalQty)}</small></h1>
 <table><thead><tr>${t.cols.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${t.rows.map((r) => `<tr>${r.map((v) => `<td>${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody></table></body></html>`
     const url = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }))
     window.open(url, '_blank', 'noopener')
     setTimeout(() => URL.revokeObjectURL(url), 60_000)
   }
 
-  const colSpan = DETAIL_COLS.length + 5
+  const colSpan = DETAIL_COLS.length + 5 + (day ? 1 : 0)
   /** 한 줄 고친 결과를 화면에 바로 반영 */
-  const patchRow = (n: number, row: OrderRow, log?: CsEntry[]) =>
-    setBatch((b) => (b ? { ...b, rows: b.rows.map((x, i) => (i === n - 1 ? row : x)), csLog: log ? { ...b.csLog, [n]: log } : b.csLog } : b))
+  const patchRow = (bid: string, n: number, row: OrderRow, log?: CsEntry[]) =>
+    setBatches((list) => list && list.map((b) => (b.id !== bid ? b : { ...b, rows: b.rows.map((x, i) => (i === n - 1 ? row : x)), csLog: log ? { ...b.csLog, [n]: log } : b.csLog })))
+  const editing = edit ? items.find((it) => it.key === edit) : undefined
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
-        <span>
-          원본 <b className="text-ink-2">{batch.fileName}</b>
-        </span>
-        <span>
-          {batch.uploadedBy} · {dateTimeKst(batch.uploadedAt)} 업로드{batch.editedAt && ` · ${dateTimeKst(batch.editedAt)} 고침`}
-        </span>
+        {day ? (
+          <span>
+            {[...batches].sort((x, y) => x.seq - y.seq).map((b) => `${b.seq}차`).join('·')} 합계 <b className="num text-ink-2">{fmt(items.length)}</b>줄 · NO 는 하루 전체 번호, ‘차수·NO’ 는 그 차수 센터주문서 번호
+          </span>
+        ) : (
+          first && (
+            <>
+              <span>
+                원본 <b className="text-ink-2">{first.fileName}</b>
+              </span>
+              <span>
+                {first.uploadedBy} · {dateTimeKst(first.uploadedAt)} 업로드{first.editedAt && ` · ${dateTimeKst(first.editedAt)} 고침`}
+              </span>
+            </>
+          )
+        )}
         <span className="inline-flex items-center gap-1.5">
-          수량 합계 <b className="num text-ink-2">{fmt(batch.qty)}</b>
+          수량 합계 <b className="num text-ink-2">{fmt(totalQty)}</b>
           <button type="button" className="inline-flex items-center gap-0.5 rounded-sm border border-line bg-surface px-1.5 py-0.5 text-2xs font-semibold text-ink-2 hover:bg-panel hover:text-ink" onClick={() => void exportExcel()}>
-            <FileSpreadsheet className="size-3" aria-hidden /> 엑셀로 받기
+            <FileSpreadsheet className="size-3" aria-hidden /> {day ? '일마감 엑셀리스트' : '엑셀로 받기'}
           </button>
           <button type="button" className="inline-flex items-center gap-0.5 rounded-sm border border-line bg-surface px-1.5 py-0.5 text-2xs font-semibold text-ink-2 hover:bg-panel hover:text-ink" onClick={openWeb}>
             <ExternalLink className="size-3" aria-hidden /> 웹에서 보기
@@ -1057,17 +1284,17 @@ function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin
         </span>
         {lines && (
           <button type="button" className="ml-auto font-semibold text-brand-ink underline" onClick={() => setAll((v) => !v)}>
-            {all ? `맞는 주문 ${lines.length}줄만 보기` : `이 주문서 전체 ${batch.rows.length}줄 보기`}
+            {all ? `맞는 주문 ${matchCount}줄만 보기` : `${day ? '하루' : '이 주문서'} 전체 ${items.length}줄 보기`}
           </button>
         )}
       </div>
       <div className="overflow-x-auto rounded-md border border-line bg-panel">
-        {/* 상품명 칸이 남는 폭을 가져가고 나머지 칸은 내용만큼(주문자·수취인·전화번호가 벌어지지 않게) */}
         {/* 칸은 내용만큼(상품명·옵션이 벌어지지 않게). 남는 폭은 오른쪽에 둔다 */}
         <table className="w-max text-sm [&_td]:px-1.5 [&_td]:whitespace-nowrap [&_th]:px-1.5 [&_th]:whitespace-nowrap">
           <thead className="bg-surface text-left text-xs text-muted">
             <tr>
               {head('NO', 'NO')}
+              {day && <th className="px-2 py-1.5 font-semibold">차수·NO</th>}
               {DETAIL_COLS.map(([c, l]) => (
                 <Fragment key={l}>
                   {head(c, l, c === COL.qty ? 'text-right' : undefined)}
@@ -1080,13 +1307,20 @@ function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin
             </tr>
           </thead>
           <tbody>
-            {shown.map(([r, n]) => {
+            {shown.map((it) => {
+              const { r, b, n, key } = it
               const orderNo = str(r[COL.orderNo])
-              const wbs = batch.waybills[orderNo] ?? []
+              const wbs = b.waybills[orderNo] ?? []
+              const toggle = () => setOpen(open === key ? null : key)
               return (
-                <Fragment key={n}>
-                  <tr className={clsx('cursor-pointer border-t border-line hover:bg-surface', open === n && 'bg-surface', pick.has(n) && all && lines && 'bg-mark-soft')} onClick={() => setOpen(open === n ? null : n)}>
-                    <td className="num px-2 py-1.5 text-muted">{n}</td>
+                <Fragment key={key}>
+                  <tr className={clsx('cursor-pointer border-t border-line hover:bg-surface', open === key && 'bg-surface', all && lines && matched(it) && 'bg-mark-soft')} onClick={toggle}>
+                    <td className="num px-2 py-1.5 text-muted">{shownNo(it)}</td>
+                    {day && (
+                      <td className="num px-2 py-1.5 text-xs text-muted">
+                        {b.seq}차 {it.no}
+                      </td>
+                    )}
                     {DETAIL_COLS.map(([c]) => (
                       <Fragment key={c}>
                         <td
@@ -1132,12 +1366,12 @@ function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin
                       </Fragment>
                     ))}
                     <td className="px-2 py-1" onClick={(e) => e.stopPropagation()}>
-                      <CancelButton batchId={batch.id} line={n} value={str(r[CANCEL_COL])} onSaved={(row) => patchRow(n, row)} />
+                      <CancelButton batchId={b.id} line={n} no={shownNo(it)} value={str(r[CANCEL_COL])} onSaved={(row) => patchRow(b.id, n, row)} />
                     </td>
                     <td className="px-2 py-1" onClick={(e) => e.stopPropagation()}>
-                      <CsMemo batchId={batch.id} line={n} value={str(r[CS_COL])} open={open === n} onToggle={() => setOpen(open === n ? null : n)} onSaved={(row, log) => patchRow(n, row, log)} />
+                      <CsMemo batchId={b.id} line={n} no={shownNo(it)} value={str(r[CS_COL])} open={open === key} onToggle={toggle} onSaved={(row, log) => patchRow(b.id, n, row, log)} />
                     </td>
-                    <td className="num px-2 py-1 text-2xs leading-tight text-muted" title={str(r[CS_BY]) ? `${str(r[CS_BY])} ${csTime(str(r[CS_AT]))}` : undefined}>
+                    <td className="num px-2 py-1 text-2xs leading-tight text-muted" title={csWho(r) ?? undefined}>
                       {str(r[CS_BY]) && (
                         <>
                           <div className="max-w-24 truncate font-semibold text-ink-2">{str(r[CS_BY])}</div>
@@ -1146,7 +1380,7 @@ function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin
                       )}
                     </td>
                   </tr>
-                  {open === n && (
+                  {open === key && (
                     <tr className="border-t border-line bg-sunken">
                       {/* 펼친 세부내역은 표 폭 안에서 줄을 바꿔 표를 넓히지 않게 */}
                       <td colSpan={colSpan} className="w-0 whitespace-normal! px-3 py-2">
@@ -1159,15 +1393,15 @@ function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin
                         )}
                         <dl className="grid gap-x-6 gap-y-1 text-xs sm:grid-cols-2 lg:grid-cols-3">
                           {Object.entries(r)
-                            .filter(([key]) => !['NO', CS_BY, CS_AT, '취소처리'].includes(key))
-                            .map(([key, v]) => (
-                              <div key={key} className="flex gap-2">
-                                <dt className="w-28 shrink-0 text-muted">{key}</dt>
+                            .filter(([k]) => !['NO', CS_BY, CS_AT, '취소처리'].includes(k))
+                            .map(([k, v]) => (
+                              <div key={k} className="flex gap-2">
+                                <dt className="w-28 shrink-0 text-muted">{k}</dt>
                                 <dd className="min-w-0 break-all text-ink">{str(v) || '-'}</dd>
                               </div>
                             ))}
                         </dl>
-                        <Button size="sm" variant="secondary" icon={Pencil} className="mt-2" onClick={() => setEdit(n)}>
+                        <Button size="sm" variant="secondary" icon={Pencil} className="mt-2" onClick={() => setEdit(key)}>
                           세부내역 조회 및 CS내용
                         </Button>
                       </td>
@@ -1179,15 +1413,16 @@ function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin
           </tbody>
         </table>
       </div>
-      {edit != null && (
+      {editing && (
         <EditRow
-          batchId={batch.id}
-          line={edit}
-          row={batch.rows[edit - 1]}
-          cols={batch.cols}
-          log={batch.csLog[edit] ?? []}
+          batchId={editing.b.id}
+          line={editing.n}
+          no={shownNo(editing)}
+          row={editing.r}
+          cols={editing.b.cols}
+          log={editing.b.csLog[editing.n] ?? []}
           admin={admin}
-          onCs={(row, log) => patchRow(edit, row, log)}
+          onCs={(row, log) => patchRow(editing.b.id, editing.n, row, log)}
           onClose={() => setEdit(null)}
           onDone={() => {
             setEdit(null)
@@ -1198,12 +1433,12 @@ function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin
       {editWaybill != null && (
         <EditWaybills
           orderNo={editWaybill}
-          current={batch.waybills[editWaybill] ?? []}
+          current={batches.find((b) => b.waybills[editWaybill])?.waybills[editWaybill] ?? []}
           onClose={() => setEditWaybill(null)}
           onDone={(list) => {
-            const key = editWaybill
+            const k = editWaybill
             setEditWaybill(null)
-            setBatch((b): BatchFull | null => (b ? { ...b, waybills: { ...b.waybills, [key]: list } } : null))
+            setBatches((bs) => bs && bs.map((b) => (b.rows.some((r) => str(r[COL.orderNo]) === k) ? { ...b, waybills: { ...b.waybills, [k]: list } } : b)))
           }}
         />
       )}
@@ -1212,7 +1447,7 @@ function BatchDetail({ id, lines, admin }: { id: string; lines?: number[]; admin
 }
 
 /** 비고(CS내용): 칸을 벗어나거나 Enter 를 누르면 저장(누가·언제 적었는지 기록). ▶ 를 누르면 그 주문의 세부내역이 펼쳐진다 */
-function CsMemo({ batchId, line, value, open, onToggle, onSaved }: { batchId: string; line: number; value: string; open: boolean; onToggle: () => void; onSaved: (row: OrderRow, log: CsEntry[]) => void }) {
+function CsMemo({ batchId, line, no, value, open, onToggle, onSaved }: { batchId: string; line: number; no: number; value: string; open: boolean; onToggle: () => void; onSaved: (row: OrderRow, log: CsEntry[]) => void }) {
   const [text, setText] = useState(value)
   const [state, setState] = useState<'idle' | 'saving' | 'saved'>('idle')
   useEffect(() => setText(value), [value])
@@ -1243,7 +1478,7 @@ function CsMemo({ batchId, line, value, open, onToggle, onSaved }: { batchId: st
         {open ? <ChevronDown className="size-4" aria-hidden /> : <ChevronRight className="size-4" aria-hidden />}
       </button>
       <input
-        aria-label={`NO ${line} 비고(CS내용)`}
+        aria-label={`NO ${no} 비고(CS내용)`}
         value={text}
         maxLength={500}
         placeholder="CS 내용 입력"
@@ -1265,7 +1500,7 @@ function CsMemo({ batchId, line, value, open, onToggle, onSaved }: { batchId: st
 
 /** 취소내용: 누를 때마다 빈칸 → [취소요청](분홍) → [취소완료](초록) → 빈칸 */
 const CANCEL_NEXT: Record<string, string> = { '': '취소요청', 취소요청: '취소완료', 취소완료: '' }
-function CancelButton({ batchId, line, value, onSaved }: { batchId: string; line: number; value: string; onSaved: (row: OrderRow) => void }) {
+function CancelButton({ batchId, line, no, value, onSaved }: { batchId: string; line: number; no: number; value: string; onSaved: (row: OrderRow) => void }) {
   const [busy, setBusy] = useState(false)
   const click = async () => {
     setBusy(true)
@@ -1283,7 +1518,7 @@ function CancelButton({ batchId, line, value, onSaved }: { batchId: string; line
       type="button"
       onClick={() => void click()}
       disabled={busy}
-      aria-label={`NO ${line} 취소내용: ${value || '없음'} (누르면 ${CANCEL_NEXT[value] || '빈칸'})`}
+      aria-label={`NO ${no} 취소내용: ${value || '없음'} (누르면 ${CANCEL_NEXT[value] || '빈칸'})`}
       title={value ? `누르면 ${CANCEL_NEXT[value] || '빈칸'}으로` : '누르면 취소요청'}
       className={clsx(
         'inline-flex h-7 min-w-18 items-center justify-center rounded-sm border px-2 text-xs font-bold transition-colors duration-150 disabled:opacity-60',
@@ -1351,6 +1586,7 @@ function EditWaybills({ orderNo, current, onClose, onDone }: { orderNo: string; 
 function EditRow({
   batchId,
   line,
+  no,
   row,
   cols,
   log,
@@ -1361,6 +1597,8 @@ function EditRow({
 }: {
   batchId: string
   line: number
+  /** 화면 NO(센터주문서 NO) */
+  no: number
   row: OrderRow
   cols: string[]
   log: CsEntry[]
@@ -1418,7 +1656,7 @@ function EditRow({
       open
       onClose={onClose}
       size="lg"
-      title={`세부내역 조회 및 CS내용 (NO ${line})`}
+      title={`세부내역 조회 및 CS내용 (NO ${no})`}
       footer={
         <>
           <Button onClick={onClose}>닫기</Button>

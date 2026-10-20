@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { A4_PRINT_PX, buildOutput, cellValue, centerHeader, centerWidths, COL, colPx, layoutCenter, productSummary, dateFromName, JEJU_NOTE, looksLikeSabangnet, needsProduct, OUTPUTS, outputFileName, pickPhone, productKey, sortRows, timeKst, type OrderRow } from './logic'
+import { A4_PRINT_PX, buildOutput, cellValue, centerHeader, centerNos, centerOrder, centerWidths, COL, colPx, layoutCenter, productSummary, dateFromName, JEJU_NOTE, looksLikeSabangnet, needsProduct, OUTPUTS, outputFileName, pickPhone, productKey, resolveCenter, sortRows, validCenterOrder, timeKst, type OrderRow } from './logic'
 
 const row = (o: Partial<Record<string, string | number | null>>): OrderRow => ({
   [COL.orderNo]: '1',
@@ -190,5 +190,30 @@ describe('pickPhone', () => {
     expect(pickPhone('02-123-4567', '031-123-4567')).toBe('02-123-4567')
     expect(pickPhone('010-1111-1111', '010-2222-2222')).toBe('010-1111-1111')
     expect(pickPhone('02-123-4567', '')).toBe('02-123-4567')
+  })
+})
+
+describe('센터주문서 NO 순서 저장', () => {
+  const rows = [
+    row({ [COL.mall]: 'B몰', [COL.orderNo]: '2', [COL.buyer]: '나', [COL.receiver]: '나' }),
+    row({ [COL.mall]: 'A몰', [COL.orderNo]: '9', [COL.buyer]: '가', [COL.receiver]: '가' }),
+    row({ [COL.mall]: 'A몰', [COL.orderNo]: '1', [COL.buyer]: '다', [COL.receiver]: '다' }),
+  ]
+  it('줄 번호를 센터주문서 순서로 담는다', () => {
+    const c = centerOrder(rows)
+    expect(c.order.map((n) => rows[n - 1])).toEqual(layoutCenter(rows).rows)
+    expect(c.pageEnds).toEqual([3])
+    expect(centerNos(c).get(c.order[0])).toBe(1)
+  })
+  it('저장된 순서가 있으면 내용을 고쳐도 그대로', () => {
+    const c = centerOrder(rows)
+    const edited = rows.map((r, i) => (i === 0 ? { ...r, [COL.mall]: '0몰' } : r))
+    expect(resolveCenter(edited, c)).toBe(c)
+    expect(resolveCenter(edited, null).order).not.toEqual(c.order)
+  })
+  it('맞지 않는 순서는 버리고 다시 계산', () => {
+    expect(validCenterOrder({ order: [1, 1, 2], pageEnds: [3] }, 3)).toBe(false)
+    expect(validCenterOrder({ order: [1, 2], pageEnds: [2] }, 3)).toBe(false)
+    expect(validCenterOrder({ order: [3, 1, 2], pageEnds: [3] }, 3)).toBe(true)
   })
 })

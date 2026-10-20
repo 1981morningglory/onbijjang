@@ -16,7 +16,7 @@ const CS_AT = 'CS수정시각'
 const CANCEL_COL = '취소내용'
 const CANCEL_STATES = ['', '취소요청', '취소완료']
 /** 센터주문서 양식 판 — 화면에 같이 보여 배포가 반영됐는지 알 수 있게 */
-const CENTER_FORM = '센터주문서 v8(CS 기록·취소내용·미출고 갯수)'
+const CENTER_FORM = '센터주문서 v9(NO 고정·일마감)'
 const DATE_RE = /^20\d{2}-\d{2}-\d{2}$/
 const MAX_ROWS = 5000
 const MAX_RESULTS = 2000
@@ -45,6 +45,16 @@ const num = (v) => {
   return Number.isFinite(n) ? n : 0
 }
 const digits = (v) => str(v).replace(/\D/g, '')
+
+/** 센터주문서 순서 { order: 줄 번호(1부터)를 NO 순서로, pageEnds: 쪽마다 마지막 NO } — 맞지 않으면 null(화면이 다시 계산) */
+function cleanCenter(c, n) {
+  if (!c || !Array.isArray(c.order) || !Array.isArray(c.pageEnds) || c.order.length !== n) return null
+  const order = c.order.map(Number)
+  const pageEnds = c.pageEnds.slice(0, n).map(Number)
+  if (new Set(order).size !== n || !order.every((x) => Number.isInteger(x) && x >= 1 && x <= n)) return null
+  if (pageEnds.at(-1) !== n || !pageEnds.every((x, i) => Number.isInteger(x) && x >= 1 && x > (pageEnds[i - 1] ?? 0))) return null
+  return { order, pageEnds }
+}
 
 /** 줄 하나를 저장할 모양으로(칸 이름 80자, 값은 글자 1000자·숫자) */
 function cleanRow(r) {
@@ -88,6 +98,9 @@ export default async function ordersRoutes(app, ctx) {
   }
   /** 쇼핑몰 상품명|옵션 → { code, name, option, warehouse } */
   let products = await readJson(PRODUCTS, {})
+  /** 일마감한 날짜 → { at, by } */
+  const DAYS = path.join(DIR, 'days.json')
+  let closedDays = await readJson(DAYS, {})
 
   // ── CJ대한통운 송장(운송장) — 집화 날짜별 하나: orders/cj/<날짜>.json ──
   // 하루 중간에 올리고 마감 때 다시 올려도 같은 날짜에 합친다(운송장번호가 같으면 나중 것으로).
@@ -224,7 +237,7 @@ export default async function ordersRoutes(app, ctx) {
 
   /** 주문서 한 차수 저장: { date, fileName, sheetName, cols, rows, mappings? } */
   app.post('/api/orders/batches', requireAllowed, async (req, res) => {
-    const { date, fileName, sheetName, cols, rows, mappings } = req.body ?? {}
+    const { date, fileName, sheetName, cols, rows, mappings, center } = req.body ?? {}
     if (!DATE_RE.test(String(date ?? ''))) return res.status(400).json({ error: '주문서 날짜를 확인해 주세요.' })
     if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: '주문이 없습니다.' })
     if (rows.length > MAX_ROWS) return res.status(400).json({ error: `한 번에 ${MAX_ROWS}줄까지 올릴 수 있습니다.` })
@@ -238,6 +251,8 @@ export default async function ordersRoutes(app, ctx) {
           sheetName: str(sheetName).slice(0, 100),
           cols: (Array.isArray(cols) ? cols : []).slice(0, 80).map((c) => str(c).slice(0, 80)),
           rows: rows.map(cleanRow),
+          // 센터주문서 NO 순서(주문 조회 NO 를 센터주문서와 같게)
+          center: cleanCenter(center, rows.length),
           uploadedAt: new Date().toISOString(),
           uploadedBy: who(req),
         }
@@ -286,19 +301,54 @@ export default async function ordersRoutes(app, ctx) {
       if (list.length >= 500) break
     }
     const malls = [...new Set([...batches.values()].flatMap((b) => b.rows.map((r) => str(r['쇼핑몰']))).filter(Boolean))].sort()
-    res.json({ batches: list, malls, hasAmount: [...batches.values()].some((b) => b.cols.some((c) => AMOUNT_RE.test(c))) })
+    res.json({ batches: list, malls, hasAmount: [...batches.values()].some((b) => b.cols.some((c) => AMOUNT_RE.test(c))), closed: closedDays })
   })
 
-  app.get('/api/orders/batches/:id', requireAllowed, (req, res) => {
-    const b = ID_RE.test(req.params.id) ? batches.get(req.params.id) : null
-    if (!b) return res.status(404).json({ error: '없는 주문서입니다.' })
+  /** 차수 하나 전부(줄·운송장·CS 기록·센터주문서 순서) */
+  const full = (b) => {
     // 이 주문서의 주문번호마다 붙은 운송장 전부
     const waybills = {}
     for (const r of b.rows) {
       const list = waybillsOf(r)
       if (list.length) waybills[str(r['주문번호'])] = list
     }
-    res.json({ batch: { ...brief(b), cols: b.cols, rows: b.rows, waybills, csLog: b.csLog ?? {} } })
+    return { ...brief(b), cols: b.cols, rows: b.rows, waybills, csLog: b.csLog ?? {}, center: b.center ?? null }
+  }
+  app.get('/api/orders/batches/:id', requireAllowed, (req, res) => {
+    const b = ID_RE.test(req.params.id) ? batches.get(req.params.id) : null
+    if (!b) return res.status(404).json({ error: '없는 주문서입니다.' })
+    res.json({ batch: full(b) })
+  })
+
+  // ── 일마감: 그날 1차·2차·3차…를 하루 전체 목록으로 묶는다 ──
+  const dayBatches = (date) => [...batches.values()].filter((b) => b.date === date).sort((a, b) => a.seq - b.seq)
+  /** 하루 전체(차수 순서대로) */
+  app.get('/api/orders/days/:date', requireAllowed, (req, res) => {
+    const date = req.params.date
+    if (!DATE_RE.test(date)) return res.status(400).json({ error: '날짜를 확인해 주세요.' })
+    res.json({ date, closed: closedDays[date] ?? null, batches: dayBatches(date).map(full) })
+  })
+  app.post('/api/orders/days/:date/close', requireAllowed, async (req, res) => {
+    const date = req.params.date
+    if (!DATE_RE.test(date)) return res.status(400).json({ error: '날짜를 확인해 주세요.' })
+    if (!dayBatches(date).length) return res.status(400).json({ error: '이 날짜에 주문서가 없습니다.' })
+    await serial(async () => {
+      closedDays = { ...closedDays, [date]: { at: new Date().toISOString(), by: who(req) } }
+      await writeJson(DAYS, closedDays)
+    })
+    res.json({ closed: closedDays })
+  })
+  /** 일마감 풀기(스탭 이상) — 차수들이 다시 따로 보인다 */
+  app.delete('/api/orders/days/:date/close', requireStaff, async (req, res) => {
+    const date = req.params.date
+    if (!DATE_RE.test(date)) return res.status(400).json({ error: '날짜를 확인해 주세요.' })
+    await serial(async () => {
+      const { [date]: _gone, ...rest } = closedDays
+      void _gone
+      closedDays = rest
+      await writeJson(DAYS, closedDays)
+    })
+    res.json({ closed: closedDays })
   })
 
   // ── CJ 송장 파일 ────────────────────────────────────────
