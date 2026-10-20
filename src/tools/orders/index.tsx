@@ -21,15 +21,17 @@ import {
   PackageCheck,
   Pencil,
   RotateCcw,
+  Save,
   Search,
   Trash2,
   TriangleAlert,
   Truck,
   Warehouse,
   WifiOff,
+  X,
   type LucideIcon,
 } from 'lucide-react'
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router'
 import { useLoginDialog } from '@/app/LoginDialog'
 import { api, ApiError } from '@/lib/api'
@@ -168,12 +170,21 @@ const weekday = (date: string) => WEEK[new Date(`${date}T00:00:00Z`).getUTCDay()
 const CENTER_FORM_UI = '센터주문서 v9'
 const AMOUNT_RE = /결제\s*금액|주문\s*금액|총\s*금액|판매\s*금액|결제액/
 
+/** 지금 보고 있는 사람: CS 내용 고치기·지우기는 적은 사람 본인과 전체마스터만 */
+interface Me {
+  id: string | null
+  name: string | null
+  master: boolean
+}
+const MeContext = createContext<Me>({ id: null, name: null, master: false })
+const canEditCs = (me: Me, e: CsEntry) => me.master || (me.id != null && (e.uid ? e.uid === me.id : Boolean(me.name) && e.by === me.name))
+
 export default function OrdersTool() {
-  const [me, setMe] = useState<{ allowed: boolean; admin: boolean; version?: string; form?: string } | null>(null)
+  const [me, setMe] = useState<{ allowed: boolean; admin: boolean; me?: Me; version?: string; form?: string } | null>(null)
   const [offline, setOffline] = useState(false)
   const load = useCallback(async () => {
     try {
-      setMe(await api<{ allowed: boolean; admin: boolean; version?: string; form?: string }>('/orders/status'))
+      setMe(await api<{ allowed: boolean; admin: boolean; me?: Me; version?: string; form?: string }>('/orders/status'))
       setOffline(false)
     } catch (err) {
       if (err instanceof ApiError && err.status === 0) setOffline(true)
@@ -213,7 +224,7 @@ export default function OrdersTool() {
           { value: 'search', label: '주문 조회', icon: History },
         ]}
       />
-      {tab === 'make' ? <Make onGoList={() => setTab('search')} /> : <OrdersList admin={me.admin} />}
+      <MeContext.Provider value={me.me ?? { id: null, name: null, master: false }}>{tab === 'make' ? <Make onGoList={() => setTab('search')} /> : <OrdersList admin={me.admin} />}</MeContext.Provider>
       <p className="text-right text-2xs text-faint">
         화면 {CENTER_FORM_UI} · 서버 {me.form ?? '이전 버전'} · 배포 {me.version ?? '?'}
       </p>
@@ -957,7 +968,8 @@ function OrdersList({ admin }: { admin: boolean }) {
                         )}
                       </>
                     )}
-                    {list.filter((b) => !done || revealed.has(b.id)).map((b) => (
+                    {/* 일마감한 날은 1차가 맨 위로(1차 → 2차 → 3차…) */}
+                    {(done ? [...list].sort((x, y) => x.seq - y.seq) : list).filter((b) => !done || revealed.has(b.id)).map((b) => (
                       <Fragment key={b.id}>
                         <tr className={clsx('cursor-pointer border-t border-line transition-colors duration-150 hover:bg-surface', open === b.id && 'bg-surface')} onClick={() => setOpen(open === b.id ? null : b.id)}>
                           <td className={clsx('whitespace-nowrap py-2.5 pr-3', done ? 'pl-9' : 'pl-3')}>
@@ -1103,7 +1115,11 @@ const NUM_SORT = new Set<string>(['NO', COL.qty])
 interface CsEntry {
   text: string
   by: string
+  /** 적은 사람 계정(예전 기록에는 없음 — 그때는 이름으로 본다) */
+  uid?: string | null
   at: string
+  editedAt?: string
+  editedBy?: string
 }
 type BatchFull = Omit<BatchBrief, 'waybills'> & { cols: string[]; rows: OrderRow[]; waybills: Record<string, Waybill[]>; csLog: Record<string, CsEntry[]>; center?: CenterOrder | null }
 /** CS 수정 시각 '26.10.16 16:33'(한국 시각) */
@@ -1615,6 +1631,27 @@ function EditRow({
   const [entries, setEntries] = useState<CsEntry[]>(log)
   const [drafts, setDrafts] = useState<string[]>([''])
   const [csBusy, setCsBusy] = useState(false)
+  const me = useContext(MeContext)
+  /** 고치는 중인 기록(번호)과 고친 글 */
+  const [fixing, setFixing] = useState<{ i: number; text: string } | null>(null)
+  const [fixBusy, setFixBusy] = useState(false)
+  const changeCs = async (i: number, text: string | null) => {
+    const e = entries[i]
+    if (text === null && !confirm(`이 CS 내용을 지울까요?\n“${e.text}”`)) return
+    setFixBusy(true)
+    try {
+      const url = `/orders/batches/${batchId}/rows/${line}/cs/${i}`
+      const r = await api<{ row: OrderRow; log: CsEntry[] }>(url, text === null ? { method: 'DELETE', body: { at: e.at } } : { method: 'PATCH', body: { at: e.at, text } })
+      setEntries(r.log)
+      onCs(r.row, r.log)
+      setFixing(null)
+      toast.success(text === null ? 'CS 내용을 지웠습니다.' : 'CS 내용을 고쳤습니다.')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'CS 내용을 바꾸지 못했습니다.')
+    } finally {
+      setFixBusy(false)
+    }
+  }
   const saveCs = async () => {
     const texts = drafts.map((d) => d.trim()).filter(Boolean)
     if (!texts.length) return
@@ -1675,11 +1712,42 @@ function EditRow({
           {entries.length ? (
             <ol className="flex flex-col gap-1.5">
               {entries.map((e, i) => (
-                <li key={i} className="rounded-md border border-line bg-panel px-2.5 py-1.5">
-                  <div className="whitespace-pre-wrap break-all text-sm text-ink">{e.text || <span className="text-faint">(내용 지움)</span>}</div>
-                  <div className="num mt-0.5 text-2xs text-muted">
-                    {e.by} · {csTime(e.at)}
-                  </div>
+                <li key={`${i}:${e.at}`} className="flex items-start gap-2 rounded-md border border-line bg-panel px-2.5 py-1.5">
+                  {fixing?.i === i ? (
+                    <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                      <Textarea
+                        aria-label="CS 내용 고치기"
+                        value={fixing.text}
+                        maxLength={500}
+                        autoFocus
+                        onChange={(ev) => setFixing({ i, text: ev.target.value })}
+                        className="min-h-16!"
+                      />
+                      <div className="flex justify-end gap-1.5">
+                        <Button size="sm" variant="ghost" icon={X} onClick={() => setFixing(null)}>
+                          취소
+                        </Button>
+                        <Button size="sm" variant="primary" icon={Save} loading={fixBusy} disabled={!fixing.text.trim() || fixing.text.trim() === e.text} onClick={() => void changeCs(i, fixing.text.trim())}>
+                          고친 내용 저장
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="min-w-0 flex-1">
+                      <div className="whitespace-pre-wrap break-all text-sm text-ink">{e.text || <span className="text-faint">(내용 지움)</span>}</div>
+                      <div className="num mt-0.5 text-2xs text-muted">
+                        {e.by} · {csTime(e.at)}
+                        {e.editedAt && ` · ${e.editedBy && e.editedBy !== e.by ? `${e.editedBy} ` : ''}${csTime(e.editedAt)} 고침`}
+                      </div>
+                    </div>
+                  )}
+                  {/* 고치기·지우기: 적은 사람 본인과 전체마스터에게만 보인다 */}
+                  {canEditCs(me, e) && fixing?.i !== i && (
+                    <div className="flex shrink-0 items-center gap-0.5">
+                      <Button size="sm" variant="ghost" icon={Pencil} aria-label="CS 내용 고치기" title="고치기" disabled={fixBusy} onClick={() => setFixing({ i, text: e.text })} />
+                      <Button size="sm" variant="ghost" icon={Trash2} aria-label="CS 내용 지우기" title="지우기" disabled={fixBusy} onClick={() => void changeCs(i, null)} />
+                    </div>
+                  )}
                 </li>
               ))}
             </ol>

@@ -221,7 +221,15 @@ export default async function ordersRoutes(app, ctx) {
   app.get('/api/orders/status', async (req, res) => {
     // admin: 스탭 이상(스탭·전체마스터) — 주문서 수정·삭제는 스탭 이상만
     // version: 지금 돌고 있는 배포본(Railway 가 넣어 주는 커밋 번호) — 새 버전이 반영됐는지 화면에서 확인용
-    res.json({ allowed: await allowed(req), admin: isStaff(req), version: (process.env.RAILWAY_GIT_COMMIT_SHA ?? '').slice(0, 7) || 'local', form: CENTER_FORM })
+    // me: CS 내용 고치기·지우기 버튼을 보일지(적은 사람 본인 또는 전체마스터)
+    const u = currentUser?.(req)
+    res.json({
+      allowed: await allowed(req),
+      admin: isStaff(req),
+      me: { id: u?.id ?? null, name: u?.name ?? null, master: isAdmin(req) },
+      version: (process.env.RAILWAY_GIT_COMMIT_SHA ?? '').slice(0, 7) || 'local',
+      form: CENTER_FORM,
+    })
   })
 
   /** 이 날짜에 올리면 몇 차가 되는지 */
@@ -508,7 +516,8 @@ export default async function ordersRoutes(app, ctx) {
     const i = Number(req.params.line) - 1
     if (!b || !Number.isInteger(i) || !b.rows[i]) return res.status(404).json({ error: '없는 주문입니다.' })
     const memo = str(req.body?.memo).slice(0, 500)
-    const entry = { text: memo, by: who(req), at: new Date().toISOString() }
+    // uid: 적은 사람 계정(본인만 고치기·지우기)
+    const entry = { text: memo, by: who(req), uid: currentUser?.(req)?.id ?? null, at: new Date().toISOString() }
     await serial(async () => {
       b.rows[i] = { ...b.rows[i], [CS_COL]: memo || null, [CS_BY]: entry.by, [CS_AT]: entry.at }
       for (const c of [CS_COL, CS_BY, CS_AT]) if (!b.cols.includes(c)) b.cols.push(c)
@@ -517,6 +526,59 @@ export default async function ordersRoutes(app, ctx) {
       await writeJson(batchFile(b.id), b)
     })
     res.json({ memo, entry, log: b.csLog[i + 1], row: b.rows[i] })
+  })
+
+  // ── CS 기록 한 개 고치기·지우기: 적은 사람 본인과 전체마스터만 ──
+  /** 예전 기록(uid 없음)은 적은 사람 이름으로 본인인지 본다 */
+  const canEditCs = (req, e) => {
+    if (isAdmin(req)) return true
+    const u = currentUser?.(req)
+    if (!u) return false
+    return e.uid ? e.uid === u.id : Boolean(u.name) && e.by === u.name
+  }
+  /** 줄의 비고(CS내용)·수정자·시각은 남은 기록 중 마지막 것으로 */
+  const syncCs = (row, log) => {
+    const last = log.at(-1)
+    return { ...row, [CS_COL]: last?.text || null, [CS_BY]: last?.by ?? null, [CS_AT]: last ? (last.editedAt ?? last.at) : null }
+  }
+  /** 기록 찾기: :idx(0부터) + body.at(그 사이 다른 사람이 바꾸지 않았는지) */
+  const findCs = (req, res) => {
+    const b = ID_RE.test(req.params.id) ? batches.get(req.params.id) : null
+    const i = Number(req.params.line) - 1
+    const k = Number(req.params.idx)
+    if (!b || !Number.isInteger(i) || !b.rows[i]) return res.status(404).json({ error: '없는 주문입니다.' }), null
+    const log = b.csLog?.[i + 1] ?? []
+    const e = Number.isInteger(k) ? log[k] : null
+    if (!e || (req.body?.at && req.body.at !== e.at)) return res.status(409).json({ error: '그 사이 CS 기록이 바뀌었습니다. 창을 닫고 다시 열어 주세요.' }), null
+    if (!canEditCs(req, e)) return res.status(403).json({ error: 'CS 내용은 적은 사람과 전체마스터만 고치거나 지울 수 있습니다.' }), null
+    return { b, i, k, log }
+  }
+  app.patch('/api/orders/batches/:id/rows/:line/cs/:idx', requireAllowed, async (req, res) => {
+    const text = str(req.body?.text).slice(0, 500)
+    if (!text) return res.status(400).json({ error: '내용을 적어 주세요. 없애려면 휴지통을 누르세요.' })
+    const f = findCs(req, res)
+    if (!f) return
+    const { b, i, k } = f
+    await serial(async () => {
+      const log = [...(b.csLog[i + 1] ?? [])]
+      log[k] = { ...log[k], text, editedAt: new Date().toISOString(), editedBy: who(req) }
+      b.csLog[i + 1] = log
+      b.rows[i] = syncCs(b.rows[i], log)
+      await writeJson(batchFile(b.id), b)
+    })
+    res.json({ log: b.csLog[i + 1], row: b.rows[i] })
+  })
+  app.delete('/api/orders/batches/:id/rows/:line/cs/:idx', requireAllowed, async (req, res) => {
+    const f = findCs(req, res)
+    if (!f) return
+    const { b, i, k } = f
+    await serial(async () => {
+      const log = (b.csLog[i + 1] ?? []).filter((_, j) => j !== k)
+      b.csLog[i + 1] = log
+      b.rows[i] = syncCs(b.rows[i], log)
+      await writeJson(batchFile(b.id), b)
+    })
+    res.json({ log: b.csLog[i + 1], row: b.rows[i] })
   })
 
   /** 취소내용(담당자 누구나): { status: '' | '취소요청' | '취소완료' } */
