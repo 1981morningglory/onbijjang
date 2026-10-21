@@ -38,7 +38,7 @@ export default function BarcodeTool() {
           <Spinner /> 바코드 생성기를 여는 중
         </div>
       )}
-      <iframe ref={frame} src="/barcode-tool.html?embed=1&theme=light" title="바코드 생성기" className="block w-full border-0" style={{ height }} />
+      <iframe ref={frame} src="/barcode-tool.html?embed=1&theme=light" title="바코드 생성기" allow="clipboard-write" className="block w-full border-0" style={{ height }} />
     </div>
   )
 }

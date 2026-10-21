@@ -68,6 +68,7 @@ input.kr{font-family:var(--sans)}
 textarea{min-height:150px;resize:vertical;line-height:1.6;font-size:1.02rem;white-space:pre;overflow:auto;tab-size:14}
 input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible{outline:3px solid var(--laser);outline-offset:2px}
 .ta-tools{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.ta-btns{display:flex;gap:6px;flex-wrap:wrap}
 .hint{font-size:.82rem;color:var(--muted);margin:0;line-height:1.6}
 .hint code{font-family:var(--mono);color:var(--ink);background:var(--soft);border:1px solid var(--line);border-radius:4px;padding:0 5px;font-size:.8rem}
 .chk{display:flex;align-items:center;gap:9px;font-size:.92rem;color:var(--ink);cursor:pointer;font-weight:500}
@@ -180,7 +181,10 @@ button:not(:disabled):hover{border-color:var(--ink)}
         </label>
         <div class="ta-tools">
           <p class="hint" id="codes-hint"></p>
-          <button class="sm" id="clear" type="button">입력 지우기</button>
+          <span class="ta-btns">
+            <button class="sm" id="copytext" type="button" title="입력한 줄 순서 그대로 바코드 13자리만 복사합니다. 엑셀에서 Ctrl+V 하면 한 칸에 하나씩 들어갑니다.">바코드 텍스트만 생성</button>
+            <button class="sm" id="clear" type="button">입력 지우기</button>
+          </span>
         </div>
       </section>
 
@@ -937,6 +941,53 @@ if (typeof module !== 'undefined') module.exports = BC;
   let tt;
   function toast(s) { const el = $('toast'); el.textContent = s; el.hidden = false; clearTimeout(tt); tt = setTimeout(() => { el.hidden = true; }, 3000); }
 
+  // ---------- 바코드 텍스트만 복사 (엑셀에 Ctrl+V) ----------
+  // 입력 줄 순서 그대로 한 줄에 바코드 하나. 빈 줄·오류 줄은 빈 칸으로 남겨 엑셀 행이 어긋나지 않게 한다.
+  // 엑셀이 13자리 숫자를 8.80124E+12 로 바꾸지 않도록 HTML 표(셀 서식 '텍스트')로도 함께 복사한다.
+  function barcodeLines() {
+    const parse = isEan() ? parseEanRow : parseRRow;
+    const text = $('codes').value;
+    const rows = splitRows(text).map(parse);
+    const raw = text.split(/\r?\n/);
+    while (raw.length && !raw[raw.length - 1].trim()) raw.pop();
+    while (raw.length && !raw[0].trim()) raw.shift();
+    const val = r => (r && !r.err && !r.skip && r.code) ? r.code : '';
+    // 줄마다 바코드 하나로 해석됐으면(일반적인 엑셀 붙여넣기) 원래 줄 위치를 지킨다
+    if (rows.length === raw.filter(l => l.trim()).length) {
+      let k = 0;
+      return { lines: raw.map(l => l.trim() ? val(rows[k++]) : ''), rows };
+    }
+    return { lines: rows.map(val), rows };   // 한 줄에 여러 코드를 띄어 쓴 경우
+  }
+  async function copyBarcodeText() {
+    const { lines, rows } = barcodeLines();
+    const ok = lines.filter(Boolean).length;
+    if (!ok) { toast('복사할 바코드가 없습니다. ② 칸에 회사코드를 입력하세요.'); return; }
+    const plain = lines.join('\r\n');
+    const html = '<table>' + lines.map(v => `<tr><td style="mso-number-format:'\\@'">${esc(v)}</td></tr>`).join('') + '</table>';
+    let done = false;
+    try {
+      if (navigator.clipboard && window.ClipboardItem) {
+        await navigator.clipboard.write([new ClipboardItem({
+          'text/plain': new Blob([plain], { type: 'text/plain' }),
+          'text/html': new Blob([html], { type: 'text/html' }),
+        })]);
+        done = true;
+      } else if (navigator.clipboard) { await navigator.clipboard.writeText(plain); done = true; }
+    } catch (_) {}
+    if (!done) {   // 권한이 막힌 환경: 숨긴 칸에 담아 복사
+      const ta = document.createElement('textarea');
+      ta.value = plain; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { done = document.execCommand('copy'); } catch (_) {}
+      ta.remove();
+    }
+    const bad = rows.filter(r => r.err && !r.skip).length;
+    toast(done
+      ? `바코드 ${ok}개를 복사했습니다. 엑셀에서 붙여넣을 칸을 누르고 Ctrl+V 하세요.${bad ? ` (오류 ${bad}줄은 빈 칸)` : ''}`
+      : '복사하지 못했습니다. 브라우저의 클립보드 권한을 확인해 주세요.');
+  }
+
   // ---------- 이벤트 ----------
   document.querySelectorAll('input[name=kind]').forEach(el => el.addEventListener('change', () => applyKind(el.value)));
   document.querySelectorAll('input[name=top]').forEach(el => el.addEventListener('change', refresh));
@@ -956,6 +1007,7 @@ if (typeof module !== 'undefined') module.exports = BC;
     if (msgs.length) toast(msgs.join(' '));
   }, 120));
   $('clear').addEventListener('click', () => { $('codes').value = ''; $('codes').focus(); refresh(); });
+  $('copytext').addEventListener('click', copyBarcodeText);
   $('bh').addEventListener('input', () => { $('bh-r').value = $('bh').value; $('bh-o').textContent = `${$('bh').value}mm`; refresh(); });
   $('bh-r').addEventListener('input', () => { $('bh').value = $('bh-r').value; $('bh-o').textContent = `${$('bh-r').value}mm`; refresh(); });
   $('ts').addEventListener('input', () => { $('ts-o').textContent = `${$('ts').value}%`; refresh(); });
