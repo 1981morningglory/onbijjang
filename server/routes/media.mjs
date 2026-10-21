@@ -7,7 +7,12 @@
 //   GET    /api/media/jobs/:id         → 진행 상태
 //   DELETE /api/media/jobs/:id         → 취소
 //   GET    /api/media/jobs/:id/file    → 결과 파일
+//   PUT    /api/media/login            → 인스타그램 로그인 연결(쿠키) 저장 — 전체마스터만
+//   DELETE /api/media/login            → 로그인 연결 끊기 — 전체마스터만
 //
+// 로그인 연결: 스토리·비공개 계정처럼 로그인해야 보이는 영상은 인스타그램에 로그인한 브라우저의 쿠키(sessionid)를
+// 서버에 두고 yt-dlp --cookies 로 넘긴다. 쿠키는 데이터 폴더 media/cookies.txt(권한 600)에만 두고 화면으로 돌려주지 않으며,
+// 실행할 때마다 작업 폴더에 사본을 만들어 쓰고 바로 지운다(yt-dlp 가 끝날 때 쿠키 파일을 다시 써서 원본이 깨지지 않게).
 // 사용 권한: 로그인한 직원등급·스탭·전체마스터(또는 믿을 수 있는 네트워크). 서버 자원을 쓰는 기능이라 방문자에게 열지 않는다.
 // 안전 장치
 // - yt-dlp·ffmpeg 는 execFile/spawn 으로 인자 배열을 넘겨 실행한다(셸을 거치지 않는다).
@@ -164,11 +169,15 @@ export function checkUrl(raw, allowLocal = false) {
   return { url: u.toString() }
 }
 
-/** yt-dlp 오류를 사용자 말로 */
-export function friendlyError(stderr) {
+/** yt-dlp 오류를 사용자 말로. loggedIn: 로그인 연결(쿠키)을 넘겼는지 */
+export function friendlyError(stderr, loggedIn = false) {
   const t = String(stderr ?? '')
   if (/Sign in to confirm|not a bot|confirm you.re not/i.test(t)) return '유튜브가 이 서버에서의 요청을 막았습니다(로봇 확인). 잠시 뒤 다시 해 보거나 다른 영상으로 시도하세요.'
-  if (/login required|rate-limit|requires authentication|Requested content is not available|use --cookies/i.test(t)) return '이 영상은 로그인해야 볼 수 있어 받을 수 없습니다(인스타그램·비공개 영상 등).'
+  if (/checkpoint|challenge_required|suspicious/i.test(t)) return '인스타그램이 연결한 계정에 보안 확인을 요구했습니다. 그 계정으로 인스타그램 앱·웹에 들어가 확인을 마친 뒤, 로그인 연결을 새로 해 주세요.'
+  if (/login required|log in to access|unreachable|rate-limit|requires authentication|Requested content is not available|use --cookies/i.test(t))
+    return loggedIn
+      ? '인스타그램 로그인 연결로도 이 영상을 볼 수 없습니다. 로그인 연결이 만료됐거나(전체마스터가 새로 연결), 연결한 계정이 볼 수 없는 영상입니다(비공개 계정은 팔로우 필요, 스토리는 올린 지 24시간이 지나면 사라짐).'
+      : '이 영상은 로그인해야 볼 수 있습니다(인스타그램 스토리·비공개 영상 등). 전체마스터가 아래 [인스타그램 로그인 연결]을 해 두면 받을 수 있습니다.'
   if (/Private video|This video is private/i.test(t)) return '비공개 영상이라 받을 수 없습니다.'
   if (/Unsupported URL/i.test(t)) return '지원하지 않는 주소입니다. 영상 페이지 주소를 그대로 붙여넣었는지 확인하세요.'
   if (/Video unavailable|has been removed|not available in your country|geo/i.test(t)) return '영상을 볼 수 없습니다(삭제·지역 제한 등).'
@@ -179,7 +188,49 @@ export function friendlyError(stderr) {
   return last ? `받지 못했습니다: ${last.replace(/^.*?ERROR:\s*/, '').slice(0, 200)}` : '받지 못했습니다. 링크를 확인하고 다시 시도하세요.'
 }
 
-export default async function mediaRoutes(app, { DATA_DIR, TRUSTED, currentUser, isAdmin }) {
+// ── 로그인 연결(쿠키) ───────────────────────────────────
+/** 쿠키를 둘 사이트(영상 사이트 로그인용만 — 다른 사이트 쿠키는 버린다) */
+const COOKIE_SITES = /(^|\.)(instagram\.com|facebook\.com|threads\.net|threads\.com|x\.com|twitter\.com|tiktok\.com)$/i
+/**
+ * 붙여넣거나 올린 로그인 정보 → yt-dlp 쿠키 파일(Netscape 형식).
+ * 받는 모양: ① 브라우저 확장으로 내보낸 cookies.txt ② 개발자 도구에서 복사한 'sessionid=…; csrftoken=…' ③ sessionid 값만
+ * → { text, count, expires } 또는 { error }
+ */
+export function parseCookieInput(input, now = Date.now()) {
+  const t = String(input ?? '').trim()
+  if (!t) return { error: '로그인 정보를 붙여넣거나 cookies.txt 파일을 올려 주세요.' }
+  if (t.length > 500_000) return { error: '파일이 너무 큽니다. 인스타그램 쿠키만 내보내 주세요.' }
+  const later = Math.floor(now / 1000) + 365 * 86400
+  const lines = t.split(/\r?\n/)
+  let list = []
+  const pasted = !lines.some((l) => l.split('\t').length >= 7)
+  if (!pasted) {
+    for (const raw of lines) {
+      const httpOnly = raw.startsWith('#HttpOnly_')
+      const l = httpOnly ? raw.slice(10) : raw
+      if (!l.trim() || l.startsWith('#')) continue
+      const p = l.split('\t')
+      if (p.length < 7) continue
+      list.push({ domain: p[0].trim(), path: p[2] || '/', secure: /^true$/i.test(p[3]), exp: Number(p[4]) || 0, name: p[5].trim(), value: p.slice(6).join('\t').trim(), httpOnly })
+    }
+  } else {
+    const pairs = t.includes('=') ? t.replace(/^cookie:\s*/i, '').split(/;\s*/) : [`sessionid=${t}`]
+    for (const pair of pairs) {
+      const i = pair.indexOf('=')
+      if (i < 1) continue
+      list.push({ domain: '.instagram.com', path: '/', secure: true, exp: later, name: pair.slice(0, i).trim(), value: pair.slice(i + 1).trim().replace(/^"|"$/g, ''), httpOnly: false })
+    }
+  }
+  list = list.filter((c) => COOKIE_SITES.test(c.domain.replace(/^\./, '')) && /^[\w.-]{1,100}$/.test(c.name) && c.value && c.value.length < 4000 && !/[\s;]/.test(c.value))
+  const ig = list.find((c) => /(^|\.)instagram\.com$/i.test(c.domain.replace(/^\./, '')) && c.name === 'sessionid')
+  if (!ig) return { error: '인스타그램 로그인 정보(sessionid)가 없습니다. 인스타그램에 로그인한 브라우저에서 내보냈는지 확인하세요.' }
+  if (ig.exp && ig.exp * 1000 < now) return { error: '이 로그인 정보는 이미 만료됐습니다. 인스타그램에 다시 로그인한 뒤 새로 내보내 주세요.' }
+  const body = list.map((c) => [`${c.httpOnly ? '#HttpOnly_' : ''}${c.domain}`, c.domain.startsWith('.') ? 'TRUE' : 'FALSE', c.path, c.secure ? 'TRUE' : 'FALSE', String(c.exp || later), c.name, c.value].join('\t'))
+  // 값만 붙여넣은 경우는 만료일을 모른다(파일에 넣은 날짜는 임시값)
+  return { text: `# Netscape HTTP Cookie File\n${body.join('\n')}\n`, count: list.length, expires: ig.exp && !pasted ? new Date(ig.exp * 1000).toISOString() : null }
+}
+
+export default async function mediaRoutes(app, { DATA_DIR, TRUSTED, currentUser, isAdmin, requireAdmin }) {
   const allowLocal = process.env.MEDIA_ALLOW_LOCAL === '1'
   const BIN_DIR = path.join(DATA_DIR, 'bin')
   const LOCAL_YTDLP = path.join(BIN_DIR, 'yt-dlp')
@@ -234,20 +285,69 @@ export default async function mediaRoutes(app, { DATA_DIR, TRUSTED, currentUser,
         else resolve(String(stdout))
       })
     })
-  const baseArgs = () => ['--no-playlist', '--no-warnings', '--ignore-config', ...(FFMPEG ? ['--ffmpeg-location', path.dirname(FFMPEG)] : [])]
+  /** cookies: 로그인 연결 사본 경로(있을 때만) */
+  const baseArgs = (cookies) => ['--no-playlist', '--no-warnings', '--ignore-config', ...(FFMPEG ? ['--ffmpeg-location', path.dirname(FFMPEG)] : []), ...(cookies ? ['--cookies', cookies] : [])]
 
-  app.get('/api/media/status', requireStaff, (_req, res) => {
+  // ── 로그인 연결(쿠키) ──
+  const LOGIN_DIR = path.join(DATA_DIR, 'media')
+  const COOKIE_FILE = path.join(LOGIN_DIR, 'cookies.txt')
+  const LOGIN_META = path.join(LOGIN_DIR, 'login.json')
+  let login = null
+  try {
+    if (fs.existsSync(COOKIE_FILE)) login = JSON.parse(await fsp.readFile(LOGIN_META, 'utf8'))
+  } catch {
+    login = fs.existsSync(COOKIE_FILE) ? { updatedAt: null, by: '', expires: null, count: 0 } : null
+  }
+  /** 이번 실행에 쓸 쿠키 사본(작업 폴더 안) — 없으면 null */
+  async function cookieCopy(dir) {
+    if (!login) return null
+    const p = path.join(dir, 'cookies.txt')
+    try {
+      await fsp.copyFile(COOKIE_FILE, p)
+      await fsp.chmod(p, 0o600).catch(() => {})
+      return p
+    } catch {
+      return null
+    }
+  }
+  const loginView = (req) => ({ connected: Boolean(login), updatedAt: login?.updatedAt ?? null, by: login?.by ?? '', expires: login?.expires ?? null, canManage: isAdmin(req) })
+
+  app.get('/api/media/status', requireStaff, (req, res) => {
     if (!tool.ytdlp && !tool.installing) ensureYtdlp().catch(() => {})
-    res.json({ ready: Boolean(tool.ytdlp && FFMPEG), installing: Boolean(tool.installing), error: tool.error, ffmpeg: Boolean(FFMPEG) })
+    res.json({ ready: Boolean(tool.ytdlp && FFMPEG), installing: Boolean(tool.installing), error: tool.error, ffmpeg: Boolean(FFMPEG), login: loginView(req) })
+  })
+  /** 로그인 연결 저장: { text } — cookies.txt 내용·Cookie 머리글·sessionid 값 */
+  app.put('/api/media/login', requireAdmin, async (req, res) => {
+    const r = parseCookieInput(req.body?.text)
+    if (r.error) return res.status(400).json({ error: r.error })
+    await fsp.mkdir(LOGIN_DIR, { recursive: true })
+    const tmp = `${COOKIE_FILE}.${process.pid}.tmp`
+    await fsp.writeFile(tmp, r.text, { encoding: 'utf8', mode: 0o600 })
+    await fsp.rename(tmp, COOKIE_FILE)
+    login = { updatedAt: new Date().toISOString(), by: currentUser?.(req)?.name ?? '전체마스터', expires: r.expires, count: r.count }
+    await fsp.writeFile(LOGIN_META, JSON.stringify(login), 'utf8')
+    res.json({ login: loginView(req) })
+  })
+  app.delete('/api/media/login', requireAdmin, async (req, res) => {
+    await fsp.rm(COOKIE_FILE, { force: true })
+    await fsp.rm(LOGIN_META, { force: true })
+    login = null
+    res.json({ login: loginView(req) })
   })
 
   // ── 영상 정보 ──
   app.post('/api/media/info', requireStaff, async (req, res) => {
     const chk = checkUrl(req.body?.url, allowLocal)
     if (chk.error) return res.status(400).json({ error: chk.error })
+    let tmp = null
+    let cookies = null
     try {
       const bin = await ensureYtdlp()
-      const out = await run(bin, [...baseArgs(), '-J', '--skip-download', chk.url])
+      if (login) {
+        tmp = await fsp.mkdtemp(path.join(os.tmpdir(), TEMP_PREFIX))
+        cookies = await cookieCopy(tmp)
+      }
+      const out = await run(bin, [...baseArgs(cookies), '-J', '--skip-download', chk.url]).finally(() => tmp && fsp.rm(tmp, { recursive: true, force: true }).catch(() => {}))
       const j = JSON.parse(out)
       const formats = Array.isArray(j.formats) ? j.formats : []
       const heights = [...new Set(formats.filter((f) => f.vcodec && f.vcodec !== 'none' && f.height).map((f) => f.height))].sort((a, b) => b - a)
@@ -281,7 +381,7 @@ export default async function mediaRoutes(app, { DATA_DIR, TRUSTED, currentUser,
       })
     } catch (err) {
       if (err instanceof SyntaxError) return res.status(502).json({ error: '영상 정보를 읽지 못했습니다.' })
-      res.status(422).json({ error: err.stderr ? friendlyError(err.stderr) : tool.error || '영상 정보를 읽지 못했습니다.' })
+      res.status(422).json({ error: err.stderr ? friendlyError(err.stderr, Boolean(cookies)) : tool.error || '영상 정보를 읽지 못했습니다.' })
     }
   })
 
@@ -377,7 +477,7 @@ export default async function mediaRoutes(app, { DATA_DIR, TRUSTED, currentUser,
   async function speechToSrt(j, bin, o, edited) {
     if (!FFMPEG) throw new Error('이 서버에 영상 변환 프로그램(ffmpeg)이 없습니다.')
     j.stage = '소리를 받는 중'
-    await spawnTracked(j, bin, [...baseArgs(), '--newline', '--no-part', '--max-filesize', '1G', '--match-filter', `duration <? ${MAX_DURATION}`, '-f', 'ba/b', '-o', path.join(j.dir, 'asr.%(ext)s'), o.url], (line) => {
+    await spawnTracked(j, bin, [...baseArgs(j.cookies), '--newline', '--no-part', '--max-filesize', '1G', '--match-filter', `duration <? ${MAX_DURATION}`, '-f', 'ba/b', '-o', path.join(j.dir, 'asr.%(ext)s'), o.url], (line) => {
       const m = line.match(/\[download\]\s+(\d+(?:\.\d+)?)%/)
       if (m) j.progress = Math.min(20, Number(m[1]) * 0.2)
     })
@@ -428,6 +528,7 @@ export default async function mediaRoutes(app, { DATA_DIR, TRUSTED, currentUser,
   async function runJob(j) {
     const o = j.opts
     j.dir = await fsp.mkdtemp(path.join(os.tmpdir(), TEMP_PREFIX))
+    j.cookies = await cookieCopy(j.dir)
     const bin = await ensureYtdlp()
     // 화면에서 정한 파일 이름이 있으면 그대로(확장자만 붙인다), 없으면 제목 + 편집 표시
     const custom = typeof o.name === 'string' && o.name.trim() !== ''
@@ -445,7 +546,7 @@ export default async function mediaRoutes(app, { DATA_DIR, TRUSTED, currentUser,
       if (o.asr !== 'always') {
         j.stage = '자막을 받는 중'
         const langs = o.subLang ? [o.subLang] : ['ko', 'ko-KR', 'en']
-        await spawnTracked(j, bin, [...baseArgs(), '--skip-download', '--write-subs', '--write-auto-subs', '--sub-langs', langs.join(','), '--sub-format', 'srt/vtt/best', '--convert-subs', 'srt', '-o', path.join(j.dir, 'sub.%(ext)s'), o.url]).catch((e) => {
+        await spawnTracked(j, bin, [...baseArgs(j.cookies), '--skip-download', '--write-subs', '--write-auto-subs', '--sub-langs', langs.join(','), '--sub-format', 'srt/vtt/best', '--convert-subs', 'srt', '-o', path.join(j.dir, 'sub.%(ext)s'), o.url]).catch((e) => {
           if (e.canceled || o.asr === 'never') throw e
         })
         const files = (await fsp.readdir(j.dir)).filter((f) => f.endsWith('.srt'))
@@ -466,7 +567,7 @@ export default async function mediaRoutes(app, { DATA_DIR, TRUSTED, currentUser,
 
     j.stage = '영상을 받는 중'
     const fmt = o.kind === 'audio' ? 'ba/b' : videoSelector(o.format, o.height)
-    await spawnTracked(j, bin, [...baseArgs(), '--newline', '--no-part', '--max-filesize', '2G', '--match-filter', `duration <? ${MAX_DURATION}`, '-f', fmt, ...(o.kind === 'audio' ? [] : ['--merge-output-format', 'mkv']), '-o', path.join(j.dir, 'src.%(ext)s'), o.url], dlProgress)
+    await spawnTracked(j, bin, [...baseArgs(j.cookies), '--newline', '--no-part', '--max-filesize', '2G', '--match-filter', `duration <? ${MAX_DURATION}`, '-f', fmt, ...(o.kind === 'audio' ? [] : ['--merge-output-format', 'mkv']), '-o', path.join(j.dir, 'src.%(ext)s'), o.url], dlProgress)
     const src = (await fsp.readdir(j.dir)).filter((f) => f.startsWith('src.')).map((f) => path.join(j.dir, f))[0]
     if (!src) throw Object.assign(new Error('no file'), { stderr: 'ERROR: 받은 파일이 없습니다(길이 3시간·2GB 제한을 넘었을 수 있습니다).' })
     if (!FFMPEG) throw new Error('이 서버에 영상 변환 프로그램(ffmpeg)이 없습니다.')
@@ -531,10 +632,12 @@ export default async function mediaRoutes(app, { DATA_DIR, TRUSTED, currentUser,
         .catch(async (err) => {
           if (j.status === 'canceled') return cleanup(j)
           j.status = 'error'
-          j.error = err.stderr ? friendlyError(err.stderr) : err.message && !/^exit /.test(err.message) ? err.message : '처리하지 못했습니다.'
+          j.error = err.stderr ? friendlyError(err.stderr, Boolean(j.cookies)) : err.message && !/^exit /.test(err.message) ? err.message : '처리하지 못했습니다.'
           await cleanup(j)
         })
         .finally(() => {
+          // 쿠키 사본은 다 받은 뒤 바로 지운다(결과 파일은 받아 갈 때까지 남는다)
+          if (j.cookies) fsp.rm(j.cookies, { force: true }).catch(() => {})
           active--
           pump()
         })

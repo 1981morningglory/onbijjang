@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 // @ts-expect-error — 서버 모듈(.mjs)의 순수 함수도 함께 확인한다
-import { checkUrl, filterSrt, friendlyError, keepRanges, srtToText } from '../../../server/routes/media.mjs'
+import { checkUrl, filterSrt, friendlyError, keepRanges, parseCookieInput, srtToText } from '../../../server/routes/media.mjs'
 import { extractUrl, fileNameFromTitle, formatTime, keptRanges, parseTime, siteOf, youtubeId } from './logic'
 
 describe('시간 입력', () => {
@@ -88,5 +88,36 @@ describe('음성 인식', () => {
     expect(segs[3].end).toBe(460)
     expect(progress.at(-1)).toBe(1)
     expect(segmentsToSrt(segs.slice(0, 1))).toBe('1\n00:01:01,000 --> 00:01:04,000\n안녕하세요\n')
+  })
+})
+
+describe('인스타그램 로그인 연결(쿠키)', () => {
+  const now = Date.parse('2026-10-21T00:00:00Z')
+  it('sessionid 값만 붙여넣어도 쿠키 파일을 만든다', () => {
+    const r = parseCookieInput('12345%3AabcDEF%3A9%3AAYx', now)
+    expect(r.error).toBeUndefined()
+    expect(r.text).toMatch(/^# Netscape HTTP Cookie File\n\.instagram\.com\tTRUE\t\/\tTRUE\t\d+\tsessionid\t12345%3AabcDEF%3A9%3AAYx\n$/)
+  })
+  it('Cookie 머리글을 붙여넣으면 이름=값을 모두 담는다', () => {
+    const r = parseCookieInput('cookie: csrftoken=abc; sessionid=1%3Ax; ds_user_id=1', now)
+    expect(r.count).toBe(3)
+  })
+  it('cookies.txt 는 영상 사이트 쿠키만 남긴다', () => {
+    const file = ['# Netscape HTTP Cookie File', '#HttpOnly_.instagram.com\tTRUE\t/\tTRUE\t1900000000\tsessionid\tS1', '.google.com\tTRUE\t/\tTRUE\t1900000000\tSID\tG1', '.instagram.com\tTRUE\t/\tTRUE\t1900000000\tcsrftoken\tC1'].join('\n')
+    const r = parseCookieInput(file, now)
+    expect(r.count).toBe(2)
+    expect(r.text).toContain('#HttpOnly_.instagram.com')
+    expect(r.text).not.toContain('google')
+    expect(r.expires).toBe(new Date(1900000000 * 1000).toISOString())
+  })
+  it('sessionid 가 없거나 만료됐으면 알려 준다', () => {
+    expect(parseCookieInput('csrftoken=abc', now).error).toContain('sessionid')
+    expect(parseCookieInput('.instagram.com\tTRUE\t/\tTRUE\t1700000000\tsessionid\tS1', now).error).toContain('만료')
+    expect(parseCookieInput('', now).error).toBeTruthy()
+  })
+  it('로그인이 필요한 오류: 연결 전·후 안내가 다르다', () => {
+    const e = 'ERROR: [instagram:story] 1: You need to log in to access this content. Use --cookies'
+    expect(friendlyError(e)).toContain('로그인 연결')
+    expect(friendlyError(e, true)).toContain('만료')
   })
 })

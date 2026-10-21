@@ -1,9 +1,9 @@
 import clsx from 'clsx'
-import { AlertTriangle, Clapperboard, Download, FileText, Link2, Music, Plus, RotateCcw, Scissors, Search, Trash2, X } from 'lucide-react'
+import { AlertTriangle, Clapperboard, Download, FileText, FileUp, KeyRound, Link2, Music, Plus, RotateCcw, Scissors, Search, Trash2, Unplug, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, ApiError } from '@/lib/api'
 import { usePersistentState } from '@/lib/hooks'
-import { Badge, Button, Callout, EmptyState, Field, IconButton, Panel, Progress, Section, Segmented, Select, SendToMenu, Spinner, Stage, Switch, TextInput, ToolLayout, toast } from '@/ui'
+import { Badge, Button, Callout, EmptyState, Field, IconButton, Panel, Progress, Section, Segmented, Select, SendToMenu, Spinner, Stage, Switch, Textarea, TextInput, ToolLayout, toast } from '@/ui'
 import { ASR_LANGS, AUDIO_FORMATS, BITRATES, TEXT_FORMATS, VIDEO_FORMATS, extractUrl, fileNameFromTitle, formatTime, keptRanges, parseTime, siteOf, youtubeId, type EditMode, type Kind } from './logic'
 
 const K = (n: string) => `onbijjang:saver:${n}`
@@ -38,6 +38,130 @@ interface RangeText {
   end: string
 }
 
+/** 인스타그램 로그인 연결(쿠키) 상태 — 쿠키 내용은 서버가 돌려주지 않는다 */
+interface Login {
+  connected: boolean
+  updatedAt: string | null
+  by: string
+  expires: string | null
+  /** 연결·끊기를 할 수 있는지(전체마스터) */
+  canManage: boolean
+}
+interface Status {
+  ready: boolean
+  installing: boolean
+  error: string | null
+  login?: Login
+}
+const ymd = (iso: string | null) => (iso ? new Date(Date.parse(iso) + 9 * 3600_000).toISOString().slice(0, 10) : '')
+
+/** 인스타그램 로그인 연결: 스토리·비공개 계정 영상은 로그인한 브라우저의 쿠키로 받는다 */
+function LoginPanel({ login, onChange, highlight }: { login: Login; onChange: (l: Login) => void; highlight: boolean }) {
+  const [open, setOpen] = useState(false)
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const save = async (raw = text) => {
+    setBusy(true)
+    try {
+      const r = await api<{ login: Login }>('/media/login', { method: 'PUT', body: { text: raw } })
+      onChange(r.login)
+      setText('')
+      setOpen(false)
+      toast.success('인스타그램 로그인을 연결했습니다. 스토리 링크를 다시 불러와 보세요.')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '연결하지 못했습니다.')
+    } finally {
+      setBusy(false)
+    }
+  }
+  const unplug = async () => {
+    if (!confirm('인스타그램 로그인 연결을 끊을까요?\n스토리·비공개 영상은 다시 받을 수 없게 됩니다.')) return
+    try {
+      onChange((await api<{ login: Login }>('/media/login', { method: 'DELETE' })).login)
+      toast.success('연결을 끊었습니다.')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '끊지 못했습니다.')
+    }
+  }
+  const expired = login.expires ? Date.parse(login.expires) < Date.now() : false
+  return (
+    <Panel className={clsx('flex flex-col gap-3 p-4 sm:p-5', highlight && 'ring-2 ring-warn/50')}>
+      <div className="flex flex-wrap items-center gap-2">
+        <KeyRound className="size-4 text-muted" aria-hidden />
+        <h3 className="text-sm font-bold text-ink">인스타그램 로그인 연결</h3>
+        {login.connected ? <Badge tone={expired ? 'warn' : 'brand'}>{expired ? '만료됨' : '연결됨'}</Badge> : <Badge>연결 안 됨</Badge>}
+        <span className="text-xs text-muted">
+          {login.connected
+            ? `${login.by ? `${login.by} · ` : ''}${ymd(login.updatedAt)} 연결${login.expires ? ` · ${ymd(login.expires)} 만료 예정` : ''}`
+            : '스토리·비공개 계정 영상은 로그인 연결이 있어야 받을 수 있습니다.'}
+        </span>
+        {login.canManage && (
+          <div className="ml-auto flex gap-1.5">
+            <Button size="sm" variant={login.connected && !expired ? 'secondary' : 'primary'} icon={KeyRound} onClick={() => setOpen((v) => !v)}>
+              {login.connected ? '새로 연결' : '연결하기'}
+            </Button>
+            {login.connected && (
+              <Button size="sm" variant="ghost" icon={Unplug} onClick={() => void unplug()}>
+                연결 끊기
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+      {!login.canManage && !login.connected && <p className="text-xs text-muted">연결은 전체마스터만 할 수 있습니다. 전체마스터에게 연결을 요청하세요.</p>}
+      {open && login.canManage && (
+        <div className="flex flex-col gap-3 rounded-md border border-line bg-surface p-3 text-sm">
+          <ol className="list-decimal space-y-1 pl-5 text-ink-2">
+            <li>
+              이 컴퓨터의 크롬에서 <b>인스타그램에 로그인</b>합니다. 영상 받기용으로 자주 쓰면 인스타그램이 계정을 제한할 수 있으니 <b>회사 부계정</b>을 권합니다. 비공개 계정의 스토리는 그 계정이 팔로우하고 있어야 보입니다.
+            </li>
+            <li>
+              둘 중 하나로 로그인 정보를 가져옵니다.
+              <ul className="mt-1 list-disc space-y-1 pl-5">
+                <li>
+                  <b>방법 A(쉬움)</b>: 크롬 확장 프로그램 <b>Get cookies.txt LOCALLY</b>를 설치 → instagram.com 에서 확장 아이콘 → <b>Export</b> → 받은 파일을 아래 [cookies.txt 올리기]로 올립니다.
+                </li>
+                <li>
+                  <b>방법 B</b>: instagram.com 에서 <b>F12</b> → <b>Application(애플리케이션)</b> → 왼쪽 <b>Cookies → https://www.instagram.com</b> → 이름이 <b>sessionid</b> 인 줄의 값(Value)을 복사해 아래 칸에 붙여넣습니다.
+                </li>
+              </ul>
+            </li>
+            <li>
+              저장한 뒤에는 그 브라우저에서 <b>로그아웃하지 말고 창만 닫으세요</b>. 로그아웃하면 연결도 끊깁니다(그때는 다시 연결).
+            </li>
+          </ol>
+          <Callout tone="warn">
+            이 값은 인스타그램 비밀번호와 같습니다. 메신저·채팅·이메일에 붙여넣지 말고 이 칸에만 넣으세요. 온비짱 서버에만 저장되고 화면에는 다시 보이지 않습니다.
+          </Callout>
+          <Textarea aria-label="인스타그램 로그인 정보(sessionid 값 또는 cookies.txt 내용)" value={text} onChange={(e) => setText(e.target.value)} placeholder="sessionid 값을 붙여넣으세요" spellCheck={false} autoComplete="off" className="min-h-16! font-mono text-xs" />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" icon={FileUp} disabled={busy} onClick={() => fileRef.current?.click()}>
+              cookies.txt 올리기
+            </Button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".txt,text/plain"
+              hidden
+              onChange={async (e) => {
+                const f = e.target.files?.[0]
+                e.target.value = ''
+                if (!f) return
+                if (f.size > 1_000_000) return toast.error('파일이 너무 큽니다. instagram.com 에서 내보낸 cookies.txt 를 올려 주세요.')
+                await save(await f.text())
+              }}
+            />
+            <Button size="sm" variant="primary" className="ml-auto" loading={busy} disabled={!text.trim()} onClick={() => void save()}>
+              붙여넣은 값으로 연결
+            </Button>
+          </div>
+        </div>
+      )}
+    </Panel>
+  )
+}
+
 const LANG_NAME: Record<string, string> = { ko: '한국어', en: '영어', ja: '일본어', zh: '중국어', 'zh-Hans': '중국어(간체)', 'zh-Hant': '중국어(번체)' }
 const langLabel = (k: string, auto: boolean) => `${LANG_NAME[k] ?? LANG_NAME[k.split('-')[0]] ?? k}${auto ? ' (자동 생성)' : ''}`
 const fmtBytes = (n?: number) => (!n ? '' : n > 1e9 ? `${(n / 1e9).toFixed(2)}GB` : n > 1e6 ? `${(n / 1e6).toFixed(1)}MB` : `${Math.max(1, Math.round(n / 1e3))}KB`)
@@ -68,7 +192,7 @@ export default function SaverTool() {
   const [info, setInfo] = useState<Info | null>(null)
   const [loadingInfo, setLoadingInfo] = useState(false)
   const [infoErr, setInfoErr] = useState('')
-  const [status, setStatus] = useState<{ ready: boolean; installing: boolean; error: string | null } | null>(null)
+  const [status, setStatus] = useState<Status | null>(null)
   const [authErr, setAuthErr] = useState('')
 
   const [kind, setKind] = usePersistentState<Kind>(K('kind'), 'video')
@@ -89,7 +213,7 @@ export default function SaverTool() {
   const poll = useRef<number | null>(null)
 
   useEffect(() => {
-    api<{ ready: boolean; installing: boolean; error: string | null }>('/media/status')
+    api<Status>('/media/status')
       .then(setStatus)
       .catch((e) => setAuthErr(e instanceof ApiError && e.status === 401 ? e.message : e instanceof ApiError && e.status === 0 ? '서버에 연결할 수 없습니다.' : ''))
     return () => {
@@ -411,6 +535,10 @@ export default function SaverTool() {
           </Callout>
         )}
       </Panel>
+
+      {status?.login && (status.login.canManage || status.login.connected || /로그인/.test(infoErr)) && (
+        <LoginPanel login={status.login} highlight={/로그인/.test(infoErr)} onChange={(login) => setStatus((s) => (s ? { ...s, login } : s))} />
+      )}
 
       {info ? (
         <Panel className="flex flex-col gap-4 p-4 sm:p-5">
