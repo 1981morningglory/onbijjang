@@ -7,8 +7,9 @@
 //   GET    /api/media/jobs/:id         → 진행 상태
 //   DELETE /api/media/jobs/:id         → 취소
 //   GET    /api/media/jobs/:id/file    → 결과 파일
-//   PUT    /api/media/login            → 인스타그램 로그인 연결(쿠키) 저장 — 전체마스터만
-//   DELETE /api/media/login            → 로그인 연결 끊기 — 전체마스터만
+//   PUT    /api/media/login            → 인스타그램 로그인 연결(쿠키) 저장 — 전체마스터·연결 담당자만
+//   DELETE /api/media/login            → 로그인 연결 끊기 — 전체마스터·연결 담당자만
+//   GET/PUT /api/media/login/managers  → 연결 담당자(계정 id 목록) — 전체마스터만. 담당자 이름은 다른 팀원 화면에 보이지 않는다
 //
 // 로그인 연결: 스토리·비공개 계정처럼 로그인해야 보이는 영상은 인스타그램에 로그인한 브라우저의 쿠키(sessionid)를
 // 서버에 두고 yt-dlp --cookies 로 넘긴다. 쿠키는 데이터 폴더 media/cookies.txt(권한 600)에만 두고 화면으로 돌려주지 않으며,
@@ -176,8 +177,8 @@ export function friendlyError(stderr, loggedIn = false) {
   if (/checkpoint|challenge_required|suspicious/i.test(t)) return '인스타그램이 연결한 계정에 보안 확인을 요구했습니다. 그 계정으로 인스타그램 앱·웹에 들어가 확인을 마친 뒤, 로그인 연결을 새로 해 주세요.'
   if (/login required|log in to access|unreachable|rate-limit|requires authentication|Requested content is not available|use --cookies/i.test(t))
     return loggedIn
-      ? '인스타그램 로그인 연결로도 이 영상을 볼 수 없습니다. 로그인 연결이 만료됐거나(전체마스터가 새로 연결), 연결한 계정이 볼 수 없는 영상입니다(비공개 계정은 팔로우 필요, 스토리는 올린 지 24시간이 지나면 사라짐).'
-      : '이 영상은 로그인해야 볼 수 있습니다(인스타그램 스토리·비공개 영상 등). 전체마스터가 아래 [인스타그램 로그인 연결]을 해 두면 받을 수 있습니다.'
+      ? '인스타그램 로그인 연결로도 이 영상을 볼 수 없습니다. 로그인 연결이 만료됐거나(연결 담당자가 새로 연결), 연결한 계정이 볼 수 없는 영상입니다(비공개 계정은 팔로우 필요, 스토리는 올린 지 24시간이 지나면 사라짐).'
+      : '이 영상은 로그인해야 볼 수 있습니다(인스타그램 스토리·비공개 영상 등). 연결 담당자가 아래 [인스타그램 로그인 연결]을 해 두면 받을 수 있습니다.'
   if (/Private video|This video is private/i.test(t)) return '비공개 영상이라 받을 수 없습니다.'
   if (/Unsupported URL/i.test(t)) return '지원하지 않는 주소입니다. 영상 페이지 주소를 그대로 붙여넣었는지 확인하세요.'
   if (/Video unavailable|has been removed|not available in your country|geo/i.test(t)) return '영상을 볼 수 없습니다(삭제·지역 제한 등).'
@@ -310,14 +311,35 @@ export default async function mediaRoutes(app, { DATA_DIR, TRUSTED, currentUser,
       return null
     }
   }
-  const loginView = (req) => ({ connected: Boolean(login), updatedAt: login?.updatedAt ?? null, by: login?.by ?? '', expires: login?.expires ?? null, canManage: isAdmin(req) })
+  // 연결 담당자: 전체마스터가 고른 계정(id)만 — 이름은 저장하지 않는다
+  const MANAGERS = path.join(LOGIN_DIR, 'managers.json')
+  let managers = []
+  try {
+    managers = JSON.parse(await fsp.readFile(MANAGERS, 'utf8')).ids ?? []
+  } catch {}
+  const canManage = (req) => isAdmin(req) || managers.includes(currentUser?.(req)?.id)
+  const requireManager = (req, res, next) => (canManage(req) ? next() : res.status(403).json({ error: '로그인 연결은 지정된 담당자만 할 수 있습니다.' }))
+  // 누가 연결했는지는 담당자·전체마스터에게만 보인다
+  const loginView = (req) => {
+    const m = canManage(req)
+    return { connected: Boolean(login), updatedAt: login?.updatedAt ?? null, by: m ? (login?.by ?? '') : '', expires: login?.expires ?? null, canManage: m, canAssign: isAdmin(req) }
+  }
+  app.get('/api/media/login/managers', requireAdmin, (_req, res) => res.json({ ids: managers }))
+  app.put('/api/media/login/managers', requireAdmin, async (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? [...new Set(req.body.ids.map(String).filter((x) => /^[a-f0-9]{16}$/.test(x)))].slice(0, 20) : null
+    if (!ids) return res.status(400).json({ error: '담당자 목록이 없습니다.' })
+    await fsp.mkdir(LOGIN_DIR, { recursive: true })
+    await fsp.writeFile(MANAGERS, JSON.stringify({ ids }), 'utf8')
+    managers = ids
+    res.json({ ids })
+  })
 
   app.get('/api/media/status', requireStaff, (req, res) => {
     if (!tool.ytdlp && !tool.installing) ensureYtdlp().catch(() => {})
     res.json({ ready: Boolean(tool.ytdlp && FFMPEG), installing: Boolean(tool.installing), error: tool.error, ffmpeg: Boolean(FFMPEG), login: loginView(req) })
   })
   /** 로그인 연결 저장: { text } — cookies.txt 내용·Cookie 머리글·sessionid 값 */
-  app.put('/api/media/login', requireAdmin, async (req, res) => {
+  app.put('/api/media/login', requireManager, async (req, res) => {
     const r = parseCookieInput(req.body?.text)
     if (r.error) return res.status(400).json({ error: r.error })
     await fsp.mkdir(LOGIN_DIR, { recursive: true })
@@ -328,7 +350,7 @@ export default async function mediaRoutes(app, { DATA_DIR, TRUSTED, currentUser,
     await fsp.writeFile(LOGIN_META, JSON.stringify(login), 'utf8')
     res.json({ login: loginView(req) })
   })
-  app.delete('/api/media/login', requireAdmin, async (req, res) => {
+  app.delete('/api/media/login', requireManager, async (req, res) => {
     await fsp.rm(COOKIE_FILE, { force: true })
     await fsp.rm(LOGIN_META, { force: true })
     login = null

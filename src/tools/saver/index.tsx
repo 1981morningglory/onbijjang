@@ -44,8 +44,64 @@ interface Login {
   updatedAt: string | null
   by: string
   expires: string | null
-  /** 연결·끊기를 할 수 있는지(전체마스터) */
+  /** 연결·끊기를 할 수 있는지(전체마스터·연결 담당자) */
   canManage: boolean
+  /** 연결 담당자를 정할 수 있는지(전체마스터) */
+  canAssign?: boolean
+}
+
+/** 연결 담당자 정하기(전체마스터만): 계정을 골라 로그인 연결·끊기를 맡긴다 */
+function Managers() {
+  const [users, setUsers] = useState<Array<{ id: string; name: string; username: string; disabled: boolean }> | null>(null)
+  const [ids, setIds] = useState<string[]>([])
+  const [pick, setPick] = useState('')
+  useEffect(() => {
+    Promise.all([api<{ users: Array<{ id: string; name: string; username: string; disabled: boolean }> }>('/admin/users'), api<{ ids: string[] }>('/media/login/managers')])
+      .then(([u, m]) => {
+        setUsers(u.users.filter((x) => !x.disabled))
+        setIds(m.ids)
+      })
+      .catch((e) => toast.error(e instanceof Error ? e.message : '계정 목록을 불러오지 못했습니다.'))
+  }, [])
+  const save = async (next: string[]) => {
+    try {
+      setIds((await api<{ ids: string[] }>('/media/login/managers', { method: 'PUT', body: { ids: next } })).ids)
+      setPick('')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '저장하지 못했습니다.')
+    }
+  }
+  if (!users) return <Spinner />
+  const nameOf = (id: string) => users.find((u) => u.id === id)?.name ?? '(지운 계정)'
+  return (
+    <div className="flex flex-col gap-2 rounded-md border border-line bg-surface p-3 text-sm">
+      <p className="font-semibold text-ink">연결 담당자</p>
+      <p className="text-xs text-muted">고른 계정은 전체마스터처럼 로그인 연결·새로 연결·끊기를 할 수 있습니다. 담당자 이름은 다른 팀원 화면에 보이지 않습니다.</p>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {ids.length ? (
+          ids.map((id) => (
+            <span key={id} className="inline-flex items-center gap-1 rounded-full border border-line bg-panel py-0.5 pr-1 pl-2.5 text-xs font-semibold text-ink-2">
+              {nameOf(id)}
+              <IconButton size="sm" icon={X} label={`${nameOf(id)} 담당자에서 빼기`} onClick={() => void save(ids.filter((x) => x !== id))} />
+            </span>
+          ))
+        ) : (
+          <span className="text-xs text-muted">아직 없습니다(전체마스터만 연결 가능).</span>
+        )}
+      </div>
+      <div className="flex gap-2">
+        <Select
+          aria-label="담당자로 추가할 계정"
+          value={pick}
+          onValue={setPick}
+          options={[{ value: '', label: '계정 고르기' }, ...users.filter((u) => !ids.includes(u.id)).map((u) => ({ value: u.id, label: `${u.name} (${u.username})` }))]}
+        />
+        <Button size="sm" disabled={!pick} onClick={() => void save([...ids, pick])}>
+          담당자로 추가
+        </Button>
+      </div>
+    </div>
+  )
 }
 interface Status {
   ready: boolean
@@ -58,6 +114,7 @@ const ymd = (iso: string | null) => (iso ? new Date(Date.parse(iso) + 9 * 3600_0
 /** 인스타그램 로그인 연결: 스토리·비공개 계정 영상은 로그인한 브라우저의 쿠키로 받는다 */
 function LoginPanel({ login, onChange, highlight }: { login: Login; onChange: (l: Login) => void; highlight: boolean }) {
   const [open, setOpen] = useState(false)
+  const [assign, setAssign] = useState(false)
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -98,6 +155,11 @@ function LoginPanel({ login, onChange, highlight }: { login: Login; onChange: (l
         </span>
         {login.canManage && (
           <div className="ml-auto flex gap-1.5">
+            {login.canAssign && (
+              <Button size="sm" variant="ghost" onClick={() => setAssign((v) => !v)}>
+                연결 담당자
+              </Button>
+            )}
             <Button size="sm" variant={login.connected && !expired ? 'secondary' : 'primary'} icon={KeyRound} onClick={() => setOpen((v) => !v)}>
               {login.connected ? '새로 연결' : '연결하기'}
             </Button>
@@ -109,7 +171,8 @@ function LoginPanel({ login, onChange, highlight }: { login: Login; onChange: (l
           </div>
         )}
       </div>
-      {!login.canManage && !login.connected && <p className="text-xs text-muted">연결은 전체마스터만 할 수 있습니다. 전체마스터에게 연결을 요청하세요.</p>}
+      {!login.canManage && !login.connected && <p className="text-xs text-muted">연결은 지정된 담당자만 할 수 있습니다. 전체마스터에게 연결을 요청하세요.</p>}
+      {assign && login.canAssign && <Managers />}
       {open && login.canManage && (
         <div className="flex flex-col gap-3 rounded-md border border-line bg-surface p-3 text-sm">
           <ol className="list-decimal space-y-1 pl-5 text-ink-2">
