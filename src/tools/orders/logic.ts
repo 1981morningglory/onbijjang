@@ -235,8 +235,8 @@ export function layoutCenter(rows: OrderRow[], perPage = CENTER_PAGE_ROWS): { ro
   return { rows: groups.flat(), pageEnds, groups, oversized }
 }
 
-/** 출력 순서: 센터주문서는 쪽 나누기를 고려한 순서, 나머지는 정렬 순서 */
-export const outputRows = (spec: OutputSpec, rows: OrderRow[]) => (spec.kind === 'warehouse' ? layoutCenter(rows).rows : sortRows(rows))
+/** 출력 순서: 센터주문서·CJ택배·구글드라이브용 모두 센터주문서(쪽 나누기를 고려한) 순서. 저장된 순서가 있으면 resolveCenter 로 그것을 쓴다 */
+export const outputRows = (_spec: OutputSpec, rows: OrderRow[]) => layoutCenter(rows).rows
 
 /**
  * 센터주문서 순서(주문서를 저장할 때 같이 저장): order 는 줄 번호(1부터)를 센터주문서 NO 순서로, pageEnds 는 쪽마다 마지막 NO.

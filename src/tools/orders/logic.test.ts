@@ -211,6 +211,15 @@ describe('센터주문서 NO 순서 저장', () => {
     expect(resolveCenter(edited, c)).toBe(c)
     expect(resolveCenter(edited, null).order).not.toEqual(c.order)
   })
+  it('CJ택배·구글드라이브용도 센터주문서와 같은 순서(같은 사람 주문이 다른 쇼핑몰이어도 모아서)', () => {
+    const list = [...rows, row({ [COL.mall]: 'Z몰', [COL.orderNo]: '5', [COL.buyer]: '가', [COL.receiver]: '가' })]
+    const recv = (t: ReturnType<typeof buildOutput>) => t.slice(1).map((r) => r[t[0].indexOf(COL.receiver)])
+    const center = recv(buildOutput(spec('warehouse'), list))
+    expect(center).toEqual(['다', '가', '가', '나'])
+    for (const k of ['cj', 'drive'] as const) expect(recv(buildOutput(spec(k), list))).toEqual(center)
+    // 정렬만 하면 Z몰 주문이 맨 뒤로 가서 어긋났던 경우
+    expect(sortRows(list).map((r) => r[COL.receiver])).not.toEqual(center)
+  })
   it('맞지 않는 순서는 버리고 다시 계산', () => {
     expect(validCenterOrder({ order: [1, 1, 2], pageEnds: [3] }, 3)).toBe(false)
     expect(validCenterOrder({ order: [1, 2], pageEnds: [2] }, 3)).toBe(false)
