@@ -178,7 +178,7 @@ export interface DialogProps {
 }
 
 /**
- * <dialog> 바깥(어두운 배경)을 눌렀을 때만 닫는다.
+ * <dialog> 바깥(어두운 배경)을 눌렀을 때만 닫는다(가벼운 창용 — 도구 찾기). 공용 Dialog 는 바깥 클릭으로 닫지 않는다.
  * 창 안에서 누른 채 끌다가(글자 선택·드래그) 바깥에서 손을 떼면 브라우저가 dialog 자체에 click 을 보내므로,
  * 누른 곳과 뗀 곳이 모두 배경일 때만 닫는다.
  */
@@ -201,7 +201,7 @@ export function useBackdropClose(onClose: () => void) {
   }
 }
 
-/** 집중이 필요한 작업(정밀 편집, 삭제 확인)에만 쓴다. 단순 설정은 화면 안에 펼친다. */
+/** 집중이 필요한 작업(정밀 편집, 삭제 확인)에만 쓴다. 단순 설정은 화면 안에 펼친다. 바깥 클릭으로는 닫히지 않는다. */
 export function Dialog({ open, onClose, title, children, footer, size = 'md' }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null)
   useEffect(() => {
@@ -210,12 +210,12 @@ export function Dialog({ open, onClose, title, children, footer, size = 'md' }: 
     if (open && !el.open) el.showModal()
     if (!open && el.open) el.close()
   }, [open])
-  const backdrop = useBackdropClose(onClose)
+  // 바깥(어두운 배경)을 눌러도 닫지 않는다 — 입력하다 마우스가 창 밖으로 나가도 창이 그대로 있게.
+  // 닫기는 [X]·Esc·작업 완료(예: 로그인 성공)로만.
   return (
     <dialog
       ref={ref}
       onClose={onClose}
-      {...backdrop}
       className={clsx(
         'm-auto max-h-[92dvh] w-[calc(100%-2rem)] overflow-hidden rounded-xl border border-line bg-surface p-0 text-ink shadow-3 backdrop:bg-ink/45 open:flex open:flex-col open:animate-pop',
         size === 'sm' && 'max-w-[420px]',
