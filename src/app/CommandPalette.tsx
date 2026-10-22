@@ -2,7 +2,7 @@ import clsx from 'clsx'
 import { CornerDownLeft, Search } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { Kbd } from '@/ui'
+import { Kbd, useBackdropClose } from '@/ui'
 import { groupOf, useSite, useVisibleGroups } from './config'
 import { GROUP_BY_ID, artUrl, toolPath } from './registry'
 import { searchTools } from './search'
@@ -38,11 +38,12 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     navigate(toolPath(id))
   }
 
+  const backdrop = useBackdropClose(onClose)
   return (
     <dialog
       ref={ref}
       onClose={onClose}
-      onClick={(e) => e.target === ref.current && onClose()}
+      {...backdrop}
       className="mx-auto mt-[12dvh] w-[calc(100%-2rem)] max-w-xl overflow-hidden rounded-xl border border-line bg-surface p-0 text-ink shadow-3 backdrop:bg-ink/45 open:animate-pop"
     >
       {open && (
