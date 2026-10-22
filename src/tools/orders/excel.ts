@@ -231,7 +231,9 @@ export async function writeOutput(spec: OutputSpec, rows: OrderRow[], sheetName:
   const wb = new ExcelJS.Workbook()
   wb.creator = '온비짱'
   const ws = wb.addWorksheet((sheetName || '주문서').replace(/[\\/?*[\]:]/g, '').slice(0, 31) || '주문서')
-  const table = buildOutput(spec, rows)
+  // CJ택배·구글드라이브용도 센터주문서와 같은 순서(저장된 순서 → 주문 조회 NO 와 같음)
+  const ordered = resolveCenter(rows, batch?.center).order.map((n) => rows[n - 1])
+  const table = buildOutput(spec, rows, ordered)
   spec.widths.forEach((w, i) => (ws.getColumn(i + 1).width = w))
   table.forEach((vals, ri) => {
     const row = ws.addRow(vals)
