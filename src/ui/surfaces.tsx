@@ -177,6 +177,30 @@ export interface DialogProps {
   size?: 'sm' | 'md' | 'lg' | 'xl' | 'full'
 }
 
+/**
+ * <dialog> 바깥(어두운 배경)을 눌렀을 때만 닫는다.
+ * 창 안에서 누른 채 끌다가(글자 선택·드래그) 바깥에서 손을 떼면 브라우저가 dialog 자체에 click 을 보내므로,
+ * 누른 곳과 뗀 곳이 모두 배경일 때만 닫는다.
+ */
+export function useBackdropClose(onClose: () => void) {
+  const down = useRef(false)
+  const up = useRef(false)
+  type Ev = { target: EventTarget; currentTarget: EventTarget }
+  return {
+    onPointerDown: (e: Ev) => {
+      down.current = e.target === e.currentTarget
+    },
+    onPointerUp: (e: Ev) => {
+      up.current = e.target === e.currentTarget
+    },
+    onClick: (e: Ev) => {
+      const close = down.current && up.current && e.target === e.currentTarget
+      down.current = up.current = false
+      if (close) onClose()
+    },
+  }
+}
+
 /** 집중이 필요한 작업(정밀 편집, 삭제 확인)에만 쓴다. 단순 설정은 화면 안에 펼친다. */
 export function Dialog({ open, onClose, title, children, footer, size = 'md' }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null)
@@ -186,13 +210,12 @@ export function Dialog({ open, onClose, title, children, footer, size = 'md' }: 
     if (open && !el.open) el.showModal()
     if (!open && el.open) el.close()
   }, [open])
+  const backdrop = useBackdropClose(onClose)
   return (
     <dialog
       ref={ref}
       onClose={onClose}
-      onClick={(e) => {
-        if (e.target === ref.current) onClose()
-      }}
+      {...backdrop}
       className={clsx(
         'm-auto max-h-[92dvh] w-[calc(100%-2rem)] overflow-hidden rounded-xl border border-line bg-surface p-0 text-ink shadow-3 backdrop:bg-ink/45 open:flex open:flex-col open:animate-pop',
         size === 'sm' && 'max-w-[420px]',
