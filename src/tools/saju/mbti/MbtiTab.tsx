@@ -92,7 +92,7 @@ export default function MbtiTab() {
         heading="검사가 끝났어요!"
         target={target}
         share={share}
-        note="링크를 받은 사람은 같은 유형 풀이와 성향 비율을 볼 수 있습니다. 답한 내용은 들어가지 않습니다."
+        note="짧은 링크를 받은 사람은 메뉴 없이 이 결과(유형 풀이와 성향 비율)만 볼 수 있습니다. 답한 내용은 들어가지 않습니다."
       />
     </div>
   )
