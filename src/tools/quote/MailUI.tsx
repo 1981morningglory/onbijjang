@@ -488,6 +488,19 @@ type BoxFilter = 'all' | 'saved' | 'failed'
 export function MailBox({ onOpenSettings }: { onOpenSettings: () => void }) {
   const kit = useTeam((s) => s.kit)
   const [log, setLog] = useState<MailLogEntry[] | null>(null)
+  // 받는 사람·참조자를 이름으로: 주소록 → 팀 담당자 순서로 찾고, 없으면 주소 그대로
+  const [book, setBook] = useState<BookEntry[]>([])
+  const teamContacts = useTeam((s) => s.contacts)
+  useEffect(() => {
+    loadMail()
+      .then((s) => setBook(s.addressBook))
+      .catch(() => {})
+  }, [])
+  const nameOf = (email: string) => {
+    const key = email.toLowerCase()
+    return book.find((b) => b.email.toLowerCase() === key)?.name || teamContacts.find((c) => c.email.toLowerCase() === key)?.name || email
+  }
+  const names = (list: string[]) => list.map(nameOf).join(', ')
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<BoxFilter>('all')
   const [openId, setOpenId] = useState<string | null>(null)
@@ -614,14 +627,14 @@ export function MailBox({ onOpenSettings }: { onOpenSettings: () => void }) {
                 <th className="px-3 py-2">받는 사람</th>
                 <th className="px-3 py-2">참조자</th>
                 <th className="px-2 py-2">발송문서</th>
-                <th className="px-3 py-2">업체 연락처</th>
+                <th className="px-2 py-2">메일내용보기</th>
                 <th className="px-3 py-2">비고</th>
                 <th className="sticky right-0 bg-paper px-2 py-2 text-right shadow-[-6px_0_6px_-6px_rgb(0_0_0/0.15)]">수정·삭제</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((e) => (
-                <tr key={e.id} className="cursor-pointer border-t border-line hover:bg-paper" onClick={() => setOpenId(e.id)} title="눌러서 메일 내용 보기">
+                <tr key={e.id} className="border-t border-line hover:bg-paper">
                   <td className="num px-3 py-2 text-xs whitespace-nowrap text-muted">{when(e.at)}</td>
                   <td className="px-2 py-2 whitespace-nowrap">{!e.ok ? <Badge tone="warn">실패</Badge> : e.saved ? <Badge tone="brand">메일함</Badge> : <Badge>보냄</Badge>}</td>
                   <td className="max-w-48 px-3 py-2">
@@ -635,21 +648,21 @@ export function MailBox({ onOpenSettings }: { onOpenSettings: () => void }) {
                   <td className="px-3 py-2 whitespace-nowrap text-ink-2">{e.by || e.from}</td>
                   <td className="max-w-40 px-3 py-2 text-xs text-ink-2">
                     <p className="truncate" title={e.to.join(', ')}>
-                      {e.to.join(', ')}
+                      {names(e.to)}
                     </p>
                     {e.bcc.length > 0 && <p className="text-muted">숨은 참조 {e.bcc.length}</p>}
                   </td>
                   <td className="max-w-40 px-3 py-2 text-xs text-ink-2">
                     {e.cc.length ? (
                       <p className="truncate" title={e.cc.join(', ')}>
-                        {e.cc.join(', ')}
+                        {names(e.cc)}
                       </p>
                     ) : (
                       <span className="text-faint">-</span>
                     )}
                   </td>
                   <td className="px-2 py-1.5" onClick={(ev) => ev.stopPropagation()}>
-                    {e.saved || e.docId ? (
+                    {e.docId || (e.saved && e.files.some((f) => /\.pdf$/i.test(f.name))) ? (
                       <Button size="sm" variant="ghost" icon={ExternalLink} loading={viewing === e.id} onClick={() => void viewDoc(e)}>
                         웹에서 보기
                       </Button>
@@ -657,17 +670,17 @@ export function MailBox({ onOpenSettings }: { onOpenSettings: () => void }) {
                       <span className="px-2 text-xs text-faint">-</span>
                     )}
                   </td>
-                  <td className="max-w-48 min-w-32 px-3 py-2 text-xs break-all">
-                    {e.contact ? <span className="text-ink-2">{e.contact}</span> : <span className="text-faint">{e.to[0] ?? '-'}</span>}
+                  <td className="px-2 py-1.5">
+                    <Button size="sm" variant="ghost" icon={Mail} onClick={() => setOpenId(e.id)}>
+                      메일 보기
+                    </Button>
                   </td>
-                  <td className="max-w-56 min-w-36 px-3 py-2 text-xs text-ink-2">
-                    <p className="line-clamp-2 whitespace-pre-line" title={e.memo}>
-                      {e.memo || <span className="text-faint">-</span>}
-                    </p>
+                  <td className="min-w-48 px-2 py-1.5">
+                    <MemoInput entry={e} onSaved={(entry) => setLog((l) => (l ?? []).map((x) => (x.id === entry.id ? { ...x, memo: entry.memo } : x)))} />
                   </td>
                   <td className="sticky right-0 bg-surface px-2 py-1.5 whitespace-nowrap shadow-[-6px_0_6px_-6px_rgb(0_0_0/0.15)]" onClick={(ev) => ev.stopPropagation()}>
                     <div className="flex justify-end gap-0.5">
-                      <IconButton icon={Pencil} label="수정(업체명·연락처·비고)" size="sm" onClick={() => setEditing(e)} />
+                      <IconButton icon={Pencil} label="수정(업체명·비고)" size="sm" onClick={() => setEditing(e)} />
                       {canDelete(e) && <IconButton icon={Trash2} label="발송 목록에서 삭제" size="sm" onClick={() => void remove(e)} />}
                     </div>
                   </td>
@@ -701,21 +714,61 @@ export function MailBox({ onOpenSettings }: { onOpenSettings: () => void }) {
   )
 }
 
+/** 비고: 표 안에서 바로 입력. 칸을 벗어나거나 Enter 를 누르면 저장, Esc 는 되돌리기 */
+function MemoInput({ entry, onSaved }: { entry: MailLogEntry; onSaved: (e: MailLogEntry) => void }) {
+  const [text, setText] = useState(entry.memo ?? '')
+  const [state, setState] = useState<'idle' | 'saving' | 'saved'>('idle')
+  useEffect(() => setText(entry.memo ?? ''), [entry.memo])
+  const save = async () => {
+    if (text === (entry.memo ?? '')) return
+    setState('saving')
+    try {
+      const r = await editLog(entry.id, { memo: text })
+      onSaved(r.entry)
+      setState('saved')
+      setTimeout(() => setState('idle'), 1500)
+    } catch (err) {
+      setState('idle')
+      toast.error(errText(err, '비고를 저장하지 못했습니다.'))
+    }
+  }
+  return (
+    <div className="relative">
+      <input
+        aria-label={`${entry.customer || entry.subject} 비고`}
+        value={text}
+        maxLength={1000}
+        placeholder="비고 입력"
+        title={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={() => void save()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.nativeEvent.isComposing) (e.target as HTMLInputElement).blur()
+          else if (e.key === 'Escape') setText(entry.memo ?? '')
+        }}
+        className={clsx(
+          'h-8 w-full rounded-sm border bg-surface px-2 pr-6 text-xs text-ink transition-colors placeholder:text-faint focus:border-brand focus:ring-2 focus:ring-brand/20 focus:outline-none',
+          state === 'saved' ? 'border-brand' : 'border-line-strong',
+        )}
+      />
+      {state !== 'idle' && <span className="absolute top-1/2 right-1.5 -translate-y-1/2">{state === 'saving' ? <Spinner /> : <CheckCircle2 className="size-3.5 text-brand" aria-label="저장됨" />}</span>}
+    </div>
+  )
+}
+
 function EditLogDialog({ entry, onClose, onSaved }: { entry: MailLogEntry | null; onClose: () => void; onSaved: (e: MailLogEntry) => void }) {
   const [customer, setCustomer] = useState('')
-  const [contact, setContact] = useState('')
   const [memo, setMemo] = useState('')
   const [busy, setBusy] = useState(false)
   useEffect(() => {
     setCustomer(entry?.customer ?? '')
-    setContact(entry?.contact ?? '')
     setMemo(entry?.memo ?? '')
   }, [entry])
   const save = async () => {
     if (!entry) return
     setBusy(true)
     try {
-      const r = await editLog(entry.id, { customer, contact, memo })
+      const r = await editLog(entry.id, { customer, memo })
       toast.success('고쳤습니다.')
       onSaved(r.entry)
     } catch (err) {
@@ -744,7 +797,6 @@ function EditLogDialog({ entry, onClose, onSaved }: { entry: MailLogEntry | null
             {when(entry.at)} · {entry.by} → {entry.to.join(', ')}
           </p>
           <Field label="업체명">{(id) => <TextInput id={id} value={customer} maxLength={60} onChange={(e) => setCustomer(e.target.value)} />}</Field>
-          <Field label="업체 연락처" hint="전화번호·담당자 등">{(id) => <TextInput id={id} value={contact} maxLength={120} onChange={(e) => setContact(e.target.value)} placeholder="예: 031-000-0000 김과장" />}</Field>
           <Field label="비고">{(id) => <Textarea id={id} value={memo} maxLength={1000} onChange={(e) => setMemo(e.target.value)} placeholder="자유롭게 메모(예: 회신 대기, 단가 조정 요청)" />}</Field>
         </div>
       )}
