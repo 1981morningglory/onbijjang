@@ -2,7 +2,7 @@ import clsx from 'clsx'
 import { ArrowLeft, ArrowRight, BatteryLow, Briefcase, CheckCircle2, FileDown, Grid3x3, Link2, Heart, ListChecks, RotateCcw, Sprout, ThumbsUp, TriangleAlert, Users, Zap, type LucideIcon } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { Button, Panel } from '@/ui'
-import { mbtiLink, parseMbtiLink } from '../share'
+import { mbtiQuery } from '../share'
 import { ShareDialog, useShare, type ShareTarget } from '../ShareUI'
 import { AXES, AXIS_INFO, QUESTIONS, SCALE, scoreAnswers, TEMPERAMENT, temperamentOf, TYPE_ORDER, TYPES, type Axis } from './data'
 
@@ -10,7 +10,7 @@ const PER_PAGE = 8
 const PAGES = Math.ceil(QUESTIONS.length / PER_PAGE)
 const STORE = 'onbijjang.mbti.last'
 
-interface Result {
+export interface Result {
   type: string
   /** 검사로 나온 결과면 축별 비율, 둘러보기면 없음 */
   pct: Record<Axis, number> | null
@@ -42,17 +42,9 @@ export default function MbtiTab() {
   const [result, setResult] = useState<Result | null>(null)
   const [last, setLast] = useState<Result | null>(null)
   const [shareOpen, setShareOpen] = useState(false)
-  useEffect(() => {
-    setLast(loadLast())
-    // 공유 링크(?tab=mbti&r=유형&p=비율)로 들어오면 그 결과를 바로 보여 준다
-    const got = parseMbtiLink(location.search)
-    if (got) {
-      setResult({ ...got, shared: true })
-      setMode('result')
-    }
-  }, [])
+  useEffect(() => setLast(loadLast()), [])
   const target: ShareTarget | null = result
-    ? { containerId: 'mbti-result', filename: `MBTI_${result.type}_${TYPES[result.type].nick}.pdf`, title: `성격유형 ${result.type} ${TYPES[result.type].nick}`, link: mbtiLink(result.type, result.pct) }
+    ? { containerId: 'mbti-result', filename: `MBTI_${result.type}_${TYPES[result.type].nick}.pdf`, title: `성격유형 ${result.type} ${TYPES[result.type].nick}`, kind: 'mbti', query: mbtiQuery(result.type, result.pct) }
     : null
   const share = useShare(target)
 
@@ -241,7 +233,8 @@ function Test({ answers, page, onAnswer, onPage, onFinish, onQuit }: { answers: 
 }
 
 // ── 결과 ─────────────────────────────────────────────────
-function ResultView({ result, share, onRetry, onPick, onBack }: { result: Result; share: ReturnType<typeof useShare>; onRetry: () => void; onPick: (t: string) => void; onBack: () => void }) {
+/** readOnly: 공유 링크로 본 화면 — 다시 검사·다른 유형 둘러보기·링크 버튼 없이 결과만 */
+export function ResultView({ result, share, onRetry, onPick, onBack, readOnly }: { result: Result; share: ReturnType<typeof useShare>; onRetry?: () => void; onPick?: (t: string) => void; onBack?: () => void; readOnly?: boolean }) {
   const t = TYPES[result.type]
   const temp = TEMPERAMENT[temperamentOf(result.type)]
   return (
@@ -359,35 +352,40 @@ function ResultView({ result, share, onRetry, onPick, onBack }: { result: Result
           <p className="text-sm font-bold text-brand">잘 맞는 유형</p>
           <div className="flex flex-wrap gap-2">
             {t.best.map((x) => (
-              <MiniType key={x} type={x} onClick={() => onPick(x)} />
+              <MiniType key={x} type={x} onClick={onPick && (() => onPick(x))} />
             ))}
           </div>
           <p className="text-sm font-bold text-accent">서로 노력이 필요한 유형</p>
           <div className="flex flex-wrap gap-2">
             {t.hard.map((x) => (
-              <MiniType key={x} type={x} onClick={() => onPick(x)} />
+              <MiniType key={x} type={x} onClick={onPick && (() => onPick(x))} />
             ))}
           </div>
         </Box>
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        <Button variant="primary" icon={ListChecks} onClick={onRetry}>
-          {result.pct ? '다시 검사하기' : '검사해 보기'}
-        </Button>
+      <div className="flex flex-wrap gap-2" data-pdf-skip>
+        {!readOnly && (
+          <Button variant="primary" icon={ListChecks} onClick={onRetry}>
+            {result.pct ? '다시 검사하기' : '검사해 보기'}
+          </Button>
+        )}
         <Button icon={FileDown} loading={share.busy} onClick={() => void share.pdf()}>
           PDF 다운로드
         </Button>
-        <Button icon={Link2} onClick={() => void share.link()}>
-          링크 복사
-        </Button>
-        <Button variant="ghost" icon={ArrowLeft} onClick={onBack}>
-          처음으로
-        </Button>
+        {!readOnly && (
+          <>
+            <Button icon={Link2} loading={share.linking} onClick={() => void share.link()}>
+              링크 복사
+            </Button>
+            <Button variant="ghost" icon={ArrowLeft} onClick={onBack}>
+              처음으로
+            </Button>
+          </>
+        )}
       </div>
-
       </div>
-      <TypeGrid title="16유형 한눈에" hint="눌러서 다른 유형 풀이 보기" current={result.type} onPick={onPick} />
+      {!readOnly && onPick && <TypeGrid title="16유형 한눈에" hint="눌러서 다른 유형 풀이 보기" current={result.type} onPick={onPick} />}
     </>
   )
 }
@@ -441,11 +439,11 @@ function Box({ icon: Icon, title, hint, tone, className, children }: { icon: Luc
   )
 }
 
-function MiniType({ type, onClick }: { type: string; onClick: () => void }) {
+function MiniType({ type, onClick }: { type: string; onClick?: () => void }) {
   const t = TYPES[type]
   const temp = TEMPERAMENT[temperamentOf(type)]
   return (
-    <button type="button" onClick={onClick} className="flex items-center gap-2 rounded-md border border-line bg-paper px-3 py-2 text-left transition-colors hover:border-line-strong">
+    <button type="button" onClick={onClick} disabled={!onClick} className="flex items-center gap-2 rounded-md border border-line bg-paper px-3 py-2 text-left transition-colors enabled:hover:border-line-strong">
       <span className="text-3xl" aria-hidden>
         {t.emoji}
       </span>
