@@ -52,6 +52,7 @@ import {
   OUTPUTS,
   outputFileName,
   pickPhone,
+  mergeGmarketOrders,
   productKey,
   resolveCenter,
   SEARCH_FIELDS,
@@ -167,7 +168,7 @@ const fmt = (n: number) => n.toLocaleString('ko-KR')
 const WEEK = ['일', '월', '화', '수', '목', '금', '토']
 const weekday = (date: string) => WEEK[new Date(`${date}T00:00:00Z`).getUTCDay()]
 /** 화면 쪽 센터주문서 양식 판(서버 쪽 CENTER_FORM 과 같이 올린다) */
-const CENTER_FORM_UI = '센터주문서 v10'
+const CENTER_FORM_UI = '센터주문서 v11'
 const AMOUNT_RE = /결제\s*금액|주문\s*금액|총\s*금액|판매\s*금액|결제액/
 
 /** 지금 보고 있는 사람: CS 내용 고치기·지우기는 적은 사람 본인과 전체마스터만 */
@@ -382,7 +383,9 @@ function Make({ onGoList }: { onGoList: () => void }) {
       const others = s.rows.filter((r) => !isCenterRow(r))
       if (!mine.length) throw new Error(`이 파일에는 ${CENTER_WAREHOUSES.join('·')}(또는 물류처명 빈칸) 주문이 없습니다. 다른 물류처 주문 ${others.length}줄은 받지 않습니다.`)
       // 전에 맞춰 둔 상품은 자동으로 채운다
-      const filled = mine.map((r) => {
+      // 지마켓: 한 사람(주문자·휴대폰·주소)의 품목별 주문번호를 하나로 합친다
+      const gm = mergeGmarketOrders(mine)
+      const filled = gm.rows.map((r) => {
         if (!needsProduct(r)) return { ...r, [COL.warehouse]: r[COL.warehouse] ?? DEFAULT_WAREHOUSE }
         const m = k.products[productKey(r)]
         return m ? { ...r, [COL.code]: m.code, [COL.name]: m.name, [COL.option]: m.option || '단품', [COL.warehouse]: r[COL.warehouse] ?? DEFAULT_WAREHOUSE, _auto: m.code } : { ...r, _fix: 1 }
@@ -391,6 +394,7 @@ function Make({ onGoList }: { onGoList: () => void }) {
       setRows(filled)
       setExcluded(others)
       if (others.length) toast.info(`다른 물류처 주문 ${others.length}줄은 빼고 일산·파주센터 주문 ${mine.length}줄만 불러왔습니다.`)
+      if (gm.orders) toast.info(`지마켓 주문 ${gm.orders}건(한 사람이 여러 품목)의 주문번호를 하나로 합쳤습니다. 원래 번호는 ‘원주문번호’에 남겨 두었습니다.`)
       setDate(dateFromName(s.sheetName, file.name) ?? todayKst())
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '파일을 읽지 못했습니다.')

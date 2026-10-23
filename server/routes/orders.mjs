@@ -16,7 +16,7 @@ const CS_AT = 'CS수정시각'
 const CANCEL_COL = '취소내용'
 const CANCEL_STATES = ['', '취소요청', '취소완료']
 /** 센터주문서 양식 판 — 화면에 같이 보여 배포가 반영됐는지 알 수 있게 */
-const CENTER_FORM = '센터주문서 v10(CJ·드라이브 순서 = 센터주문서)'
+const CENTER_FORM = '센터주문서 v11(지마켓 주문번호 합치기·제주 [제주도])'
 const DATE_RE = /^20\d{2}-\d{2}-\d{2}$/
 const MAX_ROWS = 5000
 const MAX_RESULTS = 2000
@@ -75,7 +75,7 @@ const FIELDS = {
   phone: ['전화번호1', '전화번호2'],
   address: ['수취인주소'],
   product: ['상품코드', '상품명', '상품명(수집/삭제)', '옵션', '옵션(수집/삭제)'],
-  orderNo: ['주문번호', '사방넷주문번호'],
+  orderNo: ['주문번호', '사방넷주문번호', '원주문번호'],
   mall: ['쇼핑몰'],
   invoice: ['송장번호'],
 }
