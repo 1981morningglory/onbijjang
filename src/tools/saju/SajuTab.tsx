@@ -50,6 +50,8 @@ import {
   type Element,
   type SolarYmd,
 } from './logic'
+import { parseSajuLink, safeName, sajuLink } from './share'
+import { ShareButtons, ShareDialog, useShare, type ShareTarget } from './ShareUI'
 import { EL_BAR, EL_BOX, EL_HANJA, EL_NAME, EL_SOFT, EL_TEXT, EL_VAR, ElementCycle, groupElement, Radar, Stars, StemBadge, StrengthGauge, TenGroupDonut } from './visuals'
 
 const FEATURES: Array<[string, string]> = [
@@ -70,6 +72,7 @@ interface Reading {
 
 const pad = (n: number) => String(n).padStart(2, '0')
 const ymd = (d: SolarYmd) => `${d.year}.${pad(d.month)}.${pad(d.day)}`
+const c2s = (c: Chart) => `${c.solar.year}-${pad(c.solar.month)}-${pad(c.solar.day)}`
 
 export default function SajuTab() {
   const [name, setName] = useState('')
@@ -85,6 +88,41 @@ export default function SajuTab() {
   const [boundary, setBoundary] = useState<ChartInput['dayBoundary']>('midnight')
   const [chart, setChart] = useState<Chart | null>(null)
   const [shownName, setShownName] = useState('')
+  const [shareOpen, setShareOpen] = useState(false)
+
+  // 공유 링크로 들어오면 입력칸을 채우고 바로 보여 준다
+  useEffect(() => {
+    const got = parseSajuLink(location.search)
+    if (!got) return
+    const i = got.input
+    setName(got.name)
+    setGender(i.gender)
+    setCalendar(i.calendar)
+    setLeapChoice(i.leap ? 'leap' : 'normal')
+    setYear(String(i.year))
+    setMonth(String(i.month))
+    setDay(String(i.day))
+    setTimeUnknown(i.hour == null)
+    if (i.hour != null) setTime(`${pad(i.hour)}:${pad(i.minute)}`)
+    setCity(got.city)
+    setBoundary(i.dayBoundary)
+    try {
+      setChart(computeChart(i))
+      setShownName(got.name)
+    } catch {
+      toast.error('링크의 생년월일을 읽지 못했습니다.')
+    }
+  }, [])
+
+  const target: ShareTarget | null = chart
+    ? {
+        containerId: 'saju-result',
+        filename: `${safeName(`사주_${shownName || '결과'}_${c2s(chart)}`)}.pdf`,
+        title: `${shownName ? `${shownName} 님의 ` : ''}사주풀이`,
+        link: sajuLink(chart.input, shownName),
+      }
+    : null
+  const share = useShare(target)
 
   // 음력이면 그해 윤달이 있는지 자동으로 찾는다
   const y = Number(year)
@@ -114,6 +152,7 @@ export default function SajuTab() {
     try {
       setChart(computeChart(input))
       setShownName(name.trim())
+      setShareOpen(true)
       requestAnimationFrame(() => document.getElementById('saju-result')?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
     } catch (err) {
       toast.error(err instanceof RangeError ? '없는 날짜입니다. 생년월일을 확인해 주세요.' : err instanceof Error ? err.message : '계산하지 못했습니다.')
@@ -203,10 +242,18 @@ export default function SajuTab() {
       </Panel>
       {chart && (
         <div id="saju-result" className="flex scroll-mt-20 flex-col gap-5">
-          <ChartView chart={chart} name={shownName} />
+          <ChartView chart={chart} name={shownName} actions={<ShareButtons share={share} />} />
           <AiReading key={JSON.stringify(chartForAi(chart))} chart={chart} name={shownName} />
         </div>
       )}
+      <ShareDialog
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+        heading="사주 결과가 나왔어요"
+        target={target}
+        share={share}
+        note="링크에는 생년월일시(와 이름)가 들어갑니다. 받은 사람도 같은 원국과 도표를 보고, 이미 받은 AI 풀이가 있으면 함께 보입니다. AI 풀이를 받은 뒤 PDF를 다시 내려받으면 풀이도 함께 담깁니다."
+      />
     </div>
   )
 }
@@ -297,7 +344,7 @@ function Card({ title, hint, icon: Icon, children, className }: { title: string;
   )
 }
 
-function ChartView({ chart, name }: { chart: Chart; name: string }) {
+function ChartView({ chart, name, actions }: { chart: Chart; name: string; actions?: ReactNode }) {
   const c = chart
   const inp = c.input
   const dayEl = stemElement(c.dayMaster)
@@ -316,12 +363,13 @@ function ChartView({ chart, name }: { chart: Chart; name: string }) {
   const timeText = inp.hour == null ? '시간 모름' : `${pad(inp.hour)}:${pad(inp.minute)}${inp.longitude != null ? ' (진태양시 보정)' : ''}`
 
   return (
-    <Panel className="flex flex-col gap-5 p-4 sm:p-5">
+    <Panel data-pdf-block className="flex flex-col gap-5 p-4 sm:p-5">
       <div className="flex flex-wrap items-end gap-x-3 gap-y-1">
         <h2 className="text-xl font-bold text-ink">{name ? `${name} 님의 사주` : '사주 원국'}</h2>
         <span className="text-sm text-muted">
           {inp.gender === 'male' ? '남' : '여'} · {birth} · {timeText} · 만 {c.age}세
         </span>
+        <div className="ml-auto">{actions}</div>
       </div>
 
       {/* 나를 나타내는 카드 */}
@@ -613,7 +661,11 @@ function AiReading({ chart, name }: { chart: Chart; name: string }) {
     api<{ allowed: boolean; ai: boolean }>('/saju/status')
       .then(setStatus)
       .catch(() => setStatus({ allowed: false, ai: false }))
-  }, [])
+    // 같은 원국으로 이미 받은 풀이가 있으면(공유 링크 포함) 로그인 없이도 보여 준다
+    api<{ reading: Reading | null }>('/saju/cached', { method: 'POST', body: { chart: payload } })
+      .then((r) => r.reading && setReading((cur) => cur ?? r.reading))
+      .catch(() => {})
+  }, [payload])
   useEffect(() => {
     if (!busy) return
     const t0 = Date.now()
@@ -646,7 +698,7 @@ function AiReading({ chart, name }: { chart: Chart; name: string }) {
     )
   }
   return (
-    <Panel className="flex flex-col gap-4 p-4 sm:p-5">
+    <Panel data-pdf-block={reading ? '' : undefined} className="flex flex-col gap-4 p-4 sm:p-5">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="flex items-center gap-1.5 text-xl font-bold text-ink">
           <Sparkles className="size-5 text-accent" aria-hidden /> AI 사주풀이
@@ -656,7 +708,7 @@ function AiReading({ chart, name }: { chart: Chart; name: string }) {
             {reading.cached ? '같은 원국의 지난 풀이' : '방금 풀이'} · {new Date(reading.at).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' })}
           </span>
         )}
-        <div className="ml-auto flex gap-1.5">
+        <div className="ml-auto flex gap-1.5" data-pdf-skip>
           {reading && (
             <Button size="sm" icon={Copy} onClick={() => void copy()}>
               풀이 복사
@@ -721,7 +773,7 @@ function AiReading({ chart, name }: { chart: Chart; name: string }) {
             ))}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="ghost" icon={RefreshCw} loading={busy} onClick={() => void run()} title="같은 원국은 저장해 둔 풀이를 보여 줍니다">
+            <Button data-pdf-skip size="sm" variant="ghost" icon={RefreshCw} loading={busy} onClick={() => void run()} title="같은 원국은 저장해 둔 풀이를 보여 줍니다">
               다시 불러오기
             </Button>
             <span className="text-xs text-faint">전통 명리학에 따른 참고용 풀이입니다. 점수는 AI가 원국을 보고 매긴 참고 값입니다.</span>
@@ -757,11 +809,11 @@ function SectionCard({ s, score }: { s: Reading['sections'][number]; score?: num
       )}
       {s.body && (
         <>
-          <button type="button" onClick={() => setOpen((v) => !v)} className="inline-flex w-fit items-center gap-1 text-xs font-semibold text-muted hover:text-ink" aria-expanded={open}>
+          <button type="button" data-pdf-skip onClick={() => setOpen((v) => !v)} className="pdf-hide inline-flex w-fit items-center gap-1 text-xs font-semibold text-muted hover:text-ink" aria-expanded={open}>
             <ChevronDown className={clsx('size-3.5 transition-transform', open && 'rotate-180')} aria-hidden />
             {open ? '접기' : '자세히 읽기'}
           </button>
-          {open && <p className="text-sm leading-relaxed whitespace-pre-line text-ink-2">{s.body}</p>}
+          <p className={clsx('pdf-show text-sm leading-relaxed whitespace-pre-line text-ink-2', !open && 'hidden')}>{s.body}</p>
         </>
       )}
     </section>
