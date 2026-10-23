@@ -12,6 +12,7 @@ import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import nodemailer from 'nodemailer'
+import MailComposer from 'nodemailer/lib/mail-composer/index.js'
 import { cleanAccount, cleanRecipients, isEmail, MAIL_PROVIDERS, mailErrorText, openSecret, sealSecret } from '../lib/mail.mjs'
 
 const COOKIE = 'ob_team'
@@ -417,7 +418,6 @@ export default async function quoteRoutes(app, ctx) {
       accounts: Object.fromEntries(Object.entries(m.accounts).map(([k, a]) => [k, publicAccount(a)])),
       addressBook: s.addressBook ?? [],
       lastTo: m.lastTo,
-      log: m.log.slice(0, 50),
     })
   })
 
@@ -483,9 +483,32 @@ export default async function quoteRoutes(app, ctx) {
     res.json({ addressBook: entries })
   })
 
-  /** 보내기: 첨부는 화면에서 만든 PDF·엑셀(base64). 한 팀에서 1시간 60통까지 */
+  /**
+   * 보내기: 받는 사람·참조·숨은 참조, 첨부(문서 PDF·엑셀 + 추가 파일, base64).
+   * 보낸 기록(발송 목록)은 늘 남기고, saveCopy 면 본문·첨부까지 팀 메일함에 저장한다. 한 팀에서 1시간 60통까지.
+   */
   const sentAt = new Map()
   const MAX_ATTACH = 15 * 1024 * 1024
+  const MAX_LOG = 2000
+  const MAX_BOX = 1000
+  const boxDir = (teamId) => path.join(teamDir(teamId), 'mailbox')
+  const boxFile = (teamId, mid) => path.join(boxDir(teamId), `${mid}.json`)
+  const boxFilesDir = (teamId, mid) => path.join(boxDir(teamId), mid)
+  /** 발송 기록 한 줄 더하기(오래된 것부터 지우고, 메일함에서 밀려난 저장본도 지운다) */
+  const addLog = (teamId, entry, customer) =>
+    serial(`mail:${teamId}`, async () => {
+      const m = await loadMail(teamId)
+      if (customer && entry.ok) m.lastTo[customer] = entry.to
+      m.log = [entry, ...m.log].slice(0, MAX_LOG)
+      const saved = m.log.filter((e) => e.saved)
+      for (const old of saved.slice(MAX_BOX)) {
+        old.saved = false
+        await fsp.rm(boxFile(teamId, old.id), { force: true })
+        await fsp.rm(boxFilesDir(teamId, old.id), { recursive: true, force: true })
+      }
+      await writeJson(mailFile(teamId), m)
+    })
+
   app.post('/api/quote/mail/send', requireTeam, async (req, res) => {
     const teamId = req.team.id
     const b = req.body ?? {}
@@ -493,64 +516,139 @@ export default async function quoteRoutes(app, ctx) {
     if (!contact) return res.status(400).json({ error: '보내는 사람(담당자)을 골라 주세요.' })
     const acc = (await loadMail(teamId)).accounts[contact.id]
     if (!acc) return res.status(400).json({ error: `${contact.name || '이 담당자'}의 메일 계정이 아직 없습니다. 팀 설정 → 메일·주소록에서 넣어 주세요.` })
-    const to = cleanRecipients(b.to)
-    const cc = cleanRecipients(b.cc)
-    if (to.bad.length || cc.bad.length) return res.status(400).json({ error: `메일 주소가 올바르지 않습니다: ${[...to.bad, ...cc.bad].slice(0, 3).join(', ')}` })
+    const to = cleanRecipients(b.to, 50)
+    const cc = cleanRecipients(b.cc, 50)
+    const bcc = cleanRecipients(b.bcc, 50)
+    const bad = [...to.bad, ...cc.bad, ...bcc.bad]
+    if (bad.length) return res.status(400).json({ error: `메일 주소가 올바르지 않습니다: ${bad.slice(0, 3).join(', ')}` })
     if (!to.list.length) return res.status(400).json({ error: '받는 사람 메일 주소를 넣어 주세요.' })
-    if (to.over || cc.over) return res.status(400).json({ error: '받는 사람·참조는 각각 20명까지입니다.' })
+    if (to.over || cc.over || bcc.over) return res.status(400).json({ error: '받는 사람·참조·숨은 참조는 각각 50명까지입니다.' })
     const subject = str(b.subject, 200).trim()
     if (!subject) return res.status(400).json({ error: '제목을 넣어 주세요.' })
-    const text = str(b.text, 20000)
+    const text = str(b.text, 50000)
     const files = []
     let size = 0
-    for (const a of Array.isArray(b.attachments) ? b.attachments.slice(0, 5) : []) {
+    for (const a of Array.isArray(b.attachments) ? b.attachments.slice(0, 20) : []) {
       const filename = str(a?.filename, 150).replace(/[\\/:*?"<>|\r\n]/g, '_').trim()
       if (!filename || typeof a?.content !== 'string') continue
       const content = Buffer.from(a.content, 'base64')
       size += content.length
-      files.push({ filename, content, contentType: str(a?.contentType, 100) || undefined })
+      files.push({ filename, content, contentType: str(a?.contentType, 100) || 'application/octet-stream' })
     }
     if (size > MAX_ATTACH) return res.status(400).json({ error: '첨부 파일이 너무 큽니다(합쳐서 15MB 이하).' })
     const hour = Date.now() - 3600_000
     const recent = (sentAt.get(teamId) ?? []).filter((t) => t > hour)
     if (recent.length >= 60) return res.status(429).json({ error: '1시간에 60통까지 보낼 수 있습니다. 잠시 뒤에 다시 보내 주세요.' })
     const from = { name: [contact.name, contact.title].filter(Boolean).join(' ') || contact.email, address: contact.email }
-    try {
-      const info = await transportFor(acc).sendMail({
-        from,
-        replyTo: contact.email,
-        to: to.list,
-        cc: cc.list.length ? cc.list : undefined,
-        bcc: b.bccMe ? contact.email : undefined,
-        subject,
-        text,
-        attachments: files,
-      })
-      sentAt.set(teamId, [...recent, Date.now()])
-      const at = new Date().toISOString()
-      const customer = str(b.customer, 60).trim()
-      const entry = { at, from: contact.email, by: contact.name, to: to.list, cc: cc.list, subject, customer, docNo: str(b.docNo, 30), files: files.map((f) => f.filename), messageId: info.messageId ?? '' }
-      await serial(`mail:${teamId}`, async () => {
-        const m = await loadMail(teamId)
-        if (customer) m.lastTo[customer] = to.list
-        m.log = [entry, ...m.log].slice(0, 300)
-        await writeJson(mailFile(teamId), m)
-      })
-      // 문서함 목록에 '메일 보냄' 표시
-      if (ID_RE.test(b.docId ?? ''))
-        await serial(`docs:${teamId}`, async () => {
-          const index = await readJson(indexFile(teamId), [])
-          const d = index.find((x) => x.id === b.docId)
-          if (!d) return
-          d.lastMail = { at, to: to.list }
-          await writeJson(indexFile(teamId), index)
-          const file = await readJson(docFile(teamId, b.docId), null)
-          if (file) await writeJson(docFile(teamId, b.docId), { ...file, meta: { ...file.meta, lastMail: d.lastMail } })
-        })
-      res.json({ ok: true, entry, rejected: info.rejected ?? [] })
-    } catch (err) {
-      res.status(400).json({ error: mailErrorText(err) })
+    const bccList = [...bcc.list]
+    if (b.bccMe && !bccList.some((x) => x.toLowerCase() === contact.email.toLowerCase())) bccList.push(contact.email)
+    const customer = str(b.customer, 60).trim()
+    const entry = {
+      id: newId(),
+      at: new Date().toISOString(),
+      from: contact.email,
+      by: contact.name,
+      to: to.list,
+      cc: cc.list,
+      bcc: bccList,
+      subject,
+      customer,
+      docNo: str(b.docNo, 30),
+      docId: ID_RE.test(b.docId ?? '') ? b.docId : '',
+      files: files.map((f) => ({ name: f.filename, size: f.content.length })),
+      ok: false,
+      saved: false,
     }
+    let info
+    try {
+      info = await transportFor(acc).sendMail({ from, replyTo: contact.email, to: to.list, cc: cc.list.length ? cc.list : undefined, bcc: bccList.length ? bccList : undefined, subject, text, attachments: files })
+    } catch (err) {
+      const error = mailErrorText(err)
+      await addLog(teamId, { ...entry, error }, customer)
+      return res.status(400).json({ error })
+    }
+    sentAt.set(teamId, [...recent, Date.now()])
+    entry.ok = true
+    entry.messageId = info.messageId ?? ''
+    // 메일함에 저장: 본문·첨부 그대로(나중에 다시 보기·내려받기·다시 보내기)
+    if (b.saveCopy !== false) {
+      try {
+        const dir = boxFilesDir(teamId, entry.id)
+        await fsp.mkdir(dir, { recursive: true })
+        for (const [i, f] of files.entries()) await fsp.writeFile(path.join(dir, `${i}.bin`), f.content)
+        await writeJson(boxFile(teamId, entry.id), { entry: { ...entry, saved: true }, text, files: files.map((f, i) => ({ name: f.filename, type: f.contentType, size: f.content.length, n: i })) })
+        entry.saved = true
+      } catch {
+        // 저장이 안 돼도 메일은 이미 나갔다
+      }
+    }
+    await addLog(teamId, entry, customer)
+    // 문서함 목록에 '메일 보냄' 표시
+    if (entry.docId)
+      await serial(`docs:${teamId}`, async () => {
+        const index = await readJson(indexFile(teamId), [])
+        const d = index.find((x) => x.id === entry.docId)
+        if (!d) return
+        d.lastMail = { at: entry.at, to: to.list }
+        await writeJson(indexFile(teamId), index)
+        const file = await readJson(docFile(teamId, entry.docId), null)
+        if (file) await writeJson(docFile(teamId, entry.docId), { ...file, meta: { ...file.meta, lastMail: d.lastMail } })
+      })
+    res.json({ ok: true, entry, rejected: info.rejected ?? [] })
+  })
+
+  // ── 메일함: 발송 목록 · 저장한 메일 ───────────────────────
+  app.get('/api/quote/mail/log', requireTeam, async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store')
+    res.json({ log: (await loadMail(req.team.id)).log })
+  })
+  const savedMail = async (req, res) => {
+    if (!ID_RE.test(req.params.mid)) return res.status(400).json({ error: '메일 번호가 올바르지 않습니다.' }), null
+    const box = await readJson(boxFile(req.team.id, req.params.mid), null)
+    if (!box) return res.status(404).json({ error: '메일함에 저장된 메일이 아닙니다(본문·첨부 없이 기록만 남음).' }), null
+    return box
+  }
+  app.get('/api/quote/mailbox/:mid', requireTeam, async (req, res) => {
+    const box = await savedMail(req, res)
+    if (!box) return
+    res.setHeader('Cache-Control', 'no-store')
+    res.json(box)
+  })
+  const sendFile = (res, name, type, data) => {
+    res.setHeader('Content-Type', type || 'application/octet-stream')
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(name)}`)
+    res.setHeader('Cache-Control', 'no-store')
+    res.end(data)
+  }
+  app.get('/api/quote/mailbox/:mid/files/:n', requireTeam, async (req, res) => {
+    const box = await savedMail(req, res)
+    if (!box) return
+    const f = box.files.find((x) => String(x.n) === req.params.n)
+    if (!f) return res.status(404).json({ error: '첨부 파일이 없습니다.' })
+    sendFile(res, f.name, f.type, await fsp.readFile(path.join(boxFilesDir(req.team.id, req.params.mid), `${f.n}.bin`)))
+  })
+  /** 메일 파일(.eml) — 아웃룩·메일 프로그램에서 그대로 열린다 */
+  app.get('/api/quote/mailbox/:mid/eml', requireTeam, async (req, res) => {
+    const box = await savedMail(req, res)
+    if (!box) return
+    const e = box.entry
+    const attachments = []
+    for (const f of box.files) attachments.push({ filename: f.name, contentType: f.type, content: await fsp.readFile(path.join(boxFilesDir(req.team.id, e.id), `${f.n}.bin`)) })
+    const raw = await new MailComposer({ from: e.from, to: e.to, cc: e.cc.length ? e.cc : undefined, subject: e.subject, text: box.text, date: new Date(e.at), messageId: e.messageId || undefined, attachments }).compile().build()
+    sendFile(res, `${e.subject.replace(/[\\/:*?"<>|\r\n]/g, '_').slice(0, 80) || 'mail'}.eml`, 'message/rfc822', raw)
+  })
+  /** 메일함에서 지우기(발송 목록의 기록은 남는다) */
+  app.delete('/api/quote/mailbox/:mid', requireTeam, async (req, res) => {
+    if (!ID_RE.test(req.params.mid)) return res.status(400).json({ error: '메일 번호가 올바르지 않습니다.' })
+    const teamId = req.team.id
+    await serial(`mail:${teamId}`, async () => {
+      const m = await loadMail(teamId)
+      for (const e of m.log) if (e.id === req.params.mid) e.saved = false
+      await writeJson(mailFile(teamId), m)
+      await fsp.rm(boxFile(teamId, req.params.mid), { force: true })
+      await fsp.rm(boxFilesDir(teamId, req.params.mid), { recursive: true, force: true })
+    })
+    res.json({ ok: true })
   })
 
   // ── 관리자: 팀 관리 · 회사 공통 자료 ────────────────────
