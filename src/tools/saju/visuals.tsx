@@ -4,6 +4,7 @@
  */
 import clsx from 'clsx'
 import { CloudDrizzle, Flame, Flower2, Gem, Mountain, Pickaxe, Sun, TreePine, WavesHorizontal, Wheat, type LucideIcon } from 'lucide-react'
+import { GROUP_DETAIL } from './guide'
 import { CONTROLS, ELEMENTS, GENERATES, TEN_GROUP_NOTE, TEN_GROUPS, stemElement, type Element, type TenGroup } from './logic'
 
 export const EL_VAR: Record<Element, string> = { 목: 'var(--color-wood)', 화: 'var(--color-fire)', 토: 'var(--color-earth)', 금: 'var(--color-metal)', 수: 'var(--color-water)' }
@@ -146,41 +147,69 @@ export function groupElement(group: TenGroup, dayEl: Element): Element {
   return { 비겁: dayEl, 식상: gen[dayEl], 재성: ctl[dayEl], 관성: ctlBy, 인성: genBy }[group]
 }
 
-export function TenGroupDonut({ counts, dayEl }: { counts: Record<TenGroup, number>; dayEl: Element }) {
+export function TenGroupDonut({ counts, dayEl, hourKnown }: { counts: Record<TenGroup, number>; dayEl: Element; hourKnown: boolean }) {
   const total = TEN_GROUPS.reduce((a, g) => a + counts[g], 0) || 1
   const rr = 48
   const C = 2 * Math.PI * rr
   let acc = 0
-  const top = TEN_GROUPS.filter((g) => counts[g] === Math.max(...TEN_GROUPS.map((x) => counts[x])))
+  const max = Math.max(...TEN_GROUPS.map((x) => counts[x]))
+  const top = TEN_GROUPS.filter((g) => counts[g] === max)
   return (
-    <div className="flex flex-col items-center gap-3 sm:flex-row sm:items-center">
-      <svg viewBox="0 0 120 120" className="size-36 shrink-0" role="img" aria-label={`십신 분포: ${TEN_GROUPS.map((g) => `${g} ${counts[g]}`).join(', ')}`}>
-        <circle cx="60" cy="60" r={rr} fill="none" stroke="var(--color-sunken)" strokeWidth="18" />
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col items-center gap-3 sm:flex-row sm:gap-4">
+        <svg viewBox="0 0 120 120" className="size-32 shrink-0" role="img" aria-label={`십신 분포: ${TEN_GROUPS.map((g) => `${g} ${counts[g]}개`).join(', ')}`}>
+          <circle cx="60" cy="60" r={rr} fill="none" stroke="var(--color-sunken)" strokeWidth="18" />
+          {TEN_GROUPS.map((g) => {
+            const len = (counts[g] / total) * C
+            const el = groupElement(g, dayEl)
+            const seg = (
+              <circle key={g} cx="60" cy="60" r={rr} fill="none" stroke={EL_VAR[el]} strokeWidth="18" strokeDasharray={`${Math.max(0, len - 1.5)} ${C}`} strokeDashoffset={-acc} transform="rotate(-90 60 60)" />
+            )
+            acc += len
+            return seg
+          })}
+          <text x="60" y="56" textAnchor="middle" fontSize={top.length > 1 ? 13 : 16.5} fontWeight="800" fill="var(--color-ink)">
+            {top.length > 2 ? `${top[0]} 외` : top.join('·')}
+          </text>
+          <text x="60" y="73" textAnchor="middle" fontSize="10.5" fill="var(--color-muted)">
+            가장 많아요
+          </text>
+        </svg>
+        <p className="text-sm leading-relaxed text-ink-2">
+          <b>숫자는 글자 수입니다.</b> 내 사주 {hourKnown ? '여덟' : '여섯'} 글자 중 ‘나’(일간)를 뺀 <b>{total}글자</b>가 나와 어떤 관계인지 다섯 갈래로 나눠 셌습니다. 많을수록 그 성향이 강하게 드러납니다.
+        </p>
+      </div>
+      <ul className="flex flex-col divide-y divide-line overflow-hidden rounded-md border border-line bg-surface">
         {TEN_GROUPS.map((g) => {
-          const len = (counts[g] / total) * C
           const el = groupElement(g, dayEl)
-          const seg = (
-            <circle key={g} cx="60" cy="60" r={rr} fill="none" stroke={EL_VAR[el]} strokeWidth="18" strokeDasharray={`${Math.max(0, len - 1.5)} ${C}`} strokeDashoffset={-acc} transform="rotate(-90 60 60)" />
-          )
-          acc += len
-          return seg
-        })}
-        <text x="60" y="56" textAnchor="middle" fontSize="16.5" fontWeight="800" fill="var(--color-ink)">
-          {top[0]}
-        </text>
-        <text x="60" y="73" textAnchor="middle" fontSize="10.5" fill="var(--color-muted)">
-          가장 많아요
-        </text>
-      </svg>
-      <ul className="flex w-full flex-col gap-1.5">
-        {TEN_GROUPS.map((g) => {
-          const el = groupElement(g, dayEl)
+          const d = GROUP_DETAIL[g]
+          const n = counts[g]
           return (
-            <li key={g} className="flex items-center gap-2 text-sm">
-              <span className="size-3 shrink-0 rounded-full" style={{ background: EL_VAR[el] }} />
-              <span className="w-9 font-bold text-ink">{g}</span>
-              <span className="num w-4 text-right font-semibold text-ink-2">{counts[g]}</span>
-              <span className="min-w-0 text-muted">{TEN_GROUP_NOTE[g].short} — {TEN_GROUP_NOTE[g].long}</span>
+            <li key={g} className={clsx('grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-3 px-3 py-2.5', n === 0 && 'bg-paper')}>
+              <div className="flex flex-col gap-1">
+                <span className="flex items-center gap-1.5">
+                  <span className="size-3 shrink-0 rounded-full" style={{ background: EL_VAR[el] }} />
+                  <b className="text-base text-ink">{g}</b>
+                  <span className="text-xs text-faint">{d.hanja}</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="flex gap-0.5" aria-hidden>
+                    {Array.from({ length: Math.max(total, 5) }, (_, i) => (
+                      <span key={i} className="size-2 rounded-full" style={{ background: i < n ? EL_VAR[el] : 'var(--color-sunken)' }} />
+                    ))}
+                  </span>
+                </span>
+                <span className={clsx('num text-sm font-bold', n === 0 ? 'text-faint' : 'text-ink')}>{n}개</span>
+              </div>
+              <div className="flex min-w-0 flex-col gap-0.5">
+                <p className="text-sm font-semibold text-ink">
+                  {TEN_GROUP_NOTE[g].short}{' '}
+                  <span className="font-normal text-muted">
+                    · {d.members} · {d.relation}(<b style={{ color: EL_VAR[el] }}>{EL_HANJA[el]}</b>)
+                  </span>
+                </p>
+                <p className="text-sm leading-relaxed text-ink-2">{d.meaning}</p>
+              </div>
             </li>
           )
         })}

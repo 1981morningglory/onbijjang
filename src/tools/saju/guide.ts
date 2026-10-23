@@ -102,3 +102,12 @@ export const STAGE_NOTE: Record<string, string> = {
   태: '새 생명을 품음',
   양: '길러지며 준비',
 }
+
+/** 십신 다섯 갈래 자세한 뜻 */
+export const GROUP_DETAIL: Record<TenGroup, { hanja: string; members: string; relation: string; meaning: string }> = {
+  비겁: { hanja: '比劫', members: '비견 + 겁재', relation: '나와 같은 기운', meaning: '나와 어깨를 나란히 하는 힘. 자존심·독립심·경쟁심, 형제·친구·동료를 뜻합니다.' },
+  식상: { hanja: '食傷', members: '식신 + 상관', relation: '내가 낳는(도와주는) 기운', meaning: '내 안에서 밖으로 나가는 힘. 말·표현·재능·끼·아이디어, 먹을 복을 뜻합니다(여성에게는 자녀).' },
+  재성: { hanja: '財星', members: '편재 + 정재', relation: '내가 이기는(다스리는) 기운', meaning: '내가 다스려 얻는 것. 돈·재물·일의 결과·현실 감각을 뜻합니다(남성에게는 아내).' },
+  관성: { hanja: '官星', members: '편관 + 정관', relation: '나를 이기는(다스리는) 기운', meaning: '나를 다듬고 이끄는 힘. 직장·규율·책임·명예를 뜻합니다(여성에게는 남편, 남성에게는 자녀).' },
+  인성: { hanja: '印星', members: '편인 + 정인', relation: '나를 낳는(도와주는) 기운', meaning: '나를 길러 주고 돕는 힘. 공부·자격·문서·어머니·후원을 뜻합니다.' },
+}
