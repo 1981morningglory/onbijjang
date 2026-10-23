@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { A4_PRINT_PX, buildOutput, cellValue, centerHeader, centerNos, centerOrder, centerWidths, COL, colPx, layoutCenter, productSummary, dateFromName, JEJU_NOTE, looksLikeSabangnet, needsProduct, OUTPUTS, outputFileName, pickPhone, productKey, resolveCenter, sortRows, validCenterOrder, timeKst, type OrderRow } from './logic'
+import { A4_PRINT_PX, buildOutput, cellValue, centerHeader, centerNos, centerOrder, centerWidths, COL, colPx, layoutCenter, productSummary, dateFromName, looksLikeSabangnet, needsProduct, OUTPUTS, outputFileName, pickPhone, productKey, resolveCenter, sortRows, validCenterOrder, timeKst, type OrderRow } from './logic'
 
 const row = (o: Partial<Record<string, string | number | null>>): OrderRow => ({
   [COL.orderNo]: '1',
@@ -60,10 +60,10 @@ describe('결과 파일', () => {
       '스마트스토어/77000-20557',
     ])
   })
-  it('창고 전달: 칸 7개, NO 는 글자, 제주만 ‘제주도출고O’', () => {
+  it('창고 전달: 칸 7개, NO 는 글자, 제주라도 핫트랙스·텐바이텐이 아니면 비고 없음', () => {
     const t = buildOutput(spec('warehouse'), rows)
     expect(t[0]).toEqual(['NO', '수취인명', '상품코드', '상품명', '옵션', '수량', '배송메세지'])
-    expect(t[1]).toEqual(['1', '가', '10000-00001', '상품', '단품', 110, JEJU_NOTE])
+    expect(t[1]).toEqual(['1', '가', '10000-00001', '상품', '단품', 110, null])
     expect(t[3][6]).toBeNull() // i-Scream 줄의 원래 배송메세지는 넣지 않는다
   })
   it('CJ 업로드: 배송메세지 원본 그대로, 수집 상품명·옵션 칸은 뺀다', () => {
@@ -73,11 +73,13 @@ describe('결과 파일', () => {
     expect(t[1][t[0].indexOf(COL.message)]).toBe('행정실로 부탁')
     expect(t[1][t[0].indexOf(COL.sabangNo)]).toBe(100)
   })
-  it('구글 드라이브: 주소·물류처명 없이, 제주 표시', () => {
+  it('구글 드라이브: 주소·물류처명 없이, 제주 핫트랙스·텐바이텐만 [제주도]', () => {
     const t = buildOutput(spec('drive'), rows)
     expect(t[0]).not.toContain(COL.address)
     expect(t[0]).not.toContain(COL.warehouse)
-    expect(t[1][t[0].indexOf(COL.message)]).toBe(JEJU_NOTE)
+    expect(t[1][t[0].indexOf(COL.message)]).toBeNull()
+    const ht = buildOutput(spec('drive'), [row({ [COL.mall]: '교보핫트랙스', [COL.address]: '제주특별자치도 제주시 1' })])
+    expect(ht[1][ht[0].indexOf(COL.message)]).toBe('[제주도]')
   })
   it('상품을 못 맞춘 줄과 기억 열쇠, 파일 이름', () => {
     const r = row({ [COL.code]: null, [COL.rawName]: '점착메모지 블루', [COL.rawOption]: '100매:블루' })
@@ -151,10 +153,11 @@ describe('센터주문서 열 너비', () => {
 })
 
 describe('제주 배송메세지', () => {
-  it('제주 주소: 보통은 제주도출고O, 핫트랙스·텐바이텐 주문은 [제주도]', async () => {
+  it('제주 주소: 핫트랙스·텐바이텐 주문만 [제주도], 그 밖은 표시 없음', async () => {
     const { jejuNote } = await import('./logic')
     const jeju = { [COL.address]: '제주특별자치도 제주시 구산로 50' }
-    expect(jejuNote(row({ ...jeju, [COL.mall]: '스마트스토어' }))).toBe('제주도출고O')
+    expect(jejuNote(row({ ...jeju, [COL.mall]: '스마트스토어' }))).toBeNull()
+    expect(jejuNote(row({ ...jeju, [COL.mall]: 'ESM지마켓' }))).toBeNull()
     expect(jejuNote(row({ ...jeju, [COL.mall]: '교보핫트랙스' }))).toBe('[제주도]')
     expect(jejuNote(row({ ...jeju, [COL.mall]: '핫트렉스' }))).toBe('[제주도]')
     expect(jejuNote(row({ ...jeju, [COL.mall]: '텐바이텐' }))).toBe('[제주도]')

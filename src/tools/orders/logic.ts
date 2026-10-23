@@ -89,11 +89,14 @@ export function dateFromName(...names: string[]): string | null {
 export const todayKst = (now = Date.now()) => new Date(now + 9 * 3600_000).toISOString().slice(0, 10)
 
 export const isJeju = (r: OrderRow) => s(r[COL.address]).includes('제주')
-/** 제주 주소인데 핫트랙스·텐바이텐 주문이면 ‘제주도출고O’ 대신 ‘[제주도]’ 만 적는다 */
+/** 제주 주소인 핫트랙스·텐바이텐 주문에 적는 표시 */
 export const JEJU_CHECK_NOTE = '[제주도]'
 export const isJejuCheckMall = (r: OrderRow) => /핫\s*트[랙렉]스|hottracks|텐\s*바이\s*텐|10\s*x\s*10/i.test(s(r[COL.mall]))
-/** 센터주문서·구글드라이브용 배송메세지(비고): 제주 주소면 ‘제주도출고O’, 그중 핫트랙스·텐바이텐 주문은 ‘[제주도]’ */
-export const jejuNote = (r: OrderRow) => (isJeju(r) ? (isJejuCheckMall(r) ? JEJU_CHECK_NOTE : JEJU_NOTE) : null)
+/**
+ * 센터주문서·구글드라이브용 배송메세지(비고): 제주 주소인 교보핫트랙스·텐바이텐 주문만 ‘[제주도]’.
+ * 그 밖의 쇼핑몰은 제주 주소라도 다른 지역처럼 아무것도 적지 않는다(‘제주도출고O’ 는 더 쓰지 않음).
+ */
+export const jejuNote = (r: OrderRow) => (isJeju(r) && isJejuCheckMall(r) ? JEJU_CHECK_NOTE : null)
 
 /** 상품코드가 없는 줄(사방넷이 상품을 못 맞춘 것) — 사람이 채워야 한다 */
 export const needsProduct = (r: OrderRow) => !s(r[COL.code])
@@ -124,7 +127,7 @@ export interface OutputSpec {
   suffix: string
   cols: string[]
   widths: number[]
-  /** 배송메세지: 원본 그대로 / 제주만 '제주도출고O' */
+  /** 배송메세지: 원본 그대로 / 제주 핫트랙스·텐바이텐만 '[제주도]' */
   message: 'original' | 'jeju'
 }
 
