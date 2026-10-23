@@ -50,6 +50,7 @@ import {
   type Element,
   type SolarYmd,
 } from './logic'
+import { isClash, isHarmony, PILLAR_PLACE, TEN_GOD_NOTE } from './guide'
 import { GLOSSARY, GROUP_LUCK, GROUP_LUCK_SHORT, GROUP_MANY, GROUP_NONE, STAGE_NOTE, STEM_READING, STRENGTH_TEXT } from './guide'
 import { parseSajuLink, safeName, sajuLink } from './share'
 import { ShareButtons, ShareDialog, useShare, type ShareTarget } from './ShareUI'
@@ -599,39 +600,9 @@ function ChartView({ chart, name, actions }: { chart: Chart; name: string; actio
 
       <LuckTimeline chart={c} />
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card title="세운" hint="해마다 들어오는 운" icon={CalendarDays}>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {c.years.map((y, i) => {
-              const g = TEN_GROUP_OF[y.stemTenGod]
-              const gb = TEN_GROUP_OF[y.branchTenGod]
-              return (
-                <div key={y.year} className="flex items-start gap-3 rounded-md border border-line bg-paper p-3">
-                  <div className="flex flex-col items-center">
-                    <span className={clsx('text-3xl leading-none font-bold', EL_TEXT[stemElement(y.stem)])}>{stemHanja(y.stem)}</span>
-                    <span className={clsx('text-3xl leading-none font-bold', EL_TEXT[branchElement(y.branch)])}>{branchHanja(y.branch)}</span>
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-base font-bold text-ink">
-                      {y.year}년 {i === 0 ? '올해' : '내년'} <span aria-hidden>{ZODIAC[y.branch].emoji}</span>
-                    </p>
-                    <p className="text-sm text-muted">
-                      {y.stem}
-                      {y.branch}년 · {y.stemTenGod}/{y.branchTenGod}
-                    </p>
-                    <p className="mt-0.5 text-sm text-ink-2">
-                      {TEN_GROUP_NOTE[g].short}
-                      {gb !== g ? ` · ${TEN_GROUP_NOTE[gb].short}` : ''}의 해
-                    </p>
-                    <p className="mt-1 text-sm leading-relaxed text-ink-2">{GROUP_LUCK[g]}</p>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </Card>
-        <LuckyTips least={least} min={min} />
-      </div>
+      <YearsCard chart={c} />
+
+      <LuckyTips least={least} min={min} />
     </Panel>
   )
 }
@@ -739,7 +710,7 @@ function LuckTimeline({ chart: c }: { chart: Chart }) {
 function LuckyTips({ least, min }: { least: Element[]; min: number }) {
   return (
     <Card title={min === 0 ? '없는 기운 채우기' : '약한 기운 채우기'} hint="전통 오행 배속에 따른 생활 팁" icon={Palette}>
-      <div className="flex flex-col gap-3">
+      <div className="grid gap-3 md:grid-cols-2">
         {least.slice(0, 2).map((e) => {
           const t = ELEMENT_TIPS[e]
           return (
@@ -974,5 +945,102 @@ function LuckLine({ label, item, same }: { label: string; item: Chart['luck']['l
       </b>{' '}
       {same ? '지금과 같은 갈래의 흐름이 10년 더 이어지니, 지금 쌓은 것을 키워 가기 좋아요.' : GROUP_LUCK[g]}
     </p>
+  )
+}
+
+/** 세운: 올해·내년이 내 사주와 만나는 방식 */
+function YearsCard({ chart: c }: { chart: Chart }) {
+  const dayEl = stemElement(c.dayMaster)
+  const cur = c.luck.current >= 0 ? c.luck.list[c.luck.current] : null
+  return (
+    <Card title="세운" hint="해마다 들어오는 운" icon={CalendarDays}>
+      <div className="flex flex-col gap-1.5 rounded-md bg-paper px-3 py-2.5 text-sm leading-relaxed text-ink-2">
+        <p>
+          <b>세운 읽는 법</b> · 해마다 그해를 나타내는 두 글자(간지)가 있습니다. 예를 들어 {c.years[0].year}년은 <b>{c.years[0].stem}{c.years[0].branch}년</b>으로, 위 글자 {stemHanja(c.years[0].stem)}(천간)와 아래 글자 {branchHanja(c.years[0].branch)}(지지·{ZODIAC[c.years[0].branch].animal}띠)로 이루어집니다. 간지는 60년마다 한 바퀴 돕니다.
+        </p>
+        <p>
+          <b>읽는 순서</b> · ① 그해 글자가 나(일간)에게 어떤 십신인지(위 글자는 겉으로 드러나는 일, 아래 글자는 실제 생활에서 겪는 일) ② 내 사주 아래 글자들과 부딪히는지(충)·어울리는지(합) ③ 지금 대운과 같은 방향인지를 봅니다.
+        </p>
+        <p>
+          <b>바뀌는 때</b> · 사주에서 새해는 1월 1일이나 설날이 아니라 <b>입춘(2월 4일 무렵)</b>부터입니다. 대운이 10년의 큰 배경이라면 세운은 그 위에 한 해씩 더해지는 날씨와 같습니다.
+        </p>
+      </div>
+      <div className="grid gap-3 lg:grid-cols-2">
+        {c.years.map((y, i) => {
+          const g = TEN_GROUP_OF[y.stemTenGod]
+          const gb = TEN_GROUP_OF[y.branchTenGod]
+          const clashes = c.pillars.filter((p) => isClash(p.branch, y.branch))
+          const harmonies = c.pillars.filter((p) => isHarmony(p.branch, y.branch))
+          const sameAsLuck = cur && TEN_GROUP_OF[cur.stemTenGod] === g
+          return (
+            <div key={y.year} className="flex flex-col gap-3 rounded-lg border border-line bg-paper p-4">
+              <div className="flex items-center gap-3">
+                <div className="flex flex-col items-center rounded-md border border-line bg-surface px-2 py-1">
+                  <span className={clsx('text-3xl leading-none font-bold', EL_TEXT[stemElement(y.stem)])}>{stemHanja(y.stem)}</span>
+                  <span className={clsx('text-3xl leading-none font-bold', EL_TEXT[branchElement(y.branch)])}>{branchHanja(y.branch)}</span>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-lg font-bold text-ink">
+                    {y.year}년 {i === 0 ? '올해' : '내년'} · {y.stem}
+                    {y.branch}년 <span aria-hidden>{ZODIAC[y.branch].emoji}</span>
+                  </p>
+                  <p className="text-sm text-muted">
+                    {ZODIAC[y.branch].animal}의 해 · {stemElement(y.stem)}·{branchElement(y.branch)} 기운
+                  </p>
+                  <p className="mt-0.5 text-base font-semibold text-ink">
+                    {TEN_GROUP_NOTE[g].short}
+                    {gb !== g ? ` · ${TEN_GROUP_NOTE[gb].short}` : ''}의 해
+                  </p>
+                </div>
+              </div>
+              <ul className="flex flex-col divide-y divide-line overflow-hidden rounded-md border border-line bg-surface text-sm">
+                {[
+                  ['위 글자', y.stem, stemHanja(y.stem), stemElement(y.stem), y.stemTenGod, '겉으로 드러나는 일'] as const,
+                  ['아래 글자', y.branch, branchHanja(y.branch), branchElement(y.branch), y.branchTenGod, '생활에서 겪는 일'] as const,
+                ].map(([pos, ko, hj, el, tg, where]) => (
+                  <li key={pos} className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-x-3 px-3 py-2">
+                    <span>
+                      <span className="block text-xs text-muted">{pos}</span>
+                      <b className={clsx('text-lg', EL_TEXT[el])}>{hj}</b> <span className="text-muted">{ko}·{el}</span>
+                    </span>
+                    <span className="text-ink-2">
+                      나에게 <b style={{ color: EL_VAR[groupElement(TEN_GROUP_OF[tg], dayEl)] }}>{tg}</b>({TEN_GROUP_OF[tg]}) — {TEN_GOD_NOTE[tg]}
+                      <span className="block text-xs text-muted">{where}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <Reading>
+                <p>
+                  <b>한 해 흐름</b> · {GROUP_LUCK[g]}
+                </p>
+                {clashes.map((p) => (
+                  <p key={`c${p.key}`}>
+                    <b className="text-accent">
+                      충(沖) · {branchHanja(y.branch)}↔내 {PILLAR_LABEL[p.key]} {branchHanja(p.branch)}
+                    </b>{' '}
+                    — 서로 부딪히는 관계예요. {PILLAR_PLACE[p.key]} 쪽에 이동·변화·다툼이 생기기 쉬우니 서두르지 말고 한 번 더 살피세요.
+                  </p>
+                ))}
+                {harmonies.map((p) => (
+                  <p key={`h${p.key}`}>
+                    <b className="text-brand">
+                      합(合) · {branchHanja(y.branch)}↔내 {PILLAR_LABEL[p.key]} {branchHanja(p.branch)}
+                    </b>{' '}
+                    — 서로 어울리는 관계예요. {PILLAR_PLACE[p.key]} 쪽에 새 인연·협력·좋은 계약이 생기기 쉬워요.
+                  </p>
+                ))}
+                {!clashes.length && !harmonies.length && <p className="text-muted">내 사주 아래 글자들과 크게 부딪히거나(충) 묶이는(합) 글자는 없어 비교적 무난하게 흘러갑니다.</p>}
+                {cur && (
+                  <p className="text-muted">
+                    {sameAsLuck ? `지금 대운(${stemHanja(cur.stem)}${branchHanja(cur.branch)})과 같은 ${g} 갈래라, 대운의 흐름이 그해에 더 뚜렷하게 드러납니다.` : `지금 대운(${stemHanja(cur.stem)}${branchHanja(cur.branch)}, ${TEN_GROUP_OF[cur.stemTenGod]})의 큰 흐름 위에 그해에는 ${g} 기운이 더해집니다.`}
+                  </p>
+                )}
+              </Reading>
+            </div>
+          )
+        })}
+      </div>
+    </Card>
   )
 }

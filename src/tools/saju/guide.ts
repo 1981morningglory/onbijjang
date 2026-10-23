@@ -152,3 +152,26 @@ export const GROUP_LUCK_SHORT: Record<TenGroup, string> = {
   관성: '책임·자리·직장에 변화가 생기는 시기',
   인성: '배움·자격·도움이 들어오는 시기',
 }
+
+/** 십신 열 가지 각각의 쉬운 뜻 */
+export const TEN_GOD_NOTE: Record<string, string> = {
+  비견: '나와 대등한 동료·형제, 자립심',
+  겁재: '경쟁자, 승부욕, 나눠 쓰는 돈',
+  식신: '먹을 복·여유, 꾸준히 펼치는 재능',
+  상관: '톡톡 튀는 표현력·창의성, 틀을 깨는 힘',
+  편재: '크게 움직이는 돈·사업, 넓은 활동',
+  정재: '꾸준한 수입·월급, 성실한 관리',
+  편관: '압박·도전, 강한 책임과 결단',
+  정관: '명예·직장·규칙, 인정받는 자리',
+  편인: '남다른 재주·직감, 특별한 공부',
+  정인: '배움·자격·문서, 어머니 같은 도움',
+}
+
+/** 지지 육충(서로 부딪힘)·육합(서로 어울림) */
+const CLASH: Array<[string, string]> = [['자', '오'], ['축', '미'], ['인', '신'], ['묘', '유'], ['진', '술'], ['사', '해']]
+const HARMONY: Array<[string, string]> = [['자', '축'], ['인', '해'], ['묘', '술'], ['진', '유'], ['사', '신'], ['오', '미']]
+const pairOf = (list: Array<[string, string]>, a: string, b: string) => list.some(([x, y]) => (x === a && y === b) || (x === b && y === a))
+export const isClash = (a: string, b: string) => pairOf(CLASH, a, b)
+export const isHarmony = (a: string, b: string) => pairOf(HARMONY, a, b)
+/** 기둥 자리별로 충·합이 생겼을 때 주로 드러나는 곳 */
+export const PILLAR_PLACE: Record<string, string> = { year: '집안·윗사람', month: '직장·사회생활', day: '나 자신·배우자', hour: '자녀·아랫사람·계획' }
