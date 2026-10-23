@@ -50,13 +50,13 @@ import {
   type Element,
   type SolarYmd,
 } from './logic'
-import { GLOSSARY, GROUP_LUCK, GROUP_MANY, GROUP_NONE, STAGE_NOTE, STEM_READING, STRENGTH_TEXT } from './guide'
+import { GLOSSARY, GROUP_LUCK, GROUP_LUCK_SHORT, GROUP_MANY, GROUP_NONE, STAGE_NOTE, STEM_READING, STRENGTH_TEXT } from './guide'
 import { parseSajuLink, safeName, sajuLink } from './share'
 import { ShareButtons, ShareDialog, useShare, type ShareTarget } from './ShareUI'
 import { EL_BOX, EL_HANJA, EL_NAME, EL_SOFT, EL_TEXT, EL_VAR, ElementCycle, ElementTable, CycleGuide, groupElement, Radar, Stars, StemBadge, StrengthGauge, TenGroupDonut } from './visuals'
 
 const FEATURES: Array<[string, string]> = [
-  ['한국천문연구원 기준 만세력', '음력·윤달과 24절기를 한국천문연구원(KASI) 자료로 계산합니다.'],
+  ['한국천문연구원 기준 만세력', '음력·윤달과 24절기를 한국천문연구원(KASI) 자료로, 한국 시간 기준으로 계산합니다.'],
   ['윤달은 알아서', '음력 생일만 넣으면 그해 윤달이 있는지 스스로 찾아 양력으로 바꿉니다.'],
   ['그림으로 보는 사주', '내 일간 그림, 오행 상생상극 도표, 십신 도넛, 일간의 힘 게이지, 대운 흐름까지 한눈에.'],
   ['AI 한국어 풀이', '분야별 점수 레이더와 한 줄 요약, 핵심 포인트로 읽기 쉽게 풀어 줍니다.'],
@@ -201,10 +201,10 @@ export default function SajuTab() {
             </Field>
             <Field label="월">{(id) => <Select id={id} value={month} onValue={setMonth} options={Array.from({ length: 12 }, (_, i) => ({ value: String(i + 1), label: `${i + 1}월` }))} />}</Field>
             <Field label="일">{(id) => <Select id={id} value={day} onValue={setDay} options={Array.from({ length: 31 }, (_, i) => ({ value: String(i + 1), label: `${i + 1}일` }))} />}</Field>
-            <Field label="태어난 시각" hint={timeUnknown ? '시주 없이 세 기둥으로 봅니다' : '24시간제(오후 3시 = 15:00)'}>
+            <Field label="태어난 시각" hint={timeUnknown ? '시주 없이 세 기둥으로 봅니다' : `24시간으로 ${time} · 오전 12시 = 밤 12시(자정), 오후 12시 = 낮 12시(정오)`}>
               {(id) => (
-                <div className="flex flex-wrap items-center gap-3">
-                  <input id={id} type="time" value={time} disabled={timeUnknown} onChange={(e) => setTime(e.target.value)} className="h-10 rounded-md border border-line-strong bg-surface px-3 text-base disabled:opacity-50" />
+                <div className="flex flex-wrap items-center gap-2">
+                  <TimePicker id={id} value={time} onValue={setTime} disabled={timeUnknown} />
                   <Checkbox checked={timeUnknown} onChange={setTimeUnknown} label="시간 모름" />
                 </div>
               )}
@@ -258,6 +258,32 @@ export default function SajuTab() {
   )
 }
 
+/** 태어난 시각: 오전/오후 · 시 · 분 고르기(값은 24시간 "HH:MM") */
+function TimePicker({ id, value, onValue, disabled }: { id: string; value: string; onValue: (v: string) => void; disabled?: boolean }) {
+  const [h, m] = value.split(':').map(Number)
+  const pm = h >= 12
+  const h12 = h % 12 === 0 ? 12 : h % 12
+  const set = (nextPm: boolean, nextH12: number, nextM: number) => onValue(`${pad((nextH12 % 12) + (nextPm ? 12 : 0))}:${pad(nextM)}`)
+  return (
+    <div className="flex items-center gap-1.5">
+      <Select
+        id={id}
+        aria-label="오전·오후"
+        disabled={disabled}
+        value={pm ? 'pm' : 'am'}
+        onValue={(v) => set(v === 'pm', h12, m)}
+        options={[
+          { value: 'am', label: '오전' },
+          { value: 'pm', label: '오후' },
+        ]}
+        className="w-[5.5rem]"
+      />
+      <Select aria-label="시" disabled={disabled} value={String(h12)} onValue={(v) => set(pm, Number(v), m)} options={Array.from({ length: 12 }, (_, i) => ({ value: String(i + 1), label: `${i + 1}시` }))} className="w-[5.5rem]" />
+      <Select aria-label="분" disabled={disabled} value={String(m)} onValue={(v) => set(pm, h12, Number(v))} options={Array.from({ length: 60 }, (_, i) => ({ value: String(i), label: `${pad(i)}분` }))} className="w-[5.5rem]" />
+    </div>
+  )
+}
+
 /** 음력 입력 안내: 양력 날짜를 바로 보여 주고, 그해 같은 달에 윤달이 있을 때만 고르게 한다 */
 function LunarNote({ lunar, both, month, choice, onChoice }: { lunar: { normal: SolarYmd | null; leap: SolarYmd | null }; both: boolean; month: number; choice: 'normal' | 'leap'; onChoice: (v: 'normal' | 'leap') => void }) {
   if (!lunar.normal && !lunar.leap) return <p className="text-base font-semibold text-danger">음력으로 없는 날짜입니다(그달은 29일까지).</p>
@@ -295,8 +321,28 @@ function Intro() {
       <div className="flex flex-col gap-1.5">
         <h2 className="text-xl font-bold text-ink">사주풀이란?</h2>
         <p className="text-base leading-relaxed text-ink-2">
-          사주(四柱)는 태어난 <b>해·달·날·시</b>를 네 기둥으로 세우고, 기둥마다 두 글자씩 모두 여덟 글자(팔자)로 타고난 기운을 읽는 전통 명리학입니다. 생년월일시만 넣으면 <b>만세력으로 정확히 계산</b>해 <b>그림과 도표</b>로 보여 주고, <b>AI가 한국어로 풀이</b>해 드립니다.
+          사주(四柱)는 태어난 <b>해·달·날·시</b>를 네 기둥으로 세우고, 기둥마다 두 글자씩 모두 여덟 글자(팔자)로 타고난 기운을 읽는 전통 명리학입니다. 생년월일시만 넣으면 <b>한국 기준 만세력으로 정확히 계산</b>해 <b>그림과 도표</b>로 보여 주고, <b>AI가 한국어로 풀이</b>해 드립니다.
         </p>
+      </div>
+      <div className="flex flex-col gap-2 rounded-md border border-brand/25 bg-brand-soft/50 p-4">
+        <p className="text-base font-bold text-ink">🇰🇷 중국식이 아닌 ‘한국식 사주’라 더 정확합니다</p>
+        <p className="text-sm leading-relaxed text-ink-2">
+          사주는 태어난 순간의 <b>달력(음력·절기)</b>과 <b>시각</b>으로 여덟 글자를 정합니다. 그런데 많은 사주 앱과 프로그램이 쓰는 중국 만세력은 <b>베이징 시간(동경 120°)</b>을 기준으로 만들어져 한국에서 태어난 사람에게는 조금씩 어긋날 수 있습니다. 이 앱은 처음부터 끝까지 한국 기준으로 계산합니다.
+        </p>
+        <ul className="grid gap-2 text-sm leading-relaxed text-ink-2 md:grid-cols-2">
+          <li className="rounded bg-surface/70 px-3 py-2">
+            <b className="text-ink">한국 달력 그대로</b> — 한국과 중국은 음력 초하루·윤달이 다른 해가 있습니다. 한국천문연구원(KASI)이 발표한 <b>한국 음력</b>으로 계산해 음력 생일이 정확히 바뀝니다.
+          </li>
+          <li className="rounded bg-surface/70 px-3 py-2">
+            <b className="text-ink">절기가 드는 순간을 한국 시간으로</b> — 해·달 기둥은 입춘·경칩 같은 절기가 드는 순간에 바뀝니다. 중국 시간과는 1시간 차이가 나는데, 이 앱은 <b>한국 시간 기준 분 단위</b>로 나눠 절기 무렵에 태어난 분도 정확합니다.
+          </li>
+          <li className="rounded bg-surface/70 px-3 py-2">
+            <b className="text-ink">한국의 시간 역사 반영</b> — 한국은 표준시가 바뀐 적(1954~1961년 동경 127.5°)과 서머타임(1948~1988년 중 여러 해)이 있었습니다. 출생지를 고르면 이런 한국만의 시간 이력과 실제 해의 위치(진태양시)까지 반영해 시주를 정합니다.
+          </li>
+          <li className="rounded bg-surface/70 px-3 py-2">
+            <b className="text-ink">한국 명리 관례대로</b> — 대운 나이(대운수)는 한국식 반올림, 지장간은 한국 만세력 표를 따르고, 밤 11시~새벽 1시(자시) 출생은 한국에서 쓰는 세 가지 보는 법 중에서 고를 수 있습니다.
+          </li>
+        </ul>
       </div>
       <ul className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
         {FEATURES.map(([title, body]) => (
@@ -633,7 +679,49 @@ function LuckTimeline({ chart: c }: { chart: Chart }) {
           })}
         </div>
       </div>
-      <p className="text-sm text-faint">위쪽 색 띠 = 그 대운 천간의 갈래(오행) · 흐린 칸은 지나간 대운</p>
+      <div className="flex flex-col gap-1.5 rounded-md bg-paper px-3 py-2.5 text-sm leading-relaxed text-ink-2">
+        <p>
+          <b>칸 읽는 법</b> · 맨 위 숫자(<b>{c.luck.list[0]?.age}세</b>, {c.luck.list[1]?.age}세…)는 그 대운이 <b>시작되는 나이(만)</b>이고, 한 대운은 10년 동안 이어집니다. 가운데 두 글자는 그 10년의 간지(위 글자 천간·아래 글자 지지)이며, 흔히 앞 5년은 위 글자, 뒤 5년은 아래 글자의 힘이 더 크다고 봅니다. 아래 ‘재성’ 같은 말은 위 글자가 나(일간)에게 어떤 갈래인지, 위쪽 색 띠는 그 갈래의 오행입니다. 흐린 칸은 지나간 대운입니다.
+        </p>
+        <p>
+          <b>대운수 {c.luck.startAge}</b> · 첫 대운이 시작되는 나이입니다. 태어난 날부터 가까운 절기까지의 날수를 3으로 나눠 구하므로 사람마다 1~10 사이로 다릅니다. 그 전까지는 월주(부모·환경)의 영향을 크게 받는다고 봅니다.
+        </p>
+        <p>
+          <b>{c.luck.forward ? '순행' : '역행'}</b> · 대운이 월주에서 {c.luck.forward ? '다음 간지로 나아가는(순행)' : '앞 간지로 거슬러 가는(역행)'} 방향입니다. 양(陽)의 해에 태어난 남자와 음(陰)의 해에 태어난 여자는 순행, 그 반대는 역행입니다. 좋고 나쁨이 아니라 흐름의 방향일 뿐입니다.
+        </p>
+      </div>
+      <ul className="flex flex-col divide-y divide-line overflow-hidden rounded-md border border-line bg-surface">
+        {c.luck.list.map((l, i) => {
+          const g = TEN_GROUP_OF[l.stemTenGod]
+          const gb = TEN_GROUP_OF[l.branchTenGod]
+          // 시작 달부터 10년 뒤 전달까지(예: 1997.07 ~ 2007.06)
+          const fy = Number(l.from.slice(0, 4))
+          const fm = Number(l.from.slice(5, 7))
+          const endM = fm === 1 ? 12 : fm - 1
+          const endY = fy + 10 - (fm === 1 ? 1 : 0)
+          return (
+            <li key={l.age} className={clsx('grid grid-cols-[7.5rem_3.5rem_minmax(0,1fr)] items-center gap-x-3 px-3 py-2 text-sm', i === cur ? 'bg-brand-soft/70' : cur >= 0 && i < cur && 'text-muted')}>
+              <span>
+                <b className="num text-ink">
+                  {l.age}~{l.age + 9}세
+                </b>
+                {i === cur && <Badge tone="brand" className="ml-1">지금</Badge>}
+                <span className="num block text-xs text-muted">
+                  {fy}.{pad(fm)} ~ {endY}.{pad(endM)}
+                </span>
+              </span>
+              <span className="text-xl font-bold">
+                <span className={EL_TEXT[stemElement(l.stem)]}>{stemHanja(l.stem)}</span>
+                <span className={EL_TEXT[branchElement(l.branch)]}>{branchHanja(l.branch)}</span>
+              </span>
+              <span className="min-w-0">
+                <b style={{ color: EL_VAR[groupElement(g, dayEl)] }}>{g}</b>
+                {gb !== g && <span className="text-muted"> · 아래 글자 {gb}</span>} — {GROUP_LUCK_SHORT[g]}
+              </span>
+            </li>
+          )
+        })}
+      </ul>
       <Reading>
         {curItem ? (
           <LuckLine label={`지금 대운 (${curItem.age}~${curItem.age + 9}세)`} item={curItem} />
