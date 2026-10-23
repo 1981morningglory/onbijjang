@@ -1,6 +1,7 @@
 import clsx from 'clsx'
 import { ArrowDown, ArrowUp, Building2, CalendarDays, Download, FileSpreadsheet, FileText, Image as ImageIcon, Mail, Plus, Printer, RotateCcw, Save, Trash2, UserRound } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useViewerStore } from '@/app/viewer'
 import { downloadBlob, downloadZip } from '@/lib/files'
 import { Badge, Button, Callout, Field, IconButton, MenuItem, NumberInput, Panel, Popover, Section, Segmented, Select, Switch, Textarea, TextInput, toast } from '@/ui'
 import { buildPages, canvasMeasure, type Page } from './layout'
@@ -268,6 +269,14 @@ export function Editor({ draft, setDraft, onOpenSettings }: { draft: Draft; setD
   const pages: Page[] = useMemo(() => buildPages({ doc, kit, measure: canvasMeasure }), [doc, kit, fontsReady])
   useEffect(() => setPageIndex((i) => Math.min(i, pages.length - 1)), [pages.length])
 
+  // 담당자를 아직 안 고른 문서는 로그인한 나(담당자 목록에 같은 이름이 있으면)로
+  const me = useViewerStore((s) => s.user)
+  useEffect(() => {
+    if (doc.contactId || !me) return
+    const mine = kit.contacts.find((c) => c.name.replace(/\s+/g, '') === me.name.replace(/\s+/g, ''))
+    if (mine) patch({ contactId: mine.id })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me?.id, kit.contacts, doc.contactId])
   const contact = kit.contacts.find((c) => c.id === doc.contactId) ?? kit.contacts[0]
   const totals = calcTotals(doc)
   const filledCount = totals.lines.filter((l) => l.filled).length
@@ -602,7 +611,6 @@ export function Editor({ draft, setDraft, onOpenSettings }: { draft: Draft; setD
         onClose={() => setMailing(false)}
         doc={doc}
         kit={kit}
-        contact={contact}
         total={totals.total}
         base={base}
         makePdf={makePdf}

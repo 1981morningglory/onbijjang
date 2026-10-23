@@ -130,7 +130,7 @@ function summarize(doc, id, prev) {
 }
 
 export default async function quoteRoutes(app, ctx) {
-  const { requireAdmin, isAdmin, DATA_DIR } = ctx
+  const { requireAdmin, isAdmin, currentUser, DATA_DIR } = ctx
   const TEAMS_FILE = path.join(DATA_DIR, 'teams.json')
   const COMPANY_KIT = path.join(DATA_DIR, 'company-kit.json')
   // 회사 공통 자료를 바꾸거나 지울 때 직전 것을 한 벌 남겨 되돌릴 수 있게 한다(직인을 잃지 않도록)
@@ -388,13 +388,26 @@ export default async function quoteRoutes(app, ctx) {
     res.json({ ok: true })
   })
 
-  // ── 메일 보내기: 담당자 메일 계정 · 주소록 · 보내기 ──────
-  // mail.json = { accounts: { [담당자 id]: { host, port, secure, user, pass(암호화), savedAt } }, lastTo: { [거래처]: [주소] }, log: [...] }
+  // ── 메일 보내기: 내 메일 계정(개인) · 주소록(팀) · 보내기 ──────
+  // 메일 계정은 온비짱에 로그인한 사람마다 따로 둔다(팀이 같아도 남의 이름·계정으로는 보낼 수 없다).
+  //   DATA_DIR/mail-accounts/<사용자 id>.json = { host, port, secure, user, pass(암호화), name, title, phone, replyTo, savedAt }
+  // 팀이 함께 쓰는 것: 주소록(settings.json), 발송 기록·메일함(mail.json · mailbox/), 거래처별 지난 받는 사람
+  //   mail.json = { lastTo: { [거래처]: [주소] }, log: [...] }
   const mailFile = (teamId) => path.join(teamDir(teamId), 'mail.json')
-  const loadMail = async (teamId) => ({ accounts: {}, lastTo: {}, log: [], ...(await readJson(mailFile(teamId), {})) })
+  // 예전(담당자별 팀 계정) 설정은 쓰지 않는다 — 다음에 저장할 때 지워진다
+  const loadMail = async (teamId) => {
+    const { accounts: _old, ...m } = await readJson(mailFile(teamId), {})
+    return { lastTo: {}, log: [], ...m }
+  }
   const loadSettings = (teamId) => readJson(path.join(teamDir(teamId), 'settings.json'), {})
-  // fromAddress: 실제로 보내는 주소(로그인 계정). 담당자 주소와 다르면 답장은 담당자 주소로 온다
-  const publicAccount = (a, contactEmail) => ({ host: a.host, port: a.port, user: a.user, savedAt: a.savedAt, fromAddress: senderAddress(a, contactEmail) })
+  const myFile = (userId) => path.join(DATA_DIR, 'mail-accounts', `${userId}.json`)
+  const loadMine = (user) => (user ? readJson(myFile(user.id), null) : Promise.resolve(null))
+  /** 내 계정을 화면에 줄 모양(비밀번호는 빼고) */
+  const publicAccount = (a) => ({ host: a.host, port: a.port, user: a.user, name: a.name, title: a.title, phone: a.phone, replyTo: a.replyTo, savedAt: a.savedAt, fromAddress: senderAddress(a, a.replyTo) })
+  const fromOf = (a) => {
+    const address = senderAddress(a, a.replyTo)
+    return { name: [a.name, a.title].filter(Boolean).join(' ') || address, address }
+  }
   // 팀 코드만으로 서버 안쪽 주소에 접속하지 못하게(시험할 때만 MAIL_ALLOW_PRIVATE=1)
   const privateHost = (h) => !process.env.MAIL_ALLOW_PRIVATE && (/^(localhost|.*\.local|.*\.internal)$/.test(h) || /^(127\.|10\.|192\.168\.|169\.254\.|0\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h))
   const transportFor = (acc) =>
@@ -408,72 +421,77 @@ export default async function quoteRoutes(app, ctx) {
       greetingTimeout: 20_000,
       socketTimeout: 60_000,
     })
-  const contactOf = async (teamId, id) => ((await loadSettings(teamId)).contacts ?? []).find((c) => c.id === id) ?? null
+  /** 메일 계정은 본인 로그인이 있어야 한다(팀 코드만으로는 안 됨) */
+  function requireMe(req, res, next) {
+    const user = currentUser?.(req)
+    if (!user) return res.status(401).json({ error: '메일은 본인 계정으로 보냅니다. 온비짱 오른쪽 위 [로그인]으로 내 계정에 로그인해 주세요.', needLogin: true })
+    req.me = user
+    next()
+  }
 
   app.get('/api/quote/mail', requireTeam, async (req, res) => {
     const m = await loadMail(req.team.id)
     const s = await loadSettings(req.team.id)
-    const emailOf = (id) => (s.contacts ?? []).find((c) => c.id === id)?.email ?? ''
+    const user = currentUser?.(req) ?? null
+    const mine = await loadMine(user)
     res.setHeader('Cache-Control', 'no-store')
     res.json({
       providers: MAIL_PROVIDERS,
-      accounts: Object.fromEntries(Object.entries(m.accounts).map(([k, a]) => [k, publicAccount(a, emailOf(k))])),
+      me: user ? { id: user.id, name: user.name, username: user.username } : null,
+      account: mine ? publicAccount(mine) : null,
       addressBook: s.addressBook ?? [],
       lastTo: m.lastTo,
     })
   })
 
-  /** 담당자 메일 계정 저장. 비밀번호를 비워 두면 전에 넣은 것을 그대로 쓴다 */
-  app.put('/api/quote/mail/accounts/:cid', requireTeam, async (req, res) => {
-    const contact = await contactOf(req.team.id, req.params.cid)
-    if (!contact) return res.status(404).json({ error: '담당자를 찾을 수 없습니다. 담당자를 먼저 저장해 주세요.' })
-    if (!isEmail(contact.email)) return res.status(400).json({ error: '이 담당자의 이메일 주소를 먼저 넣고 저장해 주세요.' })
-    const { account, error } = cleanAccount(req.body, contact.email)
+  /** 내 메일 계정 저장. 비밀번호를 비워 두면 전에 넣은 것을 그대로 쓴다 */
+  app.put('/api/quote/mail/account', requireTeam, requireMe, async (req, res) => {
+    const b = req.body ?? {}
+    const replyTo = str(b.replyTo, 120).trim()
+    if (replyTo && !isEmail(replyTo)) return res.status(400).json({ error: '답장 받을 메일 주소가 올바르지 않습니다.' })
+    const { account, error } = cleanAccount(b, replyTo)
     if (error) return res.status(400).json({ error })
     if (privateHost(account.host)) return res.status(400).json({ error: '이 서버 주소는 쓸 수 없습니다.' })
-    const pass = typeof req.body?.pass === 'string' ? req.body.pass.replace(/\s+/g, '') : ''
+    const pass = typeof b.pass === 'string' ? b.pass.replace(/\s+/g, '') : ''
     if (pass.length > 200) return res.status(400).json({ error: '비밀번호가 너무 깁니다.' })
-    const saved = await serial(`mail:${req.team.id}`, async () => {
-      const m = await loadMail(req.team.id)
-      const prev = m.accounts[req.params.cid]
+    const saved = await serial(`me:${req.me.id}`, async () => {
+      const prev = await loadMine(req.me)
       if (!pass && !prev?.pass) return { error: '메일 비밀번호(앱 비밀번호)를 넣어 주세요.' }
-      m.accounts[req.params.cid] = { ...account, pass: pass ? sealSecret(pass, secret) : prev.pass, savedAt: new Date().toISOString() }
-      await writeJson(mailFile(req.team.id), m)
-      return { account: publicAccount(m.accounts[req.params.cid], contact.email) }
+      const next = {
+        ...account,
+        pass: pass ? sealSecret(pass, secret) : prev.pass,
+        name: str(b.name, 30).trim() || req.me.name,
+        title: str(b.title, 20).trim(),
+        phone: str(b.phone, 30).trim(),
+        replyTo: replyTo || senderAddress(account, ''),
+        savedAt: new Date().toISOString(),
+      }
+      await writeJson(myFile(req.me.id), next)
+      return { account: publicAccount(next) }
     })
     if (saved.error) return res.status(400).json({ error: saved.error })
     res.json(saved)
   })
-  app.delete('/api/quote/mail/accounts/:cid', requireTeam, async (req, res) => {
-    await serial(`mail:${req.team.id}`, async () => {
-      const m = await loadMail(req.team.id)
-      delete m.accounts[req.params.cid]
-      await writeJson(mailFile(req.team.id), m)
-    })
+  app.delete('/api/quote/mail/account', requireTeam, requireMe, async (req, res) => {
+    await fsp.rm(myFile(req.me.id), { force: true })
     res.json({ ok: true })
   })
-  /**
-   * 연결 시험: 로그인만이 아니라 실제로 시험 메일 한 통을 담당자 본인 주소로 보내 본다
-   * (로그인은 되는데 보내는 주소를 거절하는 서버가 있어서)
-   */
-  app.post('/api/quote/mail/accounts/:cid/test', requireTeam, async (req, res) => {
-    const acc = (await loadMail(req.team.id)).accounts[req.params.cid]
-    if (!acc) return res.status(404).json({ error: '먼저 메일 계정을 저장해 주세요.' })
-    const contact = await contactOf(req.team.id, req.params.cid)
-    if (!contact || !isEmail(contact.email)) return res.status(400).json({ error: '이 담당자의 이메일 주소를 먼저 넣어 주세요.' })
-    const address = senderAddress(acc, contact.email)
-    const name = [contact.name, contact.title].filter(Boolean).join(' ') || address
+  /** 시험: 내 답장 주소로 실제 한 통을 보내 본다(로그인은 되는데 보내는 주소를 거절하는 서버가 있어서) */
+  app.post('/api/quote/mail/account/test', requireTeam, requireMe, async (req, res) => {
+    const acc = await loadMine(req.me)
+    if (!acc) return res.status(404).json({ error: '먼저 내 메일 계정을 저장해 주세요.' })
+    const from = fromOf(acc)
     try {
       await transportFor(acc).sendMail({
-        from: { name, address },
-        replyTo: contact.email,
-        to: contact.email,
+        from,
+        replyTo: acc.replyTo,
+        to: acc.replyTo || from.address,
         subject: '[온비짱] 메일 발송 시험',
-        text: `온비짱 견적서·거래명세서에서 보낸 시험 메일입니다.\n\n보내는 주소: ${address}\n답장 받는 주소: ${contact.email}\n메일 서버: ${acc.host}:${acc.port}\n\n이 메일이 왔다면 견적서 메일을 보낼 준비가 끝났습니다.`,
+        text: `온비짱 견적서·거래명세서에서 보낸 시험 메일입니다.\n\n보내는 사람: ${from.name} <${from.address}>\n답장 받는 주소: ${acc.replyTo}\n메일 서버: ${acc.host}:${acc.port}\n\n이 메일이 왔다면 견적서·거래명세서 메일을 보낼 준비가 끝났습니다.`,
       })
-      res.json({ ok: true, from: address, to: contact.email })
+      res.json({ ok: true, from: from.address, to: acc.replyTo || from.address })
     } catch (err) {
-      res.status(400).json({ error: mailErrorText(err, { from: address }) })
+      res.status(400).json({ error: mailErrorText(err, { from: from.address }) })
     }
   })
 
@@ -524,13 +542,11 @@ export default async function quoteRoutes(app, ctx) {
       await writeJson(mailFile(teamId), m)
     })
 
-  app.post('/api/quote/mail/send', requireTeam, async (req, res) => {
+  app.post('/api/quote/mail/send', requireTeam, requireMe, async (req, res) => {
     const teamId = req.team.id
     const b = req.body ?? {}
-    const contact = await contactOf(teamId, b.contactId)
-    if (!contact) return res.status(400).json({ error: '보내는 사람(담당자)을 골라 주세요.' })
-    const acc = (await loadMail(teamId)).accounts[contact.id]
-    if (!acc) return res.status(400).json({ error: `${contact.name || '이 담당자'}의 메일 계정이 아직 없습니다. 팀 설정 → 메일·주소록에서 넣어 주세요.` })
+    const acc = await loadMine(req.me)
+    if (!acc) return res.status(400).json({ error: '내 메일 계정이 아직 없습니다. 팀 설정 → 메일·주소록 → 내 메일 계정에서 넣어 주세요.', needAccount: true })
     const to = cleanRecipients(b.to, 50)
     const cc = cleanRecipients(b.cc, 50)
     const bcc = cleanRecipients(b.bcc, 50)
@@ -554,18 +570,20 @@ export default async function quoteRoutes(app, ctx) {
     const hour = Date.now() - 3600_000
     const recent = (sentAt.get(teamId) ?? []).filter((t) => t > hour)
     if (recent.length >= 60) return res.status(429).json({ error: '1시간에 60통까지 보낼 수 있습니다. 잠시 뒤에 다시 보내 주세요.' })
-    // 보내는 주소 = 로그인 계정 주소(담당자 주소와 다르면 답장은 담당자 주소로)
-    const fromAddress = senderAddress(acc, contact.email)
-    const from = { name: [contact.name, contact.title].filter(Boolean).join(' ') || fromAddress, address: fromAddress }
+    // 보내는 사람 = 로그인한 나(내 메일 계정). 답장은 내 답장 주소로
+    const from = fromOf(acc)
+    const fromAddress = from.address
+    const replyTo = acc.replyTo || fromAddress
     const bccList = [...bcc.list]
-    if (b.bccMe && !bccList.some((x) => x.toLowerCase() === contact.email.toLowerCase())) bccList.push(contact.email)
+    if (b.bccMe && !bccList.some((x) => x.toLowerCase() === replyTo.toLowerCase())) bccList.push(replyTo)
     const customer = str(b.customer, 60).trim()
     const entry = {
       id: newId(),
       at: new Date().toISOString(),
       from: fromAddress,
-      replyTo: contact.email,
-      by: contact.name,
+      replyTo,
+      by: from.name,
+      userId: req.me.id,
       to: to.list,
       cc: cc.list,
       bcc: bccList,
@@ -579,7 +597,7 @@ export default async function quoteRoutes(app, ctx) {
     }
     let info
     try {
-      info = await transportFor(acc).sendMail({ from, replyTo: contact.email, to: to.list, cc: cc.list.length ? cc.list : undefined, bcc: bccList.length ? bccList : undefined, subject, text, attachments: files })
+      info = await transportFor(acc).sendMail({ from, replyTo, to: to.list, cc: cc.list.length ? cc.list : undefined, bcc: bccList.length ? bccList : undefined, subject, text, attachments: files })
     } catch (err) {
       const error = mailErrorText(err, { from: fromAddress })
       await addLog(teamId, { ...entry, error }, customer)
@@ -659,13 +677,18 @@ export default async function quoteRoutes(app, ctx) {
   app.delete('/api/quote/mailbox/:mid', requireTeam, async (req, res) => {
     if (!ID_RE.test(req.params.mid)) return res.status(400).json({ error: '메일 번호가 올바르지 않습니다.' })
     const teamId = req.team.id
-    await serial(`mail:${teamId}`, async () => {
+    // 보낸 사람 본인(또는 관리자)만 지운다. 보는 것은 팀 누구나
+    const result = await serial(`mail:${teamId}`, async () => {
       const m = await loadMail(teamId)
-      for (const e of m.log) if (e.id === req.params.mid) e.saved = false
+      const entry = m.log.find((e) => e.id === req.params.mid)
+      if (entry?.userId && entry.userId !== currentUser?.(req)?.id && !isAdmin(req)) return { error: `${entry.by} 님이 보낸 메일이라 그분(또는 관리자)만 지울 수 있습니다.` }
+      if (entry) entry.saved = false
       await writeJson(mailFile(teamId), m)
       await fsp.rm(boxFile(teamId, req.params.mid), { force: true })
       await fsp.rm(boxFilesDir(teamId, req.params.mid), { recursive: true, force: true })
+      return {}
     })
+    if (result.error) return res.status(403).json({ error: result.error })
     res.json({ ok: true })
   })
 

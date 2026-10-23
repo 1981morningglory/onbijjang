@@ -13,12 +13,19 @@ export interface MailProvider {
   port: number
   domains: string[]
 }
+/** 내 메일 계정(로그인한 사람마다 따로 — 팀원끼리 나누지 않는다) */
 export interface MailAccount {
   host: string
   port: number
   user: string
+  /** 보내는 사람 이름·직함·직통번호(메일 서명에 씀) */
+  name: string
+  title: string
+  phone: string
+  /** 답장 받을 주소(예: 회사 메일) */
+  replyTo: string
   savedAt: string
-  /** 실제로 보내는 주소(로그인 계정). 담당자 주소와 다르면 답장은 담당자 주소로 온다 */
+  /** 실제로 보내는 주소(메일 서버에 로그인한 계정) */
   fromAddress: string
 }
 export interface BookEntry {
@@ -33,9 +40,11 @@ export interface MailLogEntry {
   id: string
   at: string
   from: string
-  /** 답장 받는 주소(담당자 주소) */
+  /** 답장 받는 주소 */
   replyTo?: string
   by: string
+  /** 보낸 사람(온비짱 계정 id) — 메일함에서 지우기는 본인만 */
+  userId?: string
   to: string[]
   cc: string[]
   bcc: string[]
@@ -57,21 +66,27 @@ export interface SavedMail {
 }
 export interface MailState {
   providers: MailProvider[]
-  accounts: Record<string, MailAccount>
+  /** 온비짱에 로그인한 나(없으면 메일을 보낼 수 없다) */
+  me: { id: string; name: string; username: string } | null
+  /** 내 메일 계정 */
+  account: MailAccount | null
   addressBook: BookEntry[]
   /** 거래처 → 지난번에 보낸 받는 사람 */
   lastTo: Record<string, string[]>
 }
 
 export const loadMail = () => api<MailState>('/quote/mail')
-export const saveAccount = (contactId: string, a: { host: string; port: number; user: string; pass: string }) =>
-  api<{ account: MailAccount }>(`/quote/mail/accounts/${contactId}`, { method: 'PUT', body: a })
-export const removeAccount = (contactId: string) => api(`/quote/mail/accounts/${contactId}`, { method: 'DELETE' })
-export const testAccount = (contactId: string) => api<{ ok: true; from: string; to: string }>(`/quote/mail/accounts/${contactId}/test`, { method: 'POST' })
+export const saveAccount = (a: { host: string; port: number; user: string; pass: string; name: string; title: string; phone: string; replyTo: string }) =>
+  api<{ account: MailAccount }>('/quote/mail/account', { method: 'PUT', body: a })
+export const removeAccount = () => api('/quote/mail/account', { method: 'DELETE' })
+export const testAccount = () => api<{ ok: true; from: string; to: string }>('/quote/mail/account/test', { method: 'POST' })
+
+/** 내 메일 계정 → 본문 서명에 쓰는 담당자 모양 */
+export const profileOf = (a: MailAccount | null | undefined): Contact | undefined =>
+  a ? { id: 'me', name: a.name, title: a.title, phone: a.phone, email: a.replyTo || a.fromAddress, extras: [] } : undefined
 export const saveBook = (entries: BookEntry[]) => api<{ addressBook: BookEntry[] }>('/quote/addressbook', { method: 'PUT', body: { entries } })
 
 export interface SendRequest {
-  contactId: string
   to: string[]
   cc: string[]
   bcc: string[]

@@ -71,7 +71,7 @@ export function TeamSettings({ section, setSection }: { section: SettingsSection
       {section === 'code' && <CodeSection admin={admin} />}
       {section === 'contacts' && <ContactsSection />}
       {section === 'company' && <CompanySection />}
-      {section === 'mail' && <MailSection onGoContacts={() => setSection('contacts')} />}
+      {section === 'mail' && <MailSection />}
     </div>
   )
 }
