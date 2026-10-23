@@ -1,10 +1,11 @@
-import { Building2, FilePenLine, Inbox, KeyRound, LockKeyhole, LogIn, LogOut, Package, Settings2, ShieldCheck, Store, UsersRound, WifiOff } from 'lucide-react'
+import { Building2, FilePenLine, Inbox, KeyRound, LockKeyhole, LogIn, LogOut, Mail, Package, Settings2, ShieldCheck, Store, UsersRound, WifiOff } from 'lucide-react'
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router'
 import { usePersistentState } from '@/lib/hooks'
 import { Badge, Button, Callout, Field, Panel, Spinner, Tabs, TextInput, toast } from '@/ui'
 import { CustomersBoard, DocsBoard, ItemsBoard, type BoardFilter } from './Board'
 import { draftKey, Editor, freshDraft, type Draft } from './Editor'
+import { MailBox } from './MailUI'
 import { proposeDocNo, todayIso, uid, type QuoteDoc } from './model'
 import { TeamSettings, type SettingsSection } from './TeamSettings'
 import { useTeam, type TeamInfo } from './team'
@@ -131,7 +132,7 @@ function Gate() {
 }
 
 // ── 팀 공간 ───────────────────────────────────────────────
-type View = 'write' | 'docs' | 'customers' | 'items' | 'settings'
+type View = 'write' | 'docs' | 'customers' | 'items' | 'mail' | 'settings'
 
 const hasContent = (d: QuoteDoc) => Boolean(d.customer.trim() || d.title.trim() || d.items.some((i) => i.name.trim() || i.qty || i.unitPrice))
 
@@ -215,6 +216,7 @@ function TeamApp({ team }: { team: TeamInfo }) {
           { value: 'docs', label: '문서함', icon: Inbox },
           { value: 'customers', label: '거래처', icon: Store },
           { value: 'items', label: '품목', icon: Package },
+          { value: 'mail', label: '메일함', icon: Mail },
           { value: 'settings', label: '팀 설정', icon: Settings2 },
         ]}
       />
@@ -232,6 +234,14 @@ function TeamApp({ team }: { team: TeamInfo }) {
       {view === 'docs' && <DocsBoard filter={filter} setFilter={setFilter} onOpen={openDoc} onCopy={copyDoc} />}
       {view === 'customers' && <CustomersBoard onShow={(customer) => showDocs({ customer })} />}
       {view === 'items' && <ItemsBoard onShow={(item) => showDocs({ item })} onOpen={openDoc} />}
+      {view === 'mail' && (
+        <MailBox
+          onOpenSettings={() => {
+            setSection('mail')
+            setView('settings')
+          }}
+        />
+      )}
       {view === 'settings' && <TeamSettings section={section} setSection={setSection} />}
     </div>
   )

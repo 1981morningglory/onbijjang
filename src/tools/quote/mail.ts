@@ -26,16 +26,30 @@ export interface BookEntry {
   /** 소속·메모(예: 영업팀, 거래처 A사) */
   org: string
 }
+/** 발송 목록 한 줄 */
 export interface MailLogEntry {
+  id: string
   at: string
   from: string
   by: string
   to: string[]
   cc: string[]
+  bcc: string[]
   subject: string
   customer: string
   docNo: string
-  files: string[]
+  docId: string
+  files: Array<{ name: string; size: number }>
+  ok: boolean
+  error?: string
+  /** 메일함에 본문·첨부까지 저장했는지 */
+  saved: boolean
+}
+/** 메일함에 저장한 메일 */
+export interface SavedMail {
+  entry: MailLogEntry
+  text: string
+  files: Array<{ name: string; type: string; size: number; n: number }>
 }
 export interface MailState {
   providers: MailProvider[]
@@ -43,7 +57,6 @@ export interface MailState {
   addressBook: BookEntry[]
   /** 거래처 → 지난번에 보낸 받는 사람 */
   lastTo: Record<string, string[]>
-  log: MailLogEntry[]
 }
 
 export const loadMail = () => api<MailState>('/quote/mail')
@@ -57,7 +70,10 @@ export interface SendRequest {
   contactId: string
   to: string[]
   cc: string[]
+  bcc: string[]
   bccMe: boolean
+  /** 메일함에 본문·첨부까지 저장 */
+  saveCopy: boolean
   subject: string
   text: string
   attachments: Array<{ filename: string; content: string; contentType: string }>
@@ -65,6 +81,20 @@ export interface SendRequest {
   docNo: string
   docId: string | null
 }
+export const loadLog = () => api<{ log: MailLogEntry[] }>('/quote/mail/log').then((r) => r.log)
+export const loadSaved = (id: string) => api<SavedMail>(`/quote/mailbox/${id}`)
+export const deleteSaved = (id: string) => api(`/quote/mailbox/${id}`, { method: 'DELETE' })
+/** 메일함 파일 받기(첨부 n 또는 .eml) */
+export async function fetchSavedFile(id: string, what: number | 'eml'): Promise<Blob> {
+  const res = await fetch(`/api/quote/mailbox/${id}/${what === 'eml' ? 'eml' : `files/${what}`}`, { credentials: 'same-origin' })
+  if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? '파일을 받지 못했습니다.')
+  return res.blob()
+}
+
+/** 첨부 크기 한도(서버와 같게) */
+export const MAX_ATTACH = 15 * 1024 * 1024
+export const fileSize = (n: number) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)}MB` : `${Math.max(1, Math.round(n / 1024))}KB`)
+
 export const sendMail = (req: SendRequest) => api<{ ok: true; entry: MailLogEntry; rejected: string[] }>('/quote/mail/send', { method: 'POST', body: req })
 
 const EMAIL_RE = /^[^\s@<>(),;:"[\]]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/
@@ -138,6 +168,11 @@ export function defaultBody(doc: QuoteDoc, kit: CompanyKit, sender: Contact | un
     .filter((l) => l !== false && l !== null && l !== undefined)
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
+}
+
+/** 문서 없이 쓰는 메일의 기본 본문: 인사 · 서명 */
+export function plainBody(kit: CompanyKit, sender: Contact | undefined) {
+  return [`안녕하세요. ${kit.company.name.trim() || '저희 회사'}${sender?.name ? ` ${sender.name}${sender.title ? ` ${sender.title}` : ''}` : ''}입니다.`, '', '', '감사합니다.', '', signature(kit, sender)].join('\n')
 }
 
 const signature = (kit: CompanyKit, c: Contact | undefined) =>

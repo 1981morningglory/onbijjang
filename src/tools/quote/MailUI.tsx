@@ -1,14 +1,22 @@
 import clsx from 'clsx'
-import { BookUser, CheckCircle2, ClipboardPaste, Mail, Plug, Plus, Save, Send, Trash2, X } from 'lucide-react'
-import { useEffect, useId, useMemo, useState } from 'react'
-import { Badge, Button, Callout, Checkbox, Dialog, EmptyState, Field, IconButton, Select, Spinner, Textarea, TextInput, toast } from '@/ui'
+import { BookUser, CheckCircle2, ClipboardPaste, Download, FileText, Inbox, Mail, MailPlus, Paperclip, Plug, Plus, RefreshCw, Reply, Save, Search, Send, Trash2, X } from 'lucide-react'
+import { useEffect, useId, useMemo, useRef, useState, type DragEvent } from 'react'
+import { downloadBlob } from '@/lib/files'
+import { Badge, Button, Callout, Checkbox, Dialog, EmptyState, Field, IconButton, Panel, Segmented, Select, Spinner, Textarea, TextInput, toast } from '@/ui'
 import {
   blobToBase64,
   defaultBody,
   defaultSubject,
+  deleteSaved,
+  fetchSavedFile,
+  fileSize,
   isEmail,
   labelOf,
+  loadLog,
   loadMail,
+  loadSaved,
+  MAX_ATTACH,
+  plainBody,
   providerFor,
   removeAccount,
   resolveRecipient,
@@ -18,18 +26,25 @@ import {
   splitTokens,
   testAccount,
   type BookEntry,
+  type MailLogEntry,
   type MailState,
+  type SavedMail,
 } from './mail'
 import { uid, type CompanyKit, type Contact, type QuoteDoc } from './model'
 import { useTeam } from './team'
 
 const errText = (err: unknown, fallback: string) => (err instanceof Error ? err.message : fallback)
+const when = (iso: string) => new Date(iso).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' })
 
-// ── 받는 사람·참조 칸: 이름이나 주소를 넣고 Enter(또는 쉼표) → 주소 칩 ─────
-function RecipientField({ label, hint, value, onChange, book }: { label: string; hint?: string; value: string[]; onChange: (v: string[]) => void; book: BookEntry[] }) {
+// ── 받는 사람·참조·숨은 참조 칸 ─────────────────────────
+// 이름이나 주소를 넣고 Enter(또는 쉼표) → 주소 칩. [+] 는 넣던 글을 넣고 주소록 목록을 펼친다.
+function RecipientField({ label, value, onChange, book }: { label: string; value: string[]; onChange: (v: string[]) => void; book: BookEntry[] }) {
   const [text, setText] = useState('')
   const [error, setError] = useState('')
+  const [picking, setPicking] = useState(false)
+  const [query, setQuery] = useState('')
   const listId = useId()
+  const has = (email: string) => value.some((x) => x.toLowerCase() === email.toLowerCase())
   /** 넣은 글을 주소로 바꿔 더한다. 못 바꾼 글은 칸에 남겨 고치게 한다 */
   const commit = (raw = text) => {
     const tokens = splitTokens(raw)
@@ -50,104 +65,181 @@ function RecipientField({ label, hint, value, onChange, book }: { label: string;
     setText(left.join(', '))
     setError(errs[0] ?? '')
   }
+  const shown = book.filter((b) => !query.trim() || `${b.name} ${b.org} ${b.email}`.toLowerCase().includes(query.trim().toLowerCase()))
   return (
-    <Field label={label} hint={hint} error={error || undefined}>
+    <Field label={label} error={error || undefined}>
       {(id) => (
-        <div className="flex min-h-10 flex-wrap items-center gap-1 rounded-md border border-line-strong bg-surface px-1.5 py-1 focus-within:border-brand focus-within:ring-2 focus-within:ring-brand/20">
-          {value.map((email) => (
-            <span key={email} className="inline-flex max-w-full items-center gap-1 rounded-full bg-brand-soft py-0.5 pr-1 pl-2.5 text-xs font-semibold text-brand-ink">
-              <span className="truncate">{labelOf(email, book)}</span>
-              <button type="button" aria-label={`${email} 빼기`} className="rounded-full p-0.5 hover:bg-brand/15" onClick={() => onChange(value.filter((x) => x !== email))}>
-                <X className="size-3" aria-hidden />
-              </button>
-            </span>
-          ))}
-          <input
-            id={id}
-            list={listId}
-            value={text}
-            autoComplete="off"
-            placeholder={value.length ? '' : '이름 또는 메일 주소 (Enter)'}
-            className="h-7 min-w-40 flex-1 bg-transparent px-1 text-sm outline-none"
-            onChange={(e) => {
-              const v = e.target.value
-              setError('')
-              // 목록에서 고르면(‘홍길동(영업팀) <주소>’) 바로 넣는다. 쉼표·세미콜론을 치면 앞부분을 넣는다
-              if (/<[^<>]+@[^<>]+>\s*$/.test(v) || /[,;]\s*$/.test(v)) commit(v)
-              else setText(v)
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-                e.preventDefault()
-                commit()
-              } else if (e.key === 'Backspace' && !text && value.length) onChange(value.slice(0, -1))
-            }}
-            onBlur={() => text.trim() && commit()}
-            onPaste={(e) => {
-              const t = e.clipboardData.getData('text')
-              if (/[,;\n]/.test(t)) {
-                e.preventDefault()
-                commit(`${text}${t}`)
-              }
-            }}
-          />
-          <datalist id={listId}>
-            {book.map((b) => (
-              <option key={b.id} value={`${b.name}${b.org ? `(${b.org})` : ''} <${b.email}>`} />
-            ))}
-          </datalist>
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-start gap-1.5">
+            <div className="flex min-h-10 min-w-0 flex-1 flex-wrap items-center gap-1 rounded-md border border-line-strong bg-surface px-1.5 py-1 focus-within:border-brand focus-within:ring-2 focus-within:ring-brand/20">
+              {value.map((email) => (
+                <span key={email} className="inline-flex max-w-full items-center gap-1 rounded-full bg-brand-soft py-0.5 pr-1 pl-2.5 text-xs font-semibold text-brand-ink">
+                  <span className="truncate">{labelOf(email, book)}</span>
+                  <button type="button" aria-label={`${email} 빼기`} className="rounded-full p-0.5 hover:bg-brand/15" onClick={() => onChange(value.filter((x) => x !== email))}>
+                    <X className="size-3" aria-hidden />
+                  </button>
+                </span>
+              ))}
+              <input
+                id={id}
+                list={listId}
+                value={text}
+                autoComplete="off"
+                placeholder={value.length ? '' : '이름 또는 메일 주소 (Enter)'}
+                className="h-7 min-w-36 flex-1 bg-transparent px-1 text-sm outline-none"
+                onChange={(e) => {
+                  const v = e.target.value
+                  setError('')
+                  // 목록에서 고르면(‘홍길동(영업팀) <주소>’) 바로 넣는다. 쉼표·세미콜론을 치면 앞부분을 넣는다
+                  if (/<[^<>]+@[^<>]+>\s*$/.test(v) || /[,;]\s*$/.test(v)) commit(v)
+                  else setText(v)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                    e.preventDefault()
+                    commit()
+                  } else if (e.key === 'Backspace' && !text && value.length) onChange(value.slice(0, -1))
+                }}
+                onBlur={() => text.trim() && commit()}
+                onPaste={(e) => {
+                  const t = e.clipboardData.getData('text')
+                  if (/[,;\n]/.test(t)) {
+                    e.preventDefault()
+                    commit(`${text}${t}`)
+                  }
+                }}
+              />
+              <datalist id={listId}>
+                {book.map((b) => (
+                  <option key={b.id} value={`${b.name}${b.org ? `(${b.org})` : ''} <${b.email}>`} />
+                ))}
+              </datalist>
+            </div>
+            <IconButton
+              icon={Plus}
+              label={`${label} 추가`}
+              variant="secondary"
+              active={picking}
+              className="mt-0.5"
+              onClick={() => {
+                if (text.trim()) commit()
+                setPicking((v) => !v)
+              }}
+            />
+          </div>
+          {picking && (
+            <div className="rounded-md border border-line bg-paper p-2">
+              <div className="mb-1.5 flex items-center gap-2">
+                <span className="text-xs font-semibold text-ink-2">주소록에서 {label} 추가</span>
+                <TextInput aria-label={`${label} 주소록 찾기`} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="이름·소속·주소" className="ml-auto h-7! w-40! text-xs!" />
+                <IconButton icon={X} label="닫기" size="sm" onClick={() => setPicking(false)} />
+              </div>
+              {book.length === 0 ? (
+                <p className="px-1 py-2 text-xs text-muted">주소록이 비어 있습니다. 팀 설정 → 메일·주소록에서 직원·관계자를 넣어 두세요.</p>
+              ) : (
+                <div className="flex max-h-40 flex-wrap gap-1 overflow-y-auto">
+                  {shown.map((b) => {
+                    const on = has(b.email)
+                    return (
+                      <button
+                        key={b.id}
+                        type="button"
+                        aria-pressed={on}
+                        title={b.email}
+                        onClick={() => onChange(on ? value.filter((x) => x.toLowerCase() !== b.email.toLowerCase()) : [...value, b.email])}
+                        className={clsx('inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs transition-colors', on ? 'border-brand bg-brand-soft font-semibold text-brand-ink' : 'border-line bg-surface text-ink-2 hover:border-line-strong')}
+                      >
+                        {on ? <CheckCircle2 className="size-3" aria-hidden /> : <Plus className="size-3" aria-hidden />}
+                        {b.name}
+                        {b.org && <span className="text-muted">({b.org})</span>}
+                      </button>
+                    )
+                  })}
+                  {!shown.length && <p className="px-1 py-1 text-xs text-muted">맞는 사람이 없습니다.</p>}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </Field>
   )
 }
 
-// ── 메일 보내기 창 ──────────────────────────────────────
-export interface SendMailProps {
-  open: boolean
-  onClose: () => void
-  doc: QuoteDoc
-  kit: CompanyKit
-  /** 문서에 고른 담당자(보내는 사람 기본값) */
-  contact: Contact | undefined
-  total: number
+// ── 메일 쓰기 창(문서 메일·새 메일·다시 보내기 모두) ─────────
+interface DocParts {
   base: string
+  customer: string
+  docNo: string
   makePdf: () => Promise<Blob>
   makeXlsx: () => Promise<Blob>
   /** 보내기 전에 문서함에 저장하고 문서 id 를 돌려준다(메일 보냄 표시용) */
   remember: () => Promise<string | null>
+}
+interface Draft {
+  to: string[]
+  cc: string[]
+  bcc: string[]
+  subject: string
+  text?: string
+  files: Array<{ name: string; blob: Blob }>
+}
+interface ComposeProps {
+  open: boolean
+  onClose: () => void
+  title: string
+  /** 보내는 사람 기본값(담당자 id) */
+  senderId?: string
+  initial: Draft
+  /** 담당자에 맞춘 기본 본문(담당자를 바꾸면 서명도 바뀐다) */
+  bodyFor: (sender: Contact | undefined) => string
+  doc?: DocParts
   onOpenSettings: () => void
+  onSent?: () => void
 }
 
-export function SendMailDialog({ open, onClose, doc, kit, contact, total, base, makePdf, makeXlsx, remember, onOpenSettings }: SendMailProps) {
+type Extra = { id: string; name: string; blob: Blob }
+
+function ComposeMail({ open, onClose, title, senderId: initialSender, initial, bodyFor, doc, onOpenSettings, onSent }: ComposeProps) {
+  const kit = useTeam((s) => s.kit)
   const contacts = kit.contacts.filter((c) => c.email.trim())
   const [state, setState] = useState<MailState | null>(null)
   const [senderId, setSenderId] = useState('')
   const [to, setTo] = useState<string[]>([])
   const [cc, setCc] = useState<string[]>([])
-  const [bccMe, setBccMe] = useState(false)
+  const [bcc, setBcc] = useState<string[]>([])
   const [subject, setSubject] = useState('')
   const [text, setText] = useState('')
   const [pdf, setPdf] = useState(true)
   const [xlsx, setXlsx] = useState(false)
+  const [extra, setExtra] = useState<Extra[]>([])
+  const [saveCopy, setSaveCopy] = useState(true)
+  const [bccMe, setBccMe] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [drag, setDrag] = useState(false)
+  const fileInput = useRef<HTMLInputElement>(null)
 
-  // 열 때마다 새로: 보내는 사람 = 문서 담당자, 받는 사람 = 이 거래처에 지난번 보낸 주소
+  // 열 때마다 새로
   useEffect(() => {
     if (!open) return
-    const first = contacts.find((c) => c.id === contact?.id) ?? contacts[0]
+    const first = contacts.find((c) => c.id === initialSender) ?? contacts[0]
     setSenderId(first?.id ?? '')
-    setCc([])
-    setBccMe(false)
+    setTo(initial.to)
+    setCc(initial.cc)
+    setBcc(initial.bcc)
+    setSubject(initial.subject)
+    setText(initial.text ?? bodyFor(first))
     setPdf(true)
     setXlsx(false)
-    setSubject(defaultSubject(doc, kit))
-    setText(defaultBody(doc, kit, first, total))
+    setExtra(initial.files.map((f) => ({ id: uid(), ...f })))
+    setSaveCopy(true)
+    setBccMe(false)
     setState(null)
     loadMail()
       .then((s) => {
         setState(s)
-        setTo(s.lastTo[doc.customer.trim()] ?? [])
+        // 이 거래처에 지난번 보낸 주소
+        if (!initial.to.length && doc?.customer) setTo(s.lastTo[doc.customer] ?? [])
       })
       .catch((err) => toast.error(errText(err, '메일 설정을 불러오지 못했습니다.')))
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -156,13 +248,25 @@ export function SendMailDialog({ open, onClose, doc, kit, contact, total, base, 
   const sender = contacts.find((c) => c.id === senderId)
   const account = sender ? state?.accounts[sender.id] : undefined
   const book = state?.addressBook ?? []
-  const what = doc.type === 'statement' ? '거래명세서' : '견적서'
+  const extraSize = extra.reduce((n, f) => n + f.blob.size, 0)
 
   const changeSender = (id: string) => {
     const next = contacts.find((c) => c.id === id)
     // 본문을 손대지 않았으면 서명도 새 담당자로
-    if (text === defaultBody(doc, kit, sender, total)) setText(defaultBody(doc, kit, next, total))
+    if (text === bodyFor(sender)) setText(bodyFor(next))
     setSenderId(id)
+  }
+  const addFiles = (list: FileList | File[] | null) => {
+    const files = [...(list ?? [])]
+    if (!files.length) return
+    const total = extraSize + files.reduce((n, f) => n + f.size, 0)
+    if (total > MAX_ATTACH) return toast.error(`첨부 파일은 합쳐서 ${fileSize(MAX_ATTACH)}까지입니다. 지금 ${fileSize(total)}.`)
+    setExtra((x) => [...x, ...files.map((f) => ({ id: uid(), name: f.name, blob: f as Blob }))].slice(0, 18))
+  }
+  const onDrop = (e: DragEvent) => {
+    e.preventDefault()
+    setDrag(false)
+    addFiles(e.dataTransfer.files)
   }
 
   const send = async () => {
@@ -170,17 +274,31 @@ export function SendMailDialog({ open, onClose, doc, kit, contact, total, base, 
     if (!account) return toast.error('이 담당자의 메일 계정을 먼저 설정해 주세요.')
     if (!to.length) return toast.error('받는 사람을 넣어 주세요. 이름이나 주소를 넣고 Enter 를 누르면 들어갑니다.')
     if (!subject.trim()) return toast.error('제목을 넣어 주세요.')
-    if (!pdf && !xlsx && !confirm('첨부 파일 없이 보낼까요?')) return
+    const docFiles = doc ? Number(pdf) + Number(xlsx) : 0
+    if (!docFiles && !extra.length && !confirm('첨부 파일 없이 보낼까요?')) return
     setBusy(true)
     try {
       const files: Array<{ filename: string; content: string; contentType: string }> = []
-      if (pdf) files.push({ filename: `${base}.pdf`, content: await blobToBase64(await makePdf()), contentType: 'application/pdf' })
-      if (xlsx) files.push({ filename: `${base}.xlsx`, content: await blobToBase64(await makeXlsx()), contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
-      const docId = await remember().catch(() => null)
-      const r = await sendMail({ contactId: sender.id, to, cc, bccMe, subject: subject.trim(), text, attachments: files, customer: doc.customer.trim(), docNo: doc.docNo, docId })
+      const add = async (name: string, blob: Blob) => files.push({ filename: name, content: await blobToBase64(blob), contentType: blob.type || 'application/octet-stream' })
+      let size = extraSize
+      if (doc && pdf) {
+        const b = await doc.makePdf()
+        size += b.size
+        await add(`${doc.base}.pdf`, b)
+      }
+      if (doc && xlsx) {
+        const b = await doc.makeXlsx()
+        size += b.size
+        await add(`${doc.base}.xlsx`, b)
+      }
+      if (size > MAX_ATTACH) throw new Error(`첨부 파일이 너무 큽니다(합쳐서 ${fileSize(size)}). ${fileSize(MAX_ATTACH)} 이하로 줄여 주세요.`)
+      for (const f of extra) await add(f.name, f.blob)
+      const docId = doc ? await doc.remember().catch(() => null) : null
+      const r = await sendMail({ contactId: sender.id, to, cc, bcc, bccMe, saveCopy, subject: subject.trim(), text, attachments: files, customer: doc?.customer ?? '', docNo: doc?.docNo ?? '', docId })
       if (r.rejected.length) toast.warn(`보냈지만 받지 않은 주소가 있습니다: ${r.rejected.join(', ')}`)
-      else toast.success(`${to.length + cc.length}명에게 ${what}를 보냈습니다.`)
-      void useTeam.getState().loadDocs().catch(() => {})
+      else toast.success(`${to.length + cc.length + bcc.length}명에게 보냈습니다.${saveCopy ? ' 메일함에도 저장했습니다.' : ''}`)
+      if (doc) void useTeam.getState().loadDocs().catch(() => {})
+      onSent?.()
       onClose()
     } catch (err) {
       toast.error(errText(err, '메일을 보내지 못했습니다.'))
@@ -193,10 +311,11 @@ export function SendMailDialog({ open, onClose, doc, kit, contact, total, base, 
     <Dialog
       open={open}
       onClose={() => !busy && onClose()}
-      title={`${what} 메일 보내기`}
+      title={title}
       size="lg"
       footer={
         <>
+          <Checkbox checked={saveCopy} onChange={setSaveCopy} label="보낸 메일함에 저장(본문·첨부)" className="mr-auto" />
           <Button onClick={onClose} disabled={busy}>
             닫기
           </Button>
@@ -237,17 +356,358 @@ export function SendMailDialog({ open, onClose, doc, kit, contact, total, base, 
               </div>
             </Callout>
           )}
-          <RecipientField label="받는 사람" hint="메일 주소 또는 주소록 이름" value={to} onChange={setTo} book={book} />
-          <RecipientField label="참조" hint={book.length ? '이름만 넣어도 주소록 주소로 바뀝니다' : '주소록에 직원·관계자를 넣어 두면 이름만으로 넣을 수 있습니다'} value={cc} onChange={setCc} book={book} />
+          <RecipientField label="받는 사람" value={to} onChange={setTo} book={book} />
+          <RecipientField label="참조" value={cc} onChange={setCc} book={book} />
+          <RecipientField label="숨은 참조" value={bcc} onChange={setBcc} book={book} />
+          <p className="-mt-1 text-xs text-muted">메일 주소나 주소록 이름을 넣고 Enter. [+]를 누르면 주소록에서 여러 명을 골라 넣을 수 있습니다. 숨은 참조는 다른 받는 사람에게 보이지 않습니다.</p>
           <Field label="제목">{(id) => <TextInput id={id} value={subject} maxLength={200} onChange={(e) => setSubject(e.target.value)} />}</Field>
-          <Field label="내용">{(id) => <Textarea id={id} value={text} maxLength={20000} onChange={(e) => setText(e.target.value)} className="min-h-56!" />}</Field>
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <span className="text-sm font-semibold text-ink-2">첨부</span>
-            <Checkbox checked={pdf} onChange={setPdf} label={`${base}.pdf`} />
-            <Checkbox checked={xlsx} onChange={setXlsx} label={`${base}.xlsx`} />
-            <Checkbox checked={bccMe} onChange={setBccMe} label="내게도 한 통(숨은 참조)" className="sm:ml-auto" />
+          <Field label="내용">{(id) => <Textarea id={id} value={text} maxLength={50000} onChange={(e) => setText(e.target.value)} className="min-h-52!" />}</Field>
+          <div
+            className={clsx('flex flex-col gap-2 rounded-md border border-dashed p-2.5 transition-colors', drag ? 'border-brand bg-brand-soft/40' : 'border-line-strong')}
+            onDragOver={(e) => {
+              e.preventDefault()
+              setDrag(true)
+            }}
+            onDragLeave={() => setDrag(false)}
+            onDrop={onDrop}
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1 text-sm font-semibold text-ink-2">
+                <Paperclip className="size-4" aria-hidden /> 첨부
+              </span>
+              <input ref={fileInput} type="file" multiple hidden onChange={(e) => (addFiles(e.target.files), (e.target.value = ''))} />
+              <Button size="sm" icon={Plus} onClick={() => fileInput.current?.click()}>
+                파일 추가
+              </Button>
+              <span className="text-xs text-muted">끌어다 놓아도 됩니다 · 합쳐서 {fileSize(MAX_ATTACH)}까지</span>
+              <Checkbox checked={bccMe} onChange={setBccMe} label="내게도 한 통" className="ml-auto" />
+            </div>
+            {doc && (
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                <Checkbox checked={pdf} onChange={setPdf} label={`${doc.base}.pdf`} />
+                <Checkbox checked={xlsx} onChange={setXlsx} label={`${doc.base}.xlsx`} />
+              </div>
+            )}
+            {extra.length > 0 && (
+              <ul className="flex flex-wrap gap-1.5">
+                {extra.map((f) => (
+                  <li key={f.id} className="inline-flex max-w-full items-center gap-1 rounded-md border border-line bg-surface py-0.5 pr-0.5 pl-2 text-xs">
+                    <FileText className="size-3.5 shrink-0 text-muted" aria-hidden />
+                    <span className="truncate">{f.name}</span>
+                    <span className="text-faint">{fileSize(f.blob.size)}</span>
+                    <IconButton icon={X} label={`${f.name} 빼기`} size="sm" onClick={() => setExtra((x) => x.filter((y) => y.id !== f.id))} />
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
-          <p className="text-xs text-muted">보내면 이 문서가 문서함에 저장되고 ‘메일 보냄’으로 표시됩니다.</p>
+          {doc && <p className="text-xs text-muted">보내면 이 문서가 문서함에 저장되고 ‘메일 보냄’으로 표시됩니다.</p>}
+        </div>
+      )}
+    </Dialog>
+  )
+}
+
+// ── 문서 작성 화면의 [메일 보내기] ─────────────────────────
+export interface SendMailProps {
+  open: boolean
+  onClose: () => void
+  doc: QuoteDoc
+  kit: CompanyKit
+  /** 문서에 고른 담당자(보내는 사람 기본값) */
+  contact: Contact | undefined
+  total: number
+  base: string
+  makePdf: () => Promise<Blob>
+  makeXlsx: () => Promise<Blob>
+  remember: () => Promise<string | null>
+  onOpenSettings: () => void
+}
+
+export function SendMailDialog({ open, onClose, doc, kit, contact, total, base, makePdf, makeXlsx, remember, onOpenSettings }: SendMailProps) {
+  const what = doc.type === 'statement' ? '거래명세서' : '견적서'
+  const initial = useMemo<Draft>(() => ({ to: [], cc: [], bcc: [], subject: defaultSubject(doc, kit), files: [] }), [open]) // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <ComposeMail
+      open={open}
+      onClose={onClose}
+      title={`${what} 메일 보내기`}
+      senderId={contact?.id}
+      initial={initial}
+      bodyFor={(s) => defaultBody(doc, kit, s, total)}
+      doc={{ base, customer: doc.customer.trim(), docNo: doc.docNo, makePdf, makeXlsx, remember }}
+      onOpenSettings={onOpenSettings}
+    />
+  )
+}
+
+// ── 메일함: 발송 목록 · 저장한 메일 ───────────────────────
+type BoxFilter = 'all' | 'saved' | 'failed'
+
+export function MailBox({ onOpenSettings }: { onOpenSettings: () => void }) {
+  const kit = useTeam((s) => s.kit)
+  const [log, setLog] = useState<MailLogEntry[] | null>(null)
+  const [query, setQuery] = useState('')
+  const [filter, setFilter] = useState<BoxFilter>('all')
+  const [openId, setOpenId] = useState<string | null>(null)
+  const [compose, setCompose] = useState<{ title: string; initial: Draft; senderId?: string } | null>(null)
+  const reload = () =>
+    loadLog()
+      .then(setLog)
+      .catch((err) => toast.error(errText(err, '발송 목록을 불러오지 못했습니다.')))
+  useEffect(() => {
+    void reload()
+  }, [])
+  const rows = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return (log ?? []).filter(
+      (e) =>
+        (filter === 'all' || (filter === 'saved' ? e.saved : !e.ok)) &&
+        (!q || [e.subject, e.by, e.from, e.customer, e.docNo, ...e.to, ...e.cc, ...e.bcc, ...e.files.map((f) => f.name)].join(' ').toLowerCase().includes(q)),
+    )
+  }, [log, query, filter])
+  const opened = (log ?? []).find((e) => e.id === openId) ?? null
+  const contacts = kit.contacts
+  const senderOf = (e: MailLogEntry) => contacts.find((c) => c.email.toLowerCase() === e.from.toLowerCase())?.id
+
+  /** 다시 보내기·전달: 저장된 본문·첨부를 그대로 새 메일로 */
+  const reuse = async (e: MailLogEntry, saved: SavedMail | null, mode: 'again' | 'forward') => {
+    const files = saved ? await Promise.all(saved.files.map(async (f) => ({ name: f.name, blob: await fetchSavedFile(e.id, f.n) }))) : []
+    const fwd = mode === 'forward'
+    setOpenId(null)
+    setCompose({
+      title: fwd ? '전달' : '다시 보내기',
+      senderId: senderOf(e),
+      initial: {
+        to: fwd ? [] : e.to,
+        cc: fwd ? [] : e.cc,
+        bcc: fwd ? [] : e.bcc,
+        subject: fwd ? `FW: ${e.subject}` : e.subject,
+        text: saved ? (fwd ? `\n\n---------- 전달한 메일 ----------\n보낸 사람: ${e.by} <${e.from}>\n보낸 때: ${when(e.at)}\n받는 사람: ${e.to.join(', ')}\n제목: ${e.subject}\n\n${saved.text}` : saved.text) : undefined,
+        files,
+      },
+    })
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <Panel className="flex flex-wrap items-center gap-2 p-3">
+        <Button variant="primary" icon={MailPlus} onClick={() => setCompose({ title: '새 메일', initial: { to: [], cc: [], bcc: [], subject: '', files: [] } })}>
+          새 메일
+        </Button>
+        <Segmented<BoxFilter>
+          label="보기"
+          value={filter}
+          onValue={setFilter}
+          options={[
+            { value: 'all', label: '발송 목록 전체' },
+            { value: 'saved', label: '메일함 저장' },
+            { value: 'failed', label: '실패' },
+          ]}
+        />
+        <div className="relative ml-auto">
+          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-faint" aria-hidden />
+          <TextInput aria-label="메일 찾기" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="제목·받는 사람·거래처·첨부" className="w-64! pl-8!" />
+        </div>
+        <IconButton icon={RefreshCw} label="새로 고침" variant="secondary" onClick={() => void reload()} />
+      </Panel>
+
+      {!log ? (
+        <div className="flex items-center gap-2 py-6 text-muted">
+          <Spinner /> 불러오는 중
+        </div>
+      ) : !rows.length ? (
+        <EmptyState icon={Inbox} title={log.length ? '맞는 메일이 없습니다' : '아직 보낸 메일이 없습니다'}>
+          문서 작성 화면의 [메일 보내기]나 위의 [새 메일]로 보내면 여기에 쌓입니다. ‘보낸 메일함에 저장’을 켜고 보내면 본문·첨부까지 남아 다시 보거나 다시 보낼 수 있습니다.
+        </EmptyState>
+      ) : (
+        <div className="overflow-x-auto rounded-md border border-line bg-surface">
+          <table className="w-full text-sm">
+            <thead className="bg-paper text-left text-xs text-muted">
+              <tr>
+                <th className="px-3 py-2 whitespace-nowrap">보낸 때</th>
+                <th className="px-3 py-2">상태</th>
+                <th className="px-3 py-2">제목</th>
+                <th className="px-3 py-2 whitespace-nowrap">보낸 사람</th>
+                <th className="px-3 py-2">받는 사람</th>
+                <th className="px-3 py-2 whitespace-nowrap">첨부</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((e) => (
+                <tr key={e.id} className="cursor-pointer border-t border-line hover:bg-paper" onClick={() => setOpenId(e.id)}>
+                  <td className="num px-3 py-2 text-xs whitespace-nowrap text-muted">{when(e.at)}</td>
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    {!e.ok ? <Badge tone="warn">실패</Badge> : e.saved ? <Badge tone="brand">메일함</Badge> : <Badge>보냄</Badge>}
+                  </td>
+                  <td className="max-w-80 px-3 py-2">
+                    <p className="truncate font-semibold text-ink">{e.subject}</p>
+                    {(e.customer || e.docNo) && <p className="truncate text-xs text-muted">{[e.customer, e.docNo].filter(Boolean).join(' · ')}</p>}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-ink-2">{e.by || e.from}</td>
+                  <td className="max-w-72 px-3 py-2 text-xs text-ink-2">
+                    <p className="truncate">{e.to.join(', ')}</p>
+                    {(e.cc.length > 0 || e.bcc.length > 0) && (
+                      <p className="truncate text-muted">
+                        {e.cc.length > 0 && `참조 ${e.cc.length}`}
+                        {e.cc.length > 0 && e.bcc.length > 0 && ' · '}
+                        {e.bcc.length > 0 && `숨은 참조 ${e.bcc.length}`}
+                      </p>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-xs whitespace-nowrap text-muted">{e.files.length ? `${e.files.length}개` : '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <MailDetail
+        entry={opened}
+        onClose={() => setOpenId(null)}
+        onReuse={(e, saved, mode) => void reuse(e, saved, mode).catch((err) => toast.error(errText(err, '불러오지 못했습니다.')))}
+        onDeleted={() => {
+          setOpenId(null)
+          void reload()
+        }}
+      />
+      <ComposeMail
+        open={!!compose}
+        onClose={() => setCompose(null)}
+        title={compose?.title ?? '새 메일'}
+        senderId={compose?.senderId}
+        initial={compose?.initial ?? { to: [], cc: [], bcc: [], subject: '', files: [] }}
+        bodyFor={(s) => plainBody(kit, s)}
+        onOpenSettings={onOpenSettings}
+        onSent={() => void reload()}
+      />
+    </div>
+  )
+}
+
+function MailDetail({ entry, onClose, onReuse, onDeleted }: { entry: MailLogEntry | null; onClose: () => void; onReuse: (e: MailLogEntry, saved: SavedMail | null, mode: 'again' | 'forward') => void; onDeleted: () => void }) {
+  const [saved, setSaved] = useState<SavedMail | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  useEffect(() => {
+    setSaved(null)
+    if (entry?.saved) loadSaved(entry.id).then(setSaved, (err) => toast.error(errText(err, '저장한 메일을 불러오지 못했습니다.')))
+  }, [entry])
+  const run = async (label: string, fn: () => Promise<void>) => {
+    setBusy(label)
+    try {
+      await fn()
+    } catch (err) {
+      toast.error(errText(err, '처리하지 못했습니다.'))
+    } finally {
+      setBusy(null)
+    }
+  }
+  const e = entry
+  const line = (label: string, list: string[]) =>
+    list.length > 0 && (
+      <div className="flex gap-2">
+        <dt className="w-20 shrink-0 text-muted">{label}</dt>
+        <dd className="min-w-0 break-all text-ink">{list.join(', ')}</dd>
+      </div>
+    )
+  return (
+    <Dialog
+      open={!!e}
+      onClose={onClose}
+      title={e?.subject ?? '메일'}
+      size="lg"
+      footer={
+        e && (
+          <>
+            {e.saved && (
+              <Button
+                variant="ghost"
+                icon={Trash2}
+                className="mr-auto"
+                loading={busy === 'del'}
+                onClick={() => {
+                  if (confirm('메일함에서 이 메일(본문·첨부)을 지울까요? 발송 목록의 기록은 남습니다.')) void run('del', async () => (await deleteSaved(e.id), toast.success('메일함에서 지웠습니다.'), onDeleted()))
+                }}
+              >
+                메일함에서 지우기
+              </Button>
+            )}
+            {e.saved && (
+              <Button icon={Download} loading={busy === 'eml'} onClick={() => void run('eml', async () => downloadBlob(await fetchSavedFile(e.id, 'eml'), `${e.subject.replace(/[\\/:*?"<>|]/g, '_').slice(0, 80) || 'mail'}.eml`))}>
+                메일 파일(.eml)
+              </Button>
+            )}
+            <Button icon={Reply} disabled={e.saved && !saved} onClick={() => onReuse(e, saved, 'forward')}>
+              전달
+            </Button>
+            <Button variant="primary" icon={Send} disabled={e.saved && !saved} onClick={() => onReuse(e, saved, 'again')}>
+              다시 보내기
+            </Button>
+          </>
+        )
+      }
+    >
+      {e && (
+        <div className="flex flex-col gap-3 text-sm">
+          {!e.ok && (
+            <Callout tone="danger" title="보내지 못한 메일입니다">
+              {e.error}
+            </Callout>
+          )}
+          <dl className="flex flex-col gap-1">
+            <div className="flex gap-2">
+              <dt className="w-20 shrink-0 text-muted">보낸 때</dt>
+              <dd className="text-ink">{when(e.at)}</dd>
+            </div>
+            <div className="flex gap-2">
+              <dt className="w-20 shrink-0 text-muted">보낸 사람</dt>
+              <dd className="text-ink">
+                {e.by} &lt;{e.from}&gt;
+              </dd>
+            </div>
+            {line('받는 사람', e.to)}
+            {line('참조', e.cc)}
+            {line('숨은 참조', e.bcc)}
+            {(e.customer || e.docNo) && (
+              <div className="flex gap-2">
+                <dt className="w-20 shrink-0 text-muted">문서</dt>
+                <dd className="text-ink">{[e.customer, e.docNo].filter(Boolean).join(' · ')}</dd>
+              </div>
+            )}
+          </dl>
+          {e.saved ? (
+            !saved ? (
+              <div className="flex items-center gap-2 text-muted">
+                <Spinner /> 본문 불러오는 중
+              </div>
+            ) : (
+              <>
+                <pre className="max-h-80 overflow-auto rounded-md border border-line bg-paper p-3 font-sans text-sm whitespace-pre-wrap text-ink">{saved.text || '(내용 없음)'}</pre>
+                {saved.files.length > 0 && (
+                  <ul className="flex flex-wrap gap-1.5">
+                    {saved.files.map((f) => (
+                      <li key={f.n}>
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 rounded-md border border-line bg-surface px-2 py-1 text-xs hover:bg-paper"
+                          onClick={() => void run(`f${f.n}`, async () => downloadBlob(await fetchSavedFile(e.id, f.n), f.name))}
+                        >
+                          {busy === `f${f.n}` ? <Spinner /> : <Download className="size-3.5 text-muted" aria-hidden />}
+                          {f.name} <span className="text-faint">{fileSize(f.size)}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            )
+          ) : (
+            <>
+              {e.files.length > 0 && <p className="text-xs text-muted">첨부: {e.files.map((f) => f.name).join(', ')}</p>}
+              <Callout tone="info">메일함에 저장하지 않고 보낸 메일이라 본문·첨부는 남아 있지 않습니다. ‘다시 보내기’를 누르면 받는 사람·제목만 채워집니다.</Callout>
+            </>
+          )}
         </div>
       )}
     </Dialog>
@@ -257,6 +717,7 @@ export function SendMailDialog({ open, onClose, doc, kit, contact, total, base, 
 // ── 팀 설정: 메일·주소록 ─────────────────────────────────
 export function MailSection({ onGoContacts }: { onGoContacts: () => void }) {
   const contacts = useTeam((s) => s.contacts)
+  const team = useTeam((s) => s.team)
   const [state, setState] = useState<MailState | null>(null)
   const reload = () =>
     loadMail()
@@ -273,6 +734,9 @@ export function MailSection({ onGoContacts }: { onGoContacts: () => void }) {
     )
   return (
     <div className="flex max-w-3xl flex-col gap-6">
+      <Callout tone="info">
+        메일 계정·주소록·메일함은 <b>{team?.name ?? '이'} 팀</b>(같은 팀 코드로 들어온 사람)끼리만 함께 씁니다. 다른 팀에서는 보이지 않습니다.
+      </Callout>
       <section className="flex flex-col gap-3">
         <h3 className="text-base font-bold text-ink">담당자 메일 계정</h3>
         <p className="text-sm text-ink-2">
@@ -287,23 +751,6 @@ export function MailSection({ onGoContacts }: { onGoContacts: () => void }) {
         )}
       </section>
       <AddressBook state={state} onSaved={(addressBook) => setState((s) => (s ? { ...s, addressBook } : s))} />
-      {state.log.length > 0 && (
-        <section className="flex flex-col gap-2">
-          <h3 className="text-base font-bold text-ink">최근 보낸 메일</h3>
-          <ul className="divide-y divide-line rounded-md border border-line bg-surface text-sm">
-            {state.log.slice(0, 15).map((m, i) => (
-              <li key={i} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-3 py-2">
-                <span className="num text-xs text-muted">{new Date(m.at).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' })}</span>
-                <span className="font-semibold text-ink">{m.subject}</span>
-                <span className="text-xs text-muted">
-                  {m.by} → {m.to.join(', ')}
-                  {m.cc.length > 0 && ` · 참조 ${m.cc.join(', ')}`}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
     </div>
   )
 }
