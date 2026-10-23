@@ -1,6 +1,8 @@
 import clsx from 'clsx'
-import { BookUser, CheckCircle2, ClipboardPaste, Download, FileText, Inbox, Mail, MailPlus, Paperclip, Plug, Plus, RefreshCw, Reply, Save, Search, Send, Trash2, X } from 'lucide-react'
+import { BookUser, CheckCircle2, ClipboardPaste, Download, FileText, Inbox, LogIn, Mail, MailPlus, Paperclip, Plug, Plus, RefreshCw, Reply, Save, Search, Send, Trash2, X } from 'lucide-react'
 import { useEffect, useId, useMemo, useRef, useState, type DragEvent } from 'react'
+import { useLoginDialog } from '@/app/LoginDialog'
+import { useViewerStore } from '@/app/viewer'
 import { downloadBlob } from '@/lib/files'
 import { Badge, Button, Callout, Checkbox, Dialog, EmptyState, Field, IconButton, Panel, Segmented, Select, Spinner, Textarea, TextInput, toast } from '@/ui'
 import {
@@ -17,6 +19,7 @@ import {
   loadSaved,
   MAX_ATTACH,
   plainBody,
+  profileOf,
   providerFor,
   removeAccount,
   resolveRecipient,
@@ -188,11 +191,9 @@ interface ComposeProps {
   open: boolean
   onClose: () => void
   title: string
-  /** 보내는 사람 기본값(담당자 id) */
-  senderId?: string
   initial: Draft
-  /** 담당자에 맞춘 기본 본문(담당자를 바꾸면 서명도 바뀐다) */
-  bodyFor: (sender: Contact | undefined) => string
+  /** 기본 본문(서명은 내 메일 계정의 이름·직함·연락처) */
+  bodyFor: (me: Contact | undefined) => string
   doc?: DocParts
   onOpenSettings: () => void
   onSent?: () => void
@@ -200,11 +201,10 @@ interface ComposeProps {
 
 type Extra = { id: string; name: string; blob: Blob }
 
-function ComposeMail({ open, onClose, title, senderId: initialSender, initial, bodyFor, doc, onOpenSettings, onSent }: ComposeProps) {
-  const kit = useTeam((s) => s.kit)
-  const contacts = kit.contacts.filter((c) => c.email.trim())
+function ComposeMail({ open, onClose, title, initial, bodyFor, doc, onOpenSettings, onSent }: ComposeProps) {
+  const showLogin = useLoginDialog((s) => s.show)
+  const viewer = useViewerStore((s) => s.user)
   const [state, setState] = useState<MailState | null>(null)
-  const [senderId, setSenderId] = useState('')
   const [to, setTo] = useState<string[]>([])
   const [cc, setCc] = useState<string[]>([])
   const [bcc, setBcc] = useState<string[]>([])
@@ -222,13 +222,11 @@ function ComposeMail({ open, onClose, title, senderId: initialSender, initial, b
   // 열 때마다 새로
   useEffect(() => {
     if (!open) return
-    const first = contacts.find((c) => c.id === initialSender) ?? contacts[0]
-    setSenderId(first?.id ?? '')
     setTo(initial.to)
     setCc(initial.cc)
     setBcc(initial.bcc)
     setSubject(initial.subject)
-    setText(initial.text ?? bodyFor(first))
+    setText(initial.text ?? '')
     setPdf(true)
     setXlsx(false)
     setExtra(initial.files.map((f) => ({ id: uid(), ...f })))
@@ -238,24 +236,19 @@ function ComposeMail({ open, onClose, title, senderId: initialSender, initial, b
     loadMail()
       .then((s) => {
         setState(s)
+        // 서명은 내 메일 계정으로
+        if (initial.text === undefined) setText(bodyFor(profileOf(s.account)))
         // 이 거래처에 지난번 보낸 주소
         if (!initial.to.length && doc?.customer) setTo(s.lastTo[doc.customer] ?? [])
       })
       .catch((err) => toast.error(errText(err, '메일 설정을 불러오지 못했습니다.')))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
+  }, [open, viewer?.id])
 
-  const sender = contacts.find((c) => c.id === senderId)
-  const account = sender ? state?.accounts[sender.id] : undefined
+  const account = state?.account ?? null
   const book = state?.addressBook ?? []
   const extraSize = extra.reduce((n, f) => n + f.blob.size, 0)
 
-  const changeSender = (id: string) => {
-    const next = contacts.find((c) => c.id === id)
-    // 본문을 손대지 않았으면 서명도 새 담당자로
-    if (text === bodyFor(sender)) setText(bodyFor(next))
-    setSenderId(id)
-  }
   const addFiles = (list: FileList | File[] | null) => {
     const files = [...(list ?? [])]
     if (!files.length) return
@@ -270,8 +263,8 @@ function ComposeMail({ open, onClose, title, senderId: initialSender, initial, b
   }
 
   const send = async () => {
-    if (!sender) return toast.error('보내는 사람(담당자)을 골라 주세요.')
-    if (!account) return toast.error('이 담당자의 메일 계정을 먼저 설정해 주세요.')
+    if (!state?.me) return toast.error('온비짱에 내 계정으로 로그인해 주세요.')
+    if (!account) return toast.error('내 메일 계정을 먼저 설정해 주세요.')
     if (!to.length) return toast.error('받는 사람을 넣어 주세요. 이름이나 주소를 넣고 Enter 를 누르면 들어갑니다.')
     if (!subject.trim()) return toast.error('제목을 넣어 주세요.')
     const docFiles = doc ? Number(pdf) + Number(xlsx) : 0
@@ -294,7 +287,7 @@ function ComposeMail({ open, onClose, title, senderId: initialSender, initial, b
       if (size > MAX_ATTACH) throw new Error(`첨부 파일이 너무 큽니다(합쳐서 ${fileSize(size)}). ${fileSize(MAX_ATTACH)} 이하로 줄여 주세요.`)
       for (const f of extra) await add(f.name, f.blob)
       const docId = doc ? await doc.remember().catch(() => null) : null
-      const r = await sendMail({ contactId: sender.id, to, cc, bcc, bccMe, saveCopy, subject: subject.trim(), text, attachments: files, customer: doc?.customer ?? '', docNo: doc?.docNo ?? '', docId })
+      const r = await sendMail({ to, cc, bcc, bccMe, saveCopy, subject: subject.trim(), text, attachments: files, customer: doc?.customer ?? '', docNo: doc?.docNo ?? '', docId })
       if (r.rejected.length) toast.warn(`보냈지만 받지 않은 주소가 있습니다: ${r.rejected.join(', ')}`)
       else toast.success(`${to.length + cc.length + bcc.length}명에게 보냈습니다.${saveCopy ? ' 메일함에도 저장했습니다.' : ''}`)
       if (doc) void useTeam.getState().loadDocs().catch(() => {})
@@ -319,7 +312,7 @@ function ComposeMail({ open, onClose, title, senderId: initialSender, initial, b
           <Button onClick={onClose} disabled={busy}>
             닫기
           </Button>
-          <Button variant="primary" icon={Send} loading={busy} disabled={!state || !account} onClick={() => void send()}>
+          <Button variant="primary" icon={Send} loading={busy} disabled={!state?.me || !account} onClick={() => void send()}>
             보내기
           </Button>
         </>
@@ -329,31 +322,27 @@ function ComposeMail({ open, onClose, title, senderId: initialSender, initial, b
         <div className="flex items-center gap-2 py-6 text-muted">
           <Spinner /> 메일 설정 불러오는 중
         </div>
-      ) : !contacts.length ? (
-        <Callout tone="warn" title="이메일이 있는 담당자가 없습니다">
-          팀 설정 → 담당자에서 담당자 이메일을 넣고, 메일·주소록에서 메일 계정을 설정해 주세요.
+      ) : !state.me ? (
+        <Callout tone="warn" title="내 계정으로 로그인해야 메일을 보낼 수 있습니다">
+          메일은 보내는 사람 본인의 메일 계정으로만 나갑니다(다른 사람 이름으로는 보낼 수 없습니다). 온비짱 오른쪽 위 [로그인]으로 내 계정에 로그인하세요.
           <div className="mt-2">
-            <Button size="sm" icon={Mail} onClick={onOpenSettings}>
-              메일 설정 열기
+            <Button size="sm" variant="primary" icon={LogIn} onClick={showLogin}>
+              로그인
             </Button>
           </div>
         </Callout>
       ) : (
         <div className="flex flex-col gap-3">
-          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
-            <Field label="보내는 사람">
-              {(id) => <Select id={id} value={senderId} onValue={changeSender} options={contacts.map((c) => ({ value: c.id, label: [c.name, c.title].filter(Boolean).join(' ') || c.email }))} />}
+          {account ? (
+            <Field label="보내는 사람" hint={account.replyTo && account.replyTo.toLowerCase() !== account.fromAddress.toLowerCase() ? `답장은 ${account.replyTo}로 옵니다` : undefined}>
+              {(id) => <TextInput id={id} value={`${[account.name, account.title].filter(Boolean).join(' ')} <${account.fromAddress}>`} readOnly className="bg-sunken!" />}
             </Field>
-            <Field label="보내는 주소" hint={account && sender && account.fromAddress.toLowerCase() !== sender.email.toLowerCase() ? `답장은 ${sender.email}로 옵니다` : undefined}>
-              {(id) => <TextInput id={id} value={account?.fromAddress ?? sender?.email ?? ''} readOnly className="bg-sunken!" />}
-            </Field>
-          </div>
-          {!account && (
-            <Callout tone="warn" title={`${sender?.name || '이 담당자'}의 메일 계정이 아직 없습니다`}>
-              팀 설정 → 메일·주소록에서 메일 비밀번호(앱 비밀번호)를 한 번만 넣어 두면, 다음부터 바로 보낼 수 있습니다.
+          ) : (
+            <Callout tone="warn" title={`${state.me.name} 님의 메일 계정이 아직 없습니다`}>
+              팀 설정 → 메일·주소록 → <b>내 메일 계정</b>에서 내 메일 주소와 메일 비밀번호(앱 비밀번호)를 한 번만 넣어 두면, 다음부터 바로 보낼 수 있습니다. 내 계정은 나만 씁니다.
               <div className="mt-2">
                 <Button size="sm" icon={Mail} onClick={onOpenSettings}>
-                  메일 계정 설정하기
+                  내 메일 계정 설정하기
                 </Button>
               </div>
             </Callout>
@@ -416,8 +405,6 @@ export interface SendMailProps {
   onClose: () => void
   doc: QuoteDoc
   kit: CompanyKit
-  /** 문서에 고른 담당자(보내는 사람 기본값) */
-  contact: Contact | undefined
   total: number
   base: string
   makePdf: () => Promise<Blob>
@@ -426,7 +413,7 @@ export interface SendMailProps {
   onOpenSettings: () => void
 }
 
-export function SendMailDialog({ open, onClose, doc, kit, contact, total, base, makePdf, makeXlsx, remember, onOpenSettings }: SendMailProps) {
+export function SendMailDialog({ open, onClose, doc, kit, total, base, makePdf, makeXlsx, remember, onOpenSettings }: SendMailProps) {
   const what = doc.type === 'statement' ? '거래명세서' : '견적서'
   const initial = useMemo<Draft>(() => ({ to: [], cc: [], bcc: [], subject: defaultSubject(doc, kit), files: [] }), [open]) // eslint-disable-line react-hooks/exhaustive-deps
   return (
@@ -434,7 +421,6 @@ export function SendMailDialog({ open, onClose, doc, kit, contact, total, base, 
       open={open}
       onClose={onClose}
       title={`${what} 메일 보내기`}
-      senderId={contact?.id}
       initial={initial}
       bodyFor={(s) => defaultBody(doc, kit, s, total)}
       doc={{ base, customer: doc.customer.trim(), docNo: doc.docNo, makePdf, makeXlsx, remember }}
@@ -452,7 +438,7 @@ export function MailBox({ onOpenSettings }: { onOpenSettings: () => void }) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<BoxFilter>('all')
   const [openId, setOpenId] = useState<string | null>(null)
-  const [compose, setCompose] = useState<{ title: string; initial: Draft; senderId?: string } | null>(null)
+  const [compose, setCompose] = useState<{ title: string; initial: Draft } | null>(null)
   const reload = () =>
     loadLog()
       .then(setLog)
@@ -469,8 +455,6 @@ export function MailBox({ onOpenSettings }: { onOpenSettings: () => void }) {
     )
   }, [log, query, filter])
   const opened = (log ?? []).find((e) => e.id === openId) ?? null
-  const contacts = kit.contacts
-  const senderOf = (e: MailLogEntry) => contacts.find((c) => [e.replyTo, e.from].some((x) => x && c.email.toLowerCase() === x.toLowerCase()))?.id
 
   /** 다시 보내기·전달: 저장된 본문·첨부를 그대로 새 메일로 */
   const reuse = async (e: MailLogEntry, saved: SavedMail | null, mode: 'again' | 'forward') => {
@@ -479,7 +463,6 @@ export function MailBox({ onOpenSettings }: { onOpenSettings: () => void }) {
     setOpenId(null)
     setCompose({
       title: fwd ? '전달' : '다시 보내기',
-      senderId: senderOf(e),
       initial: {
         to: fwd ? [] : e.to,
         cc: fwd ? [] : e.cc,
@@ -578,7 +561,6 @@ export function MailBox({ onOpenSettings }: { onOpenSettings: () => void }) {
         open={!!compose}
         onClose={() => setCompose(null)}
         title={compose?.title ?? '새 메일'}
-        senderId={compose?.senderId}
         initial={compose?.initial ?? { to: [], cc: [], bcc: [], subject: '', files: [] }}
         bodyFor={(s) => plainBody(kit, s)}
         onOpenSettings={onOpenSettings}
@@ -589,6 +571,9 @@ export function MailBox({ onOpenSettings }: { onOpenSettings: () => void }) {
 }
 
 function MailDetail({ entry, onClose, onReuse, onDeleted }: { entry: MailLogEntry | null; onClose: () => void; onReuse: (e: MailLogEntry, saved: SavedMail | null, mode: 'again' | 'forward') => void; onDeleted: () => void }) {
+  // 메일함에서 지우기는 보낸 사람 본인(또는 관리자)만
+  const viewer = useViewerStore((s) => s.user)
+  const admin = useViewerStore((s) => s.admin)
   const [saved, setSaved] = useState<SavedMail | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   useEffect(() => {
@@ -622,7 +607,7 @@ function MailDetail({ entry, onClose, onReuse, onDeleted }: { entry: MailLogEntr
       footer={
         e && (
           <>
-            {e.saved && (
+            {e.saved && (!e.userId || e.userId === viewer?.id || admin) && (
               <Button
                 variant="ghost"
                 icon={Trash2}
@@ -718,17 +703,18 @@ function MailDetail({ entry, onClose, onReuse, onDeleted }: { entry: MailLogEntr
 }
 
 // ── 팀 설정: 메일·주소록 ─────────────────────────────────
-export function MailSection({ onGoContacts }: { onGoContacts: () => void }) {
-  const contacts = useTeam((s) => s.contacts)
+export function MailSection() {
   const team = useTeam((s) => s.team)
+  const viewer = useViewerStore((s) => s.user)
   const [state, setState] = useState<MailState | null>(null)
   const reload = () =>
     loadMail()
       .then(setState)
       .catch((err) => toast.error(errText(err, '메일 설정을 불러오지 못했습니다.')))
+  // 로그인한 사람이 바뀌면 내 메일 계정도 다시
   useEffect(() => {
     void reload()
-  }, [])
+  }, [viewer?.id])
   if (!state)
     return (
       <div className="flex items-center gap-2 py-6 text-muted">
@@ -738,52 +724,46 @@ export function MailSection({ onGoContacts }: { onGoContacts: () => void }) {
   return (
     <div className="flex max-w-3xl flex-col gap-6">
       <Callout tone="info">
-        메일 계정·주소록·메일함은 <b>{team?.name ?? '이'} 팀</b>(같은 팀 코드로 들어온 사람)끼리만 함께 씁니다. 다른 팀에서는 보이지 않습니다.
+        <b>내 메일 계정</b>은 로그인한 나만 씁니다. 같은 팀이라도 다른 사람이 내 이름·내 메일로 보낼 수 없습니다. <b>주소록·문서함·메일함(보낸 메일)·거래처·담당자 관리</b>는 {team?.name ?? '이'} 팀(같은 팀 코드로 들어온 사람)끼리 함께 씁니다.
       </Callout>
-      <section className="flex flex-col gap-3">
-        <h3 className="text-base font-bold text-ink">담당자 메일 계정</h3>
-        <p className="text-sm text-ink-2">
-          견적서를 담당자 본인의 메일 주소로 보냅니다. 담당자마다 <b>메일 비밀번호를 한 번만</b> 넣어 두면 됩니다. Gmail·네이버·다음은 로그인 비밀번호가 아니라 <b>앱 비밀번호</b>를 넣어야 하고, 네이버·다음은 메일 환경설정에서 <b>POP3/SMTP 사용</b>을 켜 두어야 합니다. 비밀번호는 서버에 암호화해 두며 화면에 다시 보이지 않습니다.
-        </p>
-        {contacts.length === 0 ? (
-          <EmptyState icon={Mail} title="등록된 담당자가 없습니다" action={<Button size="sm" onClick={onGoContacts}>담당자 추가하러 가기</Button>}>
-            담당자 탭에서 성명과 이메일을 넣고 저장한 뒤 여기서 메일 계정을 설정하세요.
-          </EmptyState>
-        ) : (
-          contacts.map((c) => <AccountEditor key={c.id} contact={c} state={state} onSaved={reload} onGoContacts={onGoContacts} />)
-        )}
-      </section>
+      <MyAccount state={state} onSaved={reload} />
       <AddressBook state={state} onSaved={(addressBook) => setState((s) => (s ? { ...s, addressBook } : s))} />
     </div>
   )
 }
 
-function AccountEditor({ contact, state, onSaved, onGoContacts }: { contact: Contact; state: MailState; onSaved: () => Promise<void>; onGoContacts: () => void }) {
-  const saved = state.accounts[contact.id]
-  const guess = providerFor(state.providers, contact.email)
+function MyAccount({ state, onSaved }: { state: MailState; onSaved: () => Promise<void> }) {
+  const showLogin = useLoginDialog((s) => s.show)
+  const saved = state.account
+  const me = state.me
   const [open, setOpen] = useState(false)
-  const [provider, setProvider] = useState('')
-  const [host, setHost] = useState('')
-  const [port, setPort] = useState('465')
-  const [user, setUser] = useState('')
-  const [pass, setPass] = useState('')
+  const [form, setForm] = useState({ name: '', title: '', phone: '', replyTo: '', provider: '', host: '', port: '465', user: '', pass: '' })
   const [busy, setBusy] = useState<string | null>(null)
+  const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
   const start = () => {
-    const p = saved ? (state.providers.find((x) => x.host === saved.host) ?? null) : guess
-    setProvider(p?.id ?? 'custom')
-    setHost(saved?.host ?? p?.host ?? '')
-    setPort(String(saved?.port ?? p?.port ?? 465))
-    setUser(saved?.user ?? contact.email)
-    setPass('')
+    const p = saved ? (state.providers.find((x) => x.host === saved.host) ?? null) : null
+    setForm({
+      name: saved?.name ?? me?.name ?? '',
+      title: saved?.title ?? '',
+      phone: saved?.phone ?? '',
+      replyTo: saved?.replyTo ?? '',
+      provider: saved ? (p?.id ?? 'custom') : '',
+      host: saved?.host ?? '',
+      port: String(saved?.port ?? 465),
+      user: saved?.user ?? '',
+      pass: '',
+    })
     setOpen(true)
   }
+  // 서비스는 로그인 주소(아이디)로 추정
+  const guessFrom = (user: string) => {
+    if (form.provider && form.provider !== 'auto') return
+    const p = providerFor(state.providers, user)
+    if (p) set({ host: p.host, port: String(p.port), provider: 'auto' })
+  }
   const pick = (id: string) => {
-    setProvider(id)
     const p = state.providers.find((x) => x.id === id)
-    if (p) {
-      setHost(p.host)
-      setPort(String(p.port))
-    }
+    set(p ? { provider: id, host: p.host, port: String(p.port) } : { provider: id })
   }
   const run = async (label: string, fn: () => Promise<void>) => {
     setBusy(label)
@@ -795,103 +775,130 @@ function AccountEditor({ contact, state, onSaved, onGoContacts }: { contact: Con
       setBusy(null)
     }
   }
-  const name = [contact.name, contact.title].filter(Boolean).join(' ') || '이름 없는 담당자'
-  const hasEmail = isEmail(contact.email)
-  return (
-    <div className="rounded-lg border border-line bg-paper p-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <p className="font-semibold text-ink">{name}</p>
-        <span className="text-sm text-muted">{contact.email || '이메일 없음'}</span>
-        {saved ? (
-          <Badge tone="brand">
-            <CheckCircle2 className="mr-1 size-3" aria-hidden /> 설정됨 · {saved.host}
-          </Badge>
-        ) : (
-          <Badge>설정 전</Badge>
-        )}
-        <div className="ml-auto flex gap-1.5">
-          {!hasEmail ? (
-            <Button size="sm" onClick={onGoContacts}>
-              이메일 넣으러 가기
+  if (!me)
+    return (
+      <section className="flex flex-col gap-2">
+        <h3 className="text-base font-bold text-ink">내 메일 계정</h3>
+        <Callout tone="warn" title="내 계정으로 로그인해 주세요">
+          메일은 보내는 사람 본인의 메일 계정으로만 나갑니다. 온비짱 오른쪽 위 [로그인]으로 내 계정에 로그인하면 여기서 내 메일 계정을 설정할 수 있습니다.
+          <div className="mt-2">
+            <Button size="sm" variant="primary" icon={LogIn} onClick={showLogin}>
+              로그인
             </Button>
+          </div>
+        </Callout>
+      </section>
+    )
+  return (
+    <section className="flex flex-col gap-3">
+      <h3 className="text-base font-bold text-ink">내 메일 계정 · {me.name}</h3>
+      <p className="text-sm text-ink-2">
+        견적서·거래명세서를 <b>내 메일</b>로 보냅니다. Gmail·네이버·다음은 로그인 비밀번호가 아니라 <b>앱 비밀번호</b>를 넣어야 하고, 네이버·다음은 메일 환경설정에서 <b>POP3/SMTP 사용</b>을 켜 두어야 합니다. 비밀번호는 서버에 암호화해 두며 나에게도 다시 보이지 않습니다.
+      </p>
+      <div className="rounded-lg border border-line bg-paper p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          {saved ? (
+            <>
+              <p className="font-semibold text-ink">{[saved.name, saved.title].filter(Boolean).join(' ')}</p>
+              <span className="text-sm text-muted">{saved.fromAddress}</span>
+              <Badge tone="brand">
+                <CheckCircle2 className="mr-1 size-3" aria-hidden /> 설정됨 · {saved.host}
+              </Badge>
+            </>
           ) : (
             <>
-              {saved && (
-                <Button
-                  size="sm"
-                  icon={Plug}
-                  loading={busy === 'test'}
-                  disabled={!!busy}
-                  title={`${contact.email}로 시험 메일 한 통을 보내 봅니다`}
-                  onClick={() => void run('test', async () => {
-                    const r = await testAccount(contact.id)
-                    toast.success(`시험 메일을 보냈습니다(${r.from} → ${r.to}). 받은편지함을 확인해 보세요.`)
-                  })}
-                >
-                  시험 메일 보내기
-                </Button>
-              )}
-              <Button size="sm" variant={saved ? 'secondary' : 'primary'} icon={Mail} onClick={() => (open ? setOpen(false) : start())}>
-                {saved ? '고치기' : '메일 계정 설정'}
-              </Button>
+              <p className="font-semibold text-ink">{me.name}</p>
+              <Badge>설정 전</Badge>
             </>
           )}
-        </div>
-      </div>
-      {saved && saved.fromAddress.toLowerCase() !== contact.email.toLowerCase() && (
-        <p className="mt-1.5 text-xs text-muted">
-          보내는 주소는 로그인 계정 <b className="text-ink-2">{saved.fromAddress}</b>이고, 답장은 <b className="text-ink-2">{contact.email}</b>로 옵니다(메일 서버가 로그인한 계정 주소로만 보낼 수 있게 해 두어서).
-        </p>
-      )}
-      {open && hasEmail && (
-        <form
-          className="mt-3 grid gap-2 border-t border-line pt-3 sm:grid-cols-2"
-          onSubmit={(e) => {
-            e.preventDefault()
-            void run('save', async () => {
-              await saveAccount(contact.id, { host: host.trim(), port: Number(port), user: user.trim(), pass })
-              await onSaved()
-              setOpen(false)
-              toast.success(`${name}의 메일 계정을 저장했습니다. ‘시험 메일 보내기’로 확인해 보세요.`)
-            })
-          }}
-        >
-          <Field label="메일 서비스" className="sm:col-span-2">
-            {(id) => <Select id={id} value={provider} onValue={pick} options={[...state.providers.map((p) => ({ value: p.id, label: p.label })), { value: 'custom', label: '직접 입력(회사 메일 서버)' }]} />}
-          </Field>
-          <Field label="보내는 메일 서버(SMTP)" hint="예: smtp.gmail.com">
-            {(id) => <TextInput id={id} value={host} onChange={(e) => (setHost(e.target.value), setProvider('custom'))} required />}
-          </Field>
-          <Field label="포트" hint="보통 465(SSL) 또는 587">
-            {(id) => <TextInput id={id} value={port} inputMode="numeric" onChange={(e) => setPort(e.target.value.replace(/\D/g, ''))} required />}
-          </Field>
-          <Field label="메일 계정(아이디)" hint="로그인하는 메일 주소 전체(네이버는 abc@naver.com). 메일은 이 주소로 나갑니다">
-            {(id) => <TextInput id={id} value={user} onChange={(e) => setUser(e.target.value)} autoComplete="off" required />}
-          </Field>
-          <Field label="메일 비밀번호(앱 비밀번호)" hint={saved ? '비워 두면 전에 넣은 비밀번호를 그대로 씁니다' : undefined}>
-            {(id) => <TextInput id={id} type="password" value={pass} onChange={(e) => setPass(e.target.value)} autoComplete="new-password" required={!saved} />}
-          </Field>
-          <div className="flex flex-wrap gap-2 sm:col-span-2">
-            <Button type="submit" variant="primary" icon={Save} loading={busy === 'save'} disabled={!!busy}>
-              저장
-            </Button>
-            <Button onClick={() => setOpen(false)}>취소</Button>
+          <div className="ml-auto flex gap-1.5">
             {saved && (
               <Button
-                variant="ghost"
-                icon={Trash2}
-                className="ml-auto"
-                onClick={() => {
-                  if (confirm(`${name}의 메일 계정 설정을 지울까요?`)) void run('del', async () => (await removeAccount(contact.id), await onSaved(), setOpen(false)))
-                }}
+                size="sm"
+                icon={Plug}
+                loading={busy === 'test'}
+                disabled={!!busy}
+                onClick={() =>
+                  void run('test', async () => {
+                    const r = await testAccount()
+                    toast.success(`시험 메일을 보냈습니다(${r.from} → ${r.to}). 받은편지함을 확인해 보세요.`)
+                  })
+                }
               >
-                설정 지우기
+                시험 메일 보내기
               </Button>
             )}
+            <Button size="sm" variant={saved ? 'secondary' : 'primary'} icon={Mail} onClick={() => (open ? setOpen(false) : start())}>
+              {saved ? '고치기' : '내 메일 계정 설정'}
+            </Button>
           </div>
-        </form>
-      )}
-    </div>
+        </div>
+        {saved && saved.replyTo && saved.replyTo.toLowerCase() !== saved.fromAddress.toLowerCase() && (
+          <p className="mt-1.5 text-xs text-muted">
+            답장은 <b className="text-ink-2">{saved.replyTo}</b>로 옵니다.
+          </p>
+        )}
+        {open && (
+          <form
+            className="mt-3 grid gap-2 border-t border-line pt-3 sm:grid-cols-2"
+            onSubmit={(e) => {
+              e.preventDefault()
+              void run('save', async () => {
+                await saveAccount({ host: form.host.trim(), port: Number(form.port), user: form.user.trim(), pass: form.pass, name: form.name.trim(), title: form.title.trim(), phone: form.phone.trim(), replyTo: form.replyTo.trim() })
+                await onSaved()
+                setOpen(false)
+                toast.success('내 메일 계정을 저장했습니다. ‘시험 메일 보내기’로 확인해 보세요.')
+              })
+            }}
+          >
+            <Field label="보내는 사람 이름">{(id) => <TextInput id={id} value={form.name} maxLength={30} onChange={(e) => set({ name: e.target.value })} required />}</Field>
+            <Field label="직함" hint="예: 팀장">{(id) => <TextInput id={id} value={form.title} maxLength={20} onChange={(e) => set({ title: e.target.value })} />}</Field>
+            <Field label="직통번호" hint="메일 서명에 들어갑니다">{(id) => <TextInput id={id} value={form.phone} maxLength={30} inputMode="tel" onChange={(e) => set({ phone: e.target.value })} />}</Field>
+            <Field label="답장 받을 메일" hint="예: 회사 메일. 비우면 보내는 메일로">{(id) => <TextInput id={id} value={form.replyTo} maxLength={120} inputMode="email" onChange={(e) => set({ replyTo: e.target.value.trim() })} />}</Field>
+            <Field label="메일 계정(로그인 주소)" hint="메일은 이 주소로 나갑니다(네이버는 abc@naver.com)" className="sm:col-span-2">
+              {(id) => <TextInput id={id} value={form.user} onChange={(e) => set({ user: e.target.value.trim() })} onBlur={(e) => guessFrom(e.target.value)} autoComplete="off" inputMode="email" required />}
+            </Field>
+            <Field label="메일 서비스" className="sm:col-span-2">
+              {(id) => (
+                <Select
+                  id={id}
+                  value={state.providers.some((p) => p.id === form.provider) ? form.provider : form.provider === 'auto' ? (state.providers.find((p) => p.host === form.host)?.id ?? 'custom') : 'custom'}
+                  onValue={pick}
+                  options={[...state.providers.map((p) => ({ value: p.id, label: p.label })), { value: 'custom', label: '직접 입력(회사 메일 서버)' }]}
+                />
+              )}
+            </Field>
+            <Field label="보내는 메일 서버(SMTP)" hint="예: smtp.naver.com">
+              {(id) => <TextInput id={id} value={form.host} onChange={(e) => set({ host: e.target.value, provider: 'custom' })} required />}
+            </Field>
+            <Field label="포트" hint="보통 465(SSL) 또는 587">
+              {(id) => <TextInput id={id} value={form.port} inputMode="numeric" onChange={(e) => set({ port: e.target.value.replace(/\D/g, '') })} required />}
+            </Field>
+            <Field label="메일 비밀번호(앱 비밀번호)" hint={saved ? '비워 두면 전에 넣은 비밀번호를 그대로 씁니다' : undefined} className="sm:col-span-2">
+              {(id) => <TextInput id={id} type="password" value={form.pass} onChange={(e) => set({ pass: e.target.value })} autoComplete="new-password" required={!saved} />}
+            </Field>
+            <div className="flex flex-wrap gap-2 sm:col-span-2">
+              <Button type="submit" variant="primary" icon={Save} loading={busy === 'save'} disabled={!!busy}>
+                저장
+              </Button>
+              <Button onClick={() => setOpen(false)}>취소</Button>
+              {saved && (
+                <Button
+                  variant="ghost"
+                  icon={Trash2}
+                  className="ml-auto"
+                  onClick={() => {
+                    if (confirm('내 메일 계정 설정을 지울까요?')) void run('del', async () => (await removeAccount(), await onSaved(), setOpen(false)))
+                  }}
+                >
+                  설정 지우기
+                </Button>
+              )}
+            </div>
+          </form>
+        )}
+      </div>
+    </section>
   )
 }
 
