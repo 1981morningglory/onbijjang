@@ -47,7 +47,7 @@ import {
   DEFAULT_WAREHOUSE,
   CENTER_WAREHOUSES,
   isCenterRow,
-  isJeju,
+  jejuNote,
   needsProduct,
   OUTPUTS,
   outputFileName,
@@ -168,7 +168,7 @@ const fmt = (n: number) => n.toLocaleString('ko-KR')
 const WEEK = ['일', '월', '화', '수', '목', '금', '토']
 const weekday = (date: string) => WEEK[new Date(`${date}T00:00:00Z`).getUTCDay()]
 /** 화면 쪽 센터주문서 양식 판(서버 쪽 CENTER_FORM 과 같이 올린다) */
-const CENTER_FORM_UI = '센터주문서 v11'
+const CENTER_FORM_UI = '센터주문서 v12'
 const AMOUNT_RE = /결제\s*금액|주문\s*금액|총\s*금액|판매\s*금액|결제액/
 
 /** 지금 보고 있는 사람: CS 내용 고치기·지우기는 적은 사람 본인과 전체마스터만 */
@@ -411,7 +411,7 @@ function Make({ onGoList }: { onGoList: () => void }) {
       orders: new Set(rows.map((r) => `${str(r[COL.mall])}|${str(r[COL.orderNo])}`)).size,
       qty: rows.reduce((s, r) => s + (Number(r[COL.qty]) || 0), 0),
       amount: amountCol ? rows.reduce((s, r) => s + (Number(String(r[amountCol] ?? '').replace(/[^\d.-]/g, '')) || 0), 0) : null,
-      jeju: rows.filter(isJeju).length,
+      jeju: rows.filter((r) => jejuNote(r)).length,
       malls: [...malls].sort((a, b) => b[1] - a[1]),
     }
   }, [rows, amountCol])
@@ -492,7 +492,7 @@ function Make({ onGoList }: { onGoList: () => void }) {
             <Stat label="주문줄수" value={fmt(rows.length)} />
             <Stat label="수량" value={fmt(stats.qty)} />
             {stats.amount != null && <Stat label="주문총액" value={`${fmt(stats.amount)}원`} />}
-            {stats.jeju > 0 && <Stat label="제주(제주도출고O)" value={`${stats.jeju}줄`} />}
+            {stats.jeju > 0 && <Stat label="제주 [제주도](핫트랙스·텐바이텐)" value={`${stats.jeju}줄`} />}
             {fixRows.length > 0 && <Stat label="상품 못 맞춤" value={`${missing}줄`} tone={missing ? 'warn' : undefined} />}
           </div>
           <div className="flex flex-wrap gap-1.5">
