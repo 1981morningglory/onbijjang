@@ -1,16 +1,18 @@
 /**
  * 결과 나누기 — PDF 저장과 공유 링크.
  * - PDF: 화면의 결과 덩어리([data-pdf-block])를 하나씩 그림으로 떠서 A4 쪽에 차례로 담는다(덩어리가 쪽 사이에서 잘리지 않게).
- * - 링크: 입력값만 주소에 담는다. 받은 사람 화면에서 같은 계산을 다시 한다.
+ * - 링크: 입력값만 서버에 맡기고 짧은 주소(/s/아이디)를 준다. 받은 사람은 메뉴 없이 결과만 보는 화면에서 같은 계산을 다시 한다.
  */
+import { api } from '@/lib/api'
 import type { ChartInput } from './logic'
 import { CITIES } from './logic'
 import { AXES, TYPES, type Axis } from './mbti/data'
 
 // ── 링크 ─────────────────────────────────────────────────
-const BASE = () => `${location.origin}/tools/saju`
+export type ShareKind = 'saju' | 'mbti'
 
-export function sajuLink(input: ChartInput, name: string): string {
+/** 사주 입력값 → 주소 뒤 글(y=…&m=…) */
+export function sajuQuery(input: ChartInput, name: string): string {
   const q = new URLSearchParams()
   q.set('y', String(input.year))
   q.set('m', String(input.month))
@@ -22,7 +24,7 @@ export function sajuLink(input: ChartInput, name: string): string {
   if (city) q.set('city', city.name)
   if (input.dayBoundary !== 'midnight') q.set('b', input.dayBoundary)
   if (name) q.set('n', name.slice(0, 20))
-  return `${BASE()}?${q}`
+  return q.toString()
 }
 
 export interface SajuLinkData {
@@ -66,10 +68,23 @@ export function parseSajuLink(search: string): SajuLinkData | null {
   }
 }
 
-export function mbtiLink(type: string, pct: Record<Axis, number> | null): string {
-  const q = new URLSearchParams({ tab: 'mbti', r: type })
+export function mbtiQuery(type: string, pct: Record<Axis, number> | null): string {
+  const q = new URLSearchParams({ r: type })
   if (pct) q.set('p', AXES.map((a) => pct[a]).join('.'))
-  return `${BASE()}?${q}`
+  return q.toString()
+}
+
+/** 메뉴 없이 결과만 보는 긴 주소(짧은 주소를 못 만들 때 대신 쓴다) */
+export const viewLink = (kind: ShareKind, query: string) => `${location.origin}/v/${kind}?${query}`
+
+/** 짧은 공유 주소. 서버에 맡기지 못하면 긴 주소 */
+export async function shortLink(kind: ShareKind, query: string): Promise<string> {
+  try {
+    const r = await api<{ id: string; base: string | null }>('/share', { method: 'POST', body: { kind, q: query } })
+    return `${(r.base || location.origin).replace(/\/+$/, '')}/s/${r.id}`
+  } catch {
+    return viewLink(kind, query)
+  }
 }
 
 export function parseMbtiLink(search: string): { type: string; pct: Record<Axis, number> | null } | null {
@@ -122,7 +137,7 @@ async function buildPdf(
   const filter = (n: HTMLElement) => !(n instanceof HTMLElement && n.dataset.pdfSkip != null)
   const pdf = await PDFDocument.create()
   pdf.setTitle(title)
-  pdf.setCreator('온비짱')
+  pdf.setCreator('사주·MBTI')
   const contentW = A4_W - MARGIN * 2
   const usableH = A4_H - MARGIN * 2
   let page = pdf.addPage([A4_W, A4_H])

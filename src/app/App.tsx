@@ -1,12 +1,26 @@
-import { useEffect } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
-import { ToastViewport } from '@/ui'
+import { Spinner, ToastViewport } from '@/ui'
 import { Admin } from './Admin'
 import { useSite } from './config'
 import { useViewerStore } from './viewer'
 import { Home } from './Home'
 import { Shell } from './Shell'
 import { ToolPage } from './ToolPage'
+
+// 공유받은 결과만 보는 화면(메뉴 없이) — 사주·MBTI
+const SharedPage = lazy(() => import('@/tools/saju/SharedPage'))
+const shared = (
+  <Suspense
+    fallback={
+      <div className="flex min-h-dvh items-center justify-center gap-2 text-muted">
+        <Spinner /> 불러오는 중
+      </div>
+    }
+  >
+    <SharedPage />
+  </Suspense>
+)
 
 export function App() {
   const load = useSite((s) => s.load)
@@ -25,6 +39,8 @@ export function App() {
   return (
     <BrowserRouter>
       <Routes>
+        <Route path="s/:id" element={shared} />
+        <Route path="v/:kind" element={shared} />
         <Route element={<Shell />}>
           <Route index element={<Home />} />
           <Route path="tools/:id" element={<ToolPage />} />

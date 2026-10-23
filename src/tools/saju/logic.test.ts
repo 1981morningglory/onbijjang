@@ -1,5 +1,5 @@
 import { calculateFourPillars } from 'manseryeok'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { branchTenGod, chartForAi, computeChart, dayStrength, lunarOptions, tenGod, tenGroupCounts, TEN_GROUPS, twelveStage, yearGanji, type ChartInput } from './logic'
 import { AXES, QUESTIONS, scoreAnswers, TYPE_ORDER, TYPES } from './mbti/data'
 
@@ -160,35 +160,53 @@ describe('서버: AI 답 정리', () => {
 })
 
 describe('공유 링크', () => {
-  it('사주 링크를 다시 읽으면 같은 입력', async () => {
-    vi.stubGlobal('location', { origin: 'https://example.test' })
-    const { sajuLink, parseSajuLink } = await import('./share')
+  it('사주 입력값을 주소 글로 바꿨다가 다시 읽으면 같은 입력', async () => {
+    const { sajuQuery, parseSajuLink } = await import('./share')
     const cases: ChartInput[] = [
       base,
       { ...base, calendar: 'lunar', leap: true, year: 2023, month: 2, day: 1, hour: null, minute: 0, gender: 'female', longitude: 129.08, dayBoundary: 'jasi' },
     ]
     for (const inp of cases) {
-      const url = sajuLink(inp, '홍길동')
-      expect(url.startsWith('https://example.test/tools/saju?')).toBe(true)
-      const got = parseSajuLink(new URL(url).search)!
+      const got = parseSajuLink(sajuQuery(inp, '홍길동'))!
       expect(got.input).toEqual(inp)
       expect(got.name).toBe('홍길동')
     }
     expect(parseSajuLink('?y=abc&m=1&d=1')).toBeNull()
     expect(parseSajuLink('?y=1990&m=13&d=1')).toBeNull()
     expect(parseSajuLink('?y=1990&m=1&d=1&t=2599')).toBeNull()
-    vi.unstubAllGlobals()
   })
-  it('MBTI 링크: 유형·비율, 유형과 안 맞는 비율은 버림', async () => {
-    vi.stubGlobal('location', { origin: 'https://example.test' })
-    const { mbtiLink, parseMbtiLink } = await import('./share')
+  it('MBTI: 유형·비율, 유형과 안 맞는 비율은 버림', async () => {
+    const { mbtiQuery, parseMbtiLink } = await import('./share')
     const pct = { EI: 58, SN: 30, TF: 70, JP: 45 }
-    const url = mbtiLink('ENTP', pct)
-    expect(parseMbtiLink(new URL(url).search)).toEqual({ type: 'ENTP', pct })
+    expect(parseMbtiLink(mbtiQuery('ENTP', pct))).toEqual({ type: 'ENTP', pct })
     expect(parseMbtiLink('?r=ESTJ&p=58.30.70.45')).toEqual({ type: 'ESTJ', pct: null })
     expect(parseMbtiLink('?r=XXXX')).toBeNull()
     expect(parseMbtiLink('?r=infp')).toEqual({ type: 'INFP', pct: null })
-    vi.unstubAllGlobals()
+  })
+  it('서버: 정해진 값만 맡고, 같은 결과는 같은 아이디', async () => {
+    const { cleanQuery, makeId } = await import('../../../server/routes/share.mjs')
+    const { sajuQuery } = await import('./share')
+    const q = sajuQuery(base, '홍길동')
+    expect(cleanQuery('saju', q)).toBe(q)
+    expect(cleanQuery('saju', `${q}&evil=1`)).toBe(q)
+    expect(cleanQuery('saju', 'm=1&d=1')).toBeNull()
+    expect(cleanQuery('mbti', 'r=ENTP&p=58.30.70.45')).toBe('r=ENTP&p=58.30.70.45')
+    expect(cleanQuery('mbti', 'r=ABCD')).toBeNull()
+    expect(cleanQuery('other', q)).toBeNull()
+    expect(cleanQuery('saju', 'y=1990&m=5&d=15&n=%3Cscript%3E')).toBeNull()
+    const id = makeId('secret', 'saju', q)
+    expect(id).toMatch(/^[A-Za-z0-9]{8}$/)
+    expect(makeId('secret', 'saju', q)).toBe(id)
+    expect(makeId('other-secret', 'saju', q)).not.toBe(id)
+  })
+  it('서버: 공유 화면 HTML 에는 온비짱 이름 대신 중립 제목', async () => {
+    const { sharedHtml } = await import('../../../server/routes/share.mjs')
+    const html = '<head><link rel="icon" type="image/svg+xml" href="/favicon.svg" />\n<title>온비짱 · 팀 작업대</title></head>'
+    const out = sharedHtml(html, 'saju')
+    expect(out).not.toContain('온비짱')
+    expect(out).not.toContain('favicon.svg')
+    expect(out).toContain('og:title')
+    expect(sharedHtml(html, 'mbti')).toContain('성격유형')
   })
 })
 

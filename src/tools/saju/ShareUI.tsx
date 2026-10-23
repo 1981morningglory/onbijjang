@@ -1,20 +1,26 @@
 import { CheckCircle2, FileDown, Link2 } from 'lucide-react'
 import { useState } from 'react'
 import { Button, Dialog, TextInput, toast } from '@/ui'
-import { copyText, exportPdf } from './share'
+import { copyText, exportPdf, shortLink, type ShareKind } from './share'
 
 export interface ShareTarget {
   /** 결과가 들어 있는 상자(id) — 안의 [data-pdf-block] 을 PDF 로 */
   containerId: string
   filename: string
   title: string
-  link: string
+  kind: ShareKind
+  /** 결과를 다시 만들 입력값(y=…&m=… 등) */
+  query: string
 }
 
 /** PDF 저장·링크 복사 동작(팝업과 결과 화면 버튼이 같이 쓴다) */
 export function useShare(target: ShareTarget | null) {
   const [busy, setBusy] = useState(false)
-  const [copied, setCopied] = useState(false)
+  const [linking, setLinking] = useState(false)
+  /** 만든 짧은 주소(같은 결과면 다시 쓰고, 결과가 바뀌면 새로) */
+  const [made, setMade] = useState<{ key: string; url: string } | null>(null)
+  const key = target ? `${target.kind}?${target.query}` : ''
+  const url = made?.key === key ? made.url : null
   const pdf = async () => {
     if (!target) return
     const el = document.getElementById(target.containerId)
@@ -31,12 +37,18 @@ export function useShare(target: ShareTarget | null) {
   }
   const link = async () => {
     if (!target) return
-    const ok = await copyText(target.link)
-    setCopied(true)
-    if (ok) toast.success('링크를 복사했습니다. 메신저에 붙여 넣어 보내세요.')
-    else toast.info('아래 링크를 길게 눌러(또는 드래그해) 복사해 주세요.')
+    setLinking(true)
+    try {
+      const u = url ?? (await shortLink(target.kind, target.query))
+      setMade({ key, url: u })
+      const ok = await copyText(u)
+      if (ok) toast.success('링크를 복사했습니다. 메신저에 붙여 넣어 보내세요.')
+      else toast.info('아래 링크를 길게 눌러(또는 드래그해) 복사해 주세요.')
+    } finally {
+      setLinking(false)
+    }
   }
-  return { busy, copied, pdf, link }
+  return { busy, linking, url, pdf, link }
 }
 
 /** 결과 화면 안의 작은 버튼 두 개 */
@@ -46,7 +58,7 @@ export function ShareButtons({ share }: { share: ReturnType<typeof useShare> }) 
       <Button size="sm" icon={FileDown} loading={share.busy} onClick={() => void share.pdf()}>
         PDF 다운로드
       </Button>
-      <Button size="sm" icon={Link2} onClick={() => void share.link()}>
+      <Button size="sm" icon={Link2} loading={share.linking} onClick={() => void share.link()}>
         링크 복사
       </Button>
     </div>
@@ -64,10 +76,10 @@ export function ShareDialog({ open, onClose, heading, note, target, share }: { o
         <Button variant="primary" block icon={FileDown} loading={share.busy} onClick={() => void share.pdf()}>
           결과를 PDF로 다운받기
         </Button>
-        <Button block icon={Link2} onClick={() => void share.link()}>
+        <Button block icon={Link2} loading={share.linking} onClick={() => void share.link()}>
           복사링크로 보내기
         </Button>
-        {share.copied && target && <TextInput readOnly value={target.link} onFocus={(e) => e.currentTarget.select()} aria-label="공유 링크" />}
+        {share.url && <TextInput readOnly value={share.url} onFocus={(e) => e.currentTarget.select()} aria-label="공유 링크" />}
         {note && <p className="text-xs leading-relaxed text-muted">{note}</p>}
         <Button variant="ghost" block onClick={onClose}>
           닫고 결과 보기

@@ -52,7 +52,7 @@ import {
 } from './logic'
 import { isClash, isHarmony, PILLAR_PLACE, TEN_GOD_NOTE } from './guide'
 import { GLOSSARY, GROUP_LUCK, GROUP_LUCK_SHORT, GROUP_MANY, GROUP_NONE, STAGE_NOTE, STEM_READING, STRENGTH_TEXT } from './guide'
-import { parseSajuLink, safeName, sajuLink } from './share'
+import { safeName, sajuQuery } from './share'
 import { ShareButtons, ShareDialog, useShare, type ShareTarget } from './ShareUI'
 import { EL_BOX, EL_HANJA, EL_NAME, EL_SOFT, EL_TEXT, EL_VAR, ElementCycle, ElementTable, CycleGuide, groupElement, Radar, Stars, StemBadge, StrengthGauge, TenGroupDonut } from './visuals'
 
@@ -92,36 +92,13 @@ export default function SajuTab() {
   const [shownName, setShownName] = useState('')
   const [shareOpen, setShareOpen] = useState(false)
 
-  // 공유 링크로 들어오면 입력칸을 채우고 바로 보여 준다
-  useEffect(() => {
-    const got = parseSajuLink(location.search)
-    if (!got) return
-    const i = got.input
-    setName(got.name)
-    setGender(i.gender)
-    setCalendar(i.calendar)
-    setLeapChoice(i.leap ? 'leap' : 'normal')
-    setYear(String(i.year))
-    setMonth(String(i.month))
-    setDay(String(i.day))
-    setTimeUnknown(i.hour == null)
-    if (i.hour != null) setTime(`${pad(i.hour)}:${pad(i.minute)}`)
-    setCity(got.city)
-    setBoundary(i.dayBoundary)
-    try {
-      setChart(computeChart(i))
-      setShownName(got.name)
-    } catch {
-      toast.error('링크의 생년월일을 읽지 못했습니다.')
-    }
-  }, [])
-
   const target: ShareTarget | null = chart
     ? {
         containerId: 'saju-result',
         filename: `${safeName(`사주_${shownName || '결과'}_${c2s(chart)}`)}.pdf`,
         title: `${shownName ? `${shownName} 님의 ` : ''}사주풀이`,
-        link: sajuLink(chart.input, shownName),
+        kind: 'saju',
+        query: sajuQuery(chart.input, shownName),
       }
     : null
   const share = useShare(target)
@@ -391,7 +368,7 @@ function Card({ title, hint, icon: Icon, children, className }: { title: string;
   )
 }
 
-function ChartView({ chart, name, actions }: { chart: Chart; name: string; actions?: ReactNode }) {
+export function ChartView({ chart, name, actions }: { chart: Chart; name: string; actions?: ReactNode }) {
   const c = chart
   const inp = c.input
   const dayEl = stemElement(c.dayMaster)
@@ -767,7 +744,7 @@ const SCORE_LABEL: Array<[string, string]> = [
   ['nextYear', '내년'],
 ]
 
-function AiReading({ chart, name, onDone }: { chart: Chart; name: string; onDone: () => void }) {
+export function AiReading({ chart, name, onDone, readOnly }: { chart: Chart; name: string; onDone?: () => void; readOnly?: boolean }) {
   const showLogin = useLoginDialog((s) => s.show)
   const [status, setStatus] = useState<{ allowed: boolean; ai: boolean } | null>(null)
   const [reading, setReading] = useState<Reading | null>(null)
@@ -775,9 +752,10 @@ function AiReading({ chart, name, onDone }: { chart: Chart; name: string; onDone
   const [elapsed, setElapsed] = useState(0)
   const payload = useMemo(() => chartForAi(chart), [chart])
   useEffect(() => {
-    api<{ allowed: boolean; ai: boolean }>('/saju/status')
-      .then(setStatus)
-      .catch(() => setStatus({ allowed: false, ai: false }))
+    if (!readOnly)
+      api<{ allowed: boolean; ai: boolean }>('/saju/status')
+        .then(setStatus)
+        .catch(() => setStatus({ allowed: false, ai: false }))
     // 같은 원국으로 이미 받은 풀이가 있으면(공유 링크 포함) 로그인 없이도 보여 준다
     api<{ reading: Reading | null }>('/saju/cached', { method: 'POST', body: { chart: payload } })
       .then((r) => r.reading && setReading((cur) => cur ?? r.reading))
@@ -794,7 +772,7 @@ function AiReading({ chart, name, onDone }: { chart: Chart; name: string; onDone
     setElapsed(0)
     try {
       setReading(await api<Reading>('/saju/interpret', { method: 'POST', body: { chart: payload } }))
-      onDone()
+      onDone?.()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'AI 풀이를 받지 못했습니다.')
     } finally {
@@ -815,6 +793,8 @@ function AiReading({ chart, name, onDone }: { chart: Chart; name: string; onDone
       () => toast.error('복사하지 못했습니다.'),
     )
   }
+  // 공유 화면: 받아 둔 풀이가 있을 때만 보여 준다(새로 받거나 로그인 안내는 없음)
+  if (readOnly && !reading) return null
   return (
     <Panel data-pdf-block={reading ? '' : undefined} className="flex flex-col gap-4 p-4 sm:p-5">
       <div className="flex flex-wrap items-center gap-2">
@@ -834,7 +814,7 @@ function AiReading({ chart, name, onDone }: { chart: Chart; name: string; onDone
           )}
         </div>
       </div>
-      {!status ? (
+      {reading ? null : !status ? (
         <div className="flex items-center gap-2 text-muted">
           <Spinner /> 확인 중
         </div>
@@ -851,14 +831,15 @@ function AiReading({ chart, name, onDone }: { chart: Chart; name: string; onDone
         <Callout tone="warn" title="AI 키가 아직 연결되지 않았습니다">
           관리자 화면 → ‘SNS 연결’에서 AI 키를 넣으면 AI 풀이를 쓸 수 있습니다(체험단 선발과 같은 키).
         </Callout>
-      ) : !reading ? (
+      ) : (
         <div className="flex flex-col items-start gap-2">
           <p className="text-base text-ink-2">위 원국을 바탕으로 분야별 점수와 성격·재물·직업·연애·건강·대운·올해와 내년 운세를 풀이합니다. 30초~1분쯤 걸립니다.</p>
           <Button variant="primary" icon={Wand2} loading={busy} onClick={() => void run()}>
             {busy ? `풀이하는 중… ${elapsed}초` : 'AI 사주풀이 받기'}
           </Button>
         </div>
-      ) : (
+      )}
+      {reading && (
         <div className="flex flex-col gap-4">
           <div className="grid items-center gap-4 rounded-lg border border-accent/30 bg-accent-soft/50 p-4 md:grid-cols-[minmax(0,1fr)_auto]">
             <div className="flex flex-col gap-3">
@@ -891,9 +872,11 @@ function AiReading({ chart, name, onDone }: { chart: Chart; name: string; onDone
             ))}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button data-pdf-skip size="sm" variant="ghost" icon={RefreshCw} loading={busy} onClick={() => void run()} title="같은 원국은 저장해 둔 풀이를 보여 줍니다">
-              다시 불러오기
-            </Button>
+            {!readOnly && (
+              <Button data-pdf-skip size="sm" variant="ghost" icon={RefreshCw} loading={busy} onClick={() => void run()} title="같은 원국은 저장해 둔 풀이를 보여 줍니다">
+                다시 불러오기
+              </Button>
+            )}
             <span className="text-sm text-faint">전통 명리학에 따른 참고용 풀이입니다. 점수는 AI가 원국을 보고 매긴 참고 값입니다.</span>
           </div>
         </div>
