@@ -65,10 +65,10 @@ label.f{display:flex;flex-direction:column;gap:6px;font-size:.86rem;font-weight:
 input[type=text],input[type=number],select,textarea{font-family:var(--mono);font-size:1rem;color:var(--ink);background:var(--soft);border:1.5px solid var(--line);border-radius:8px;padding:10px 12px;width:100%;min-width:0;transition:border-color .15s,background .15s}
 input[type=text]:focus,input[type=number]:focus,select:focus,textarea:focus{background:var(--surface);border-color:var(--ink);outline:none}
 input.kr{font-family:var(--sans)}
-textarea{min-height:150px;resize:vertical;line-height:1.6;font-size:1.02rem;white-space:pre;overflow:auto;tab-size:14}
+textarea{min-height:150px;resize:vertical;line-height:1.6;font-size:calc(1.02rem - 2pt);white-space:pre;overflow:auto;tab-size:14}
 input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible{outline:3px solid var(--laser);outline-offset:2px}
 .ta-tools{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
-.ta-btns{display:flex;gap:6px;flex-wrap:wrap}
+.ta-btns{display:flex;gap:6px;flex-wrap:wrap;justify-content:space-between;width:100%}
 .hint{font-size:.82rem;color:var(--muted);margin:0;line-height:1.6}
 .hint code{font-family:var(--mono);color:var(--ink);background:var(--soft);border:1px solid var(--line);border-radius:4px;padding:0 5px;font-size:.8rem}
 .chk{display:flex;align-items:center;gap:9px;font-size:.92rem;color:var(--ink);cursor:pointer;font-weight:500}
@@ -182,8 +182,8 @@ button:not(:disabled):hover{border-color:var(--ink)}
         <div class="ta-tools">
           <p class="hint" id="codes-hint"></p>
           <span class="ta-btns">
-            <button class="sm" id="copytext" type="button" title="입력한 줄 순서 그대로 바코드 13자리만 복사합니다. 엑셀에서 Ctrl+V 하면 한 칸에 하나씩 들어갑니다.">바코드 텍스트만 생성</button>
             <button class="sm" id="clear" type="button">입력 지우기</button>
+            <button class="sm" id="copytext" type="button" title="입력한 줄 순서 그대로 바코드 13자리만 복사합니다. 엑셀에서 Ctrl+V 하면 한 칸에 하나씩 들어갑니다.">바코드 텍스트만 생성</button>
           </span>
         </div>
       </section>
@@ -642,7 +642,7 @@ if (typeof module !== 'undefined') module.exports = BC;
   const CO = '8801237';
   const S = {
     kind: 'flat', fontsReady: false, rows: [], sel: 0, init: false,
-    text: { ean: '15099-89039\n15099-89040\n15099-89041', r: 'R214508300002' },
+    text: { ean: '77000-22192\t110000 모닝글로리 M301(블랙)\n77000-22193\t110000 모닝글로리 M301(그레이)\n77000-22194\t110000 모닝글로리 M301(베이지)', r: 'R214508300002' },
     noDefault: { ean: '', r: '77000-20562' }
   };
   const isEan = () => S.kind !== 'r';
@@ -853,7 +853,7 @@ if (typeof module !== 'undefined') module.exports = BC;
     $('codes-hint').innerHTML = ean
       ? '<code>15099-89039</code>를 넣으면 <code>8801237</code> + <code>89039</code> + 검증코드로 자동 생성됩니다. 5자리(<code>89039</code>)나 13자리도 됩니다.'
       : '쿠팡에서 받은 값을 그대로 넣으세요. 예) <code>R214508300002</code>';
-    $('codes').placeholder = ean ? '15099-89039\n15099-89040\n15099-89041' : 'R214508300002\nR214508300019';
+    $('codes').placeholder = ean ? '77000-22192\t110000 모닝글로리 M301(블랙)\n77000-22193\t110000 모닝글로리 M301(그레이)\n77000-22194\t110000 모닝글로리 M301(베이지)' : 'R214508300002\nR214508300019';
     $('no').placeholder = ean ? '예) 15099-89039 또는 앞 5자리 15099' : '예) 77000-20562';
     $('mag-wrap').hidden = !ean; $('xr-wrap').hidden = ean;
     refresh();
