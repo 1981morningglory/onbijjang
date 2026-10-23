@@ -88,3 +88,14 @@ describe('서버: 메일 도우미', () => {
     expect(S.mailErrorText({ code: 'EAUTH', response: '535 auth failed' })).toContain('앱 비밀번호')
   })
 })
+
+describe('문서 담당자', () => {
+  it('고른 담당자만 넣고, 안 골랐으면 비워 둔다(첫 담당자로 대신 채우지 않음)', async () => {
+    const { docContact } = await import('./model')
+    const kit = { contacts: [{ id: 'c1', name: '장현국', title: '팀장', phone: '', email: '', extras: [] }] }
+    expect(docContact({ showContact: true, contactId: null }, kit)).toBeUndefined()
+    expect(docContact({ showContact: true, contactId: 'c1' }, kit)?.name).toBe('장현국')
+    expect(docContact({ showContact: false, contactId: 'c1' }, kit)).toBeUndefined()
+    expect(docContact({ showContact: true, contactId: 'gone' }, kit)).toBeUndefined()
+  })
+})

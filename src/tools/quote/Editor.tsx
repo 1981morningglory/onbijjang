@@ -277,7 +277,18 @@ export function Editor({ draft, setDraft, onOpenSettings }: { draft: Draft; setD
     if (mine) patch({ contactId: mine.id })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [me?.id, kit.contacts, doc.contactId])
-  const contact = kit.contacts.find((c) => c.id === doc.contactId) ?? kit.contacts[0]
+  // 고른 담당자만(아직 안 골랐으면 비워 둔다 — 다른 사람 이름을 대신 넣지 않는다)
+  const contact = doc.contactId ? kit.contacts.find((c) => c.id === doc.contactId) : undefined
+  const meListed = !!me && kit.contacts.some((c) => c.name.replace(/\s+/g, '') === me.name.replace(/\s+/g, ''))
+  const contactHint = contact
+    ? contactLine(contact)
+    : !kit.contacts.length
+      ? '팀 담당자가 없습니다. 담당자 관리에서 추가하세요.'
+      : !doc.showContact
+        ? undefined
+        : me && !meListed
+          ? `담당자 연락처를 넣어 주세요. 담당자 목록에 ‘${me.name}’ 님이 없습니다 — [담당자 관리]에서 내 연락처를 추가하면 다음부터 자동으로 들어갑니다.`
+          : '담당자 연락처를 넣어 주세요. 아래에서 담당자를 고르거나, 온비짱에 로그인하면 내 이름으로 자동으로 들어갑니다.'
   const totals = calcTotals(doc)
   const filledCount = totals.lines.filter((l) => l.filled).length
   const base = fileBase(doc)
@@ -286,7 +297,7 @@ export function Editor({ draft, setDraft, onOpenSettings }: { draft: Draft; setD
 
   /** 팀 문서함에 저장(고치는 중이면 덮어쓴다). 작성자는 고른 담당자 */
   const remember = async () => {
-    const author = contact ? [contact.name, contact.title].filter(Boolean).join(' ') : ''
+    const author = contact ? [contact.name, contact.title].filter(Boolean).join(' ') : (me?.name ?? '')
     const toSave = { ...doc, author }
     const entry = await saveDoc(toSave, draft.savedId)
     const saved = { ...toSave, docNo: entry.docNo }
@@ -499,9 +510,15 @@ export function Editor({ draft, setDraft, onOpenSettings }: { draft: Draft; setD
 
           <Panel>
             <Section title="담당자" action={<Button size="sm" variant="ghost" icon={UserRound} onClick={() => onOpenSettings('contacts')}>담당자 관리</Button>}>
-              <Switch checked={doc.showContact} onChange={(showContact) => patch({ showContact })} label="담당자 연락처 넣기" hint={contact ? contactLine(contact) : '팀 담당자가 없습니다. 담당자 관리에서 추가하세요.'} disabled={!kit.contacts.length} />
-              {kit.contacts.length > 1 && doc.showContact && (
-                <Select aria-label="담당자 고르기" value={contact?.id ?? ''} onValue={(contactId) => patch({ contactId })} options={kit.contacts.map((c) => ({ value: c.id, label: [c.name, c.title].filter(Boolean).join(' ') || '이름 없음' }))} />
+              <Switch checked={doc.showContact} onChange={(showContact) => patch({ showContact })} label="담당자 연락처 넣기" hint={contactHint} disabled={!kit.contacts.length} />
+              {kit.contacts.length > 0 && doc.showContact && (
+                <Select
+                  aria-label="담당자 고르기"
+                  value={contact?.id ?? ''}
+                  onValue={(contactId) => patch({ contactId: contactId || null })}
+                  options={[{ value: '', label: '담당자 고르기(비어 있음)' }, ...kit.contacts.map((c) => ({ value: c.id, label: [c.name, c.title].filter(Boolean).join(' ') || '이름 없음' }))]}
+                  className={clsx(!contact && 'text-muted')}
+                />
               )}
             </Section>
             <Section title="도장·첨부">
