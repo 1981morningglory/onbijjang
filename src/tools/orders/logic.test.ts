@@ -151,13 +151,13 @@ describe('센터주문서 열 너비', () => {
 })
 
 describe('제주 배송메세지', () => {
-  it('제주 주소: 보통은 제주도출고O, 핫트랙스·텐바이텐 주문은 제주도 확인', async () => {
+  it('제주 주소: 보통은 제주도출고O, 핫트랙스·텐바이텐 주문은 [제주도]', async () => {
     const { jejuNote } = await import('./logic')
     const jeju = { [COL.address]: '제주특별자치도 제주시 구산로 50' }
     expect(jejuNote(row({ ...jeju, [COL.mall]: '스마트스토어' }))).toBe('제주도출고O')
-    expect(jejuNote(row({ ...jeju, [COL.mall]: '교보핫트랙스' }))).toBe('제주도 확인')
-    expect(jejuNote(row({ ...jeju, [COL.mall]: '핫트렉스' }))).toBe('제주도 확인')
-    expect(jejuNote(row({ ...jeju, [COL.mall]: '텐바이텐' }))).toBe('제주도 확인')
+    expect(jejuNote(row({ ...jeju, [COL.mall]: '교보핫트랙스' }))).toBe('[제주도]')
+    expect(jejuNote(row({ ...jeju, [COL.mall]: '핫트렉스' }))).toBe('[제주도]')
+    expect(jejuNote(row({ ...jeju, [COL.mall]: '텐바이텐' }))).toBe('[제주도]')
     expect(jejuNote(row({ [COL.mall]: '텐바이텐' }))).toBeNull()
   })
 })
@@ -224,5 +224,29 @@ describe('센터주문서 NO 순서 저장', () => {
     expect(validCenterOrder({ order: [1, 1, 2], pageEnds: [3] }, 3)).toBe(false)
     expect(validCenterOrder({ order: [1, 2], pageEnds: [2] }, 3)).toBe(false)
     expect(validCenterOrder({ order: [3, 1, 2], pageEnds: [3] }, 3)).toBe(true)
+  })
+})
+
+describe('지마켓 주문번호 합치기', () => {
+  const gm = (no: string, buyer: string, phone: string, address: string, code: string) =>
+    row({ [COL.mall]: 'ESM지마켓', [COL.orderNo]: no, [COL.buyer]: buyer, [COL.receiver]: buyer, [COL.phone1]: phone, [COL.address]: address, [COL.code]: code })
+  it('주문자·휴대폰·주소가 같으면 가장 앞선 주문번호 하나로, 원래 번호는 원주문번호에', async () => {
+    const { mergeGmarketOrders, ORIGINAL_ORDER_NO } = await import('./logic')
+    const rows = [
+      gm('4506150976', '하늘빛초등학교', '010-8885-8771', '경기 고양시 1', 'B'),
+      gm('4506150975', '하늘빛초등학교', '010 8885 8771', '경기 고양시  1', 'A'),
+      gm('4506150977', '하늘빛초등학교', '010-8885-8771', '서울 다른 주소', 'C'), // 주소 다름 → 따로
+      gm('4506150980', '다른사람', '010-0000-0000', '경기 고양시 1', 'D'), // 혼자 → 그대로
+      row({ [COL.mall]: '스마트스토어', [COL.orderNo]: '9', [COL.buyer]: '하늘빛초등학교', [COL.phone1]: '010-8885-8771', [COL.address]: '경기 고양시 1' }),
+    ]
+    const r = mergeGmarketOrders(rows)
+    expect(r.rows.map((x) => x[COL.orderNo])).toEqual(['4506150975', '4506150975', '4506150977', '4506150980', '9'])
+    expect(r.rows[0][ORIGINAL_ORDER_NO]).toBe('4506150976')
+    expect(r.rows[1][ORIGINAL_ORDER_NO]).toBe('4506150975')
+    expect(r.rows[2][ORIGINAL_ORDER_NO]).toBeUndefined()
+    expect(r.orders).toBe(1)
+    expect(r.merged).toBe(1)
+    // 합친 뒤에는 센터주문서·CJ 에서 한 주문으로
+    expect(new Set(sortRows(r.rows.slice(0, 2)).map((x) => x[COL.orderNo])).size).toBe(1)
   })
 })

@@ -89,10 +89,10 @@ export function dateFromName(...names: string[]): string | null {
 export const todayKst = (now = Date.now()) => new Date(now + 9 * 3600_000).toISOString().slice(0, 10)
 
 export const isJeju = (r: OrderRow) => s(r[COL.address]).includes('제주')
-/** 제주 주소인데 핫트랙스·텐바이텐 주문이면 출고 전에 확인이 필요하다 */
-export const JEJU_CHECK_NOTE = '제주도 확인'
+/** 제주 주소인데 핫트랙스·텐바이텐 주문이면 ‘제주도출고O’ 대신 ‘[제주도]’ 만 적는다 */
+export const JEJU_CHECK_NOTE = '[제주도]'
 export const isJejuCheckMall = (r: OrderRow) => /핫\s*트[랙렉]스|hottracks|텐\s*바이\s*텐|10\s*x\s*10/i.test(s(r[COL.mall]))
-/** 센터주문서·구글드라이브용 배송메세지: 제주 주소면 ‘제주도출고O’, 그중 핫트랙스·텐바이텐 주문은 ‘제주도 확인’ */
+/** 센터주문서·구글드라이브용 배송메세지(비고): 제주 주소면 ‘제주도출고O’, 그중 핫트랙스·텐바이텐 주문은 ‘[제주도]’ */
 export const jejuNote = (r: OrderRow) => (isJeju(r) ? (isJejuCheckMall(r) ? JEJU_CHECK_NOTE : JEJU_NOTE) : null)
 
 /** 상품코드가 없는 줄(사방넷이 상품을 못 맞춘 것) — 사람이 채워야 한다 */
@@ -345,6 +345,45 @@ export const SEARCH_FIELDS: ReadonlyArray<{ value: SearchField; label: string }>
   { value: 'invoice', label: '송장번호' },
 ]
 export const digits = (v: unknown) => s(v).replace(/\D/g, '')
+
+/** 원래 주문번호(지마켓 주문을 하나로 합쳤을 때 남겨 둔다) */
+export const ORIGINAL_ORDER_NO = '원주문번호'
+/** ESM지마켓·G마켓: 품목마다 주문번호가 따로 붙는 쇼핑몰 */
+export const isGmarket = (r: OrderRow) => /지\s*마켓|g\s*마켓|gmarket/i.test(s(r[COL.mall]))
+const smallerNo = (a: string, b: string) => {
+  if (/^\d+$/.test(a) && /^\d+$/.test(b) && a.length !== b.length) return a.length < b.length ? a : b
+  return a <= b ? a : b
+}
+/**
+ * 지마켓 주문 합치기: 같은 쇼핑몰에서 주문자명·휴대폰번호·배송 주소가 같은 줄은 한 사람의 한 주문으로 보고
+ * 가장 앞선(작은) 주문번호 하나로 맞춘다. 원래 번호는 ‘원주문번호’ 칸에 남긴다(찾기·대조용).
+ * 다른 쇼핑몰처럼 한 사람의 여러 품목이 한 주문번호로 묶여 센터주문서·CJ 송장이 한 건으로 나간다.
+ */
+export function mergeGmarketOrders(rows: OrderRow[]): { rows: OrderRow[]; merged: number; orders: number } {
+  const keyOf = (r: OrderRow) => [s(r[COL.mall]), s(r[COL.buyer]).replace(/\s+/g, ''), digits(pickPhone(r[COL.phone1], r[COL.phone2])), s(r[COL.address]).replace(/\s+/g, '')].join('|')
+  const target = new Map<string, string>()
+  const nos = new Map<string, Set<string>>()
+  for (const r of rows) {
+    if (!isGmarket(r) || !s(r[COL.orderNo])) continue
+    const k = keyOf(r)
+    const no = s(r[COL.orderNo])
+    target.set(k, target.has(k) ? smallerNo(target.get(k)!, no) : no)
+    nos.set(k, (nos.get(k) ?? new Set()).add(no))
+  }
+  let merged = 0
+  let orders = 0
+  for (const set of nos.values()) if (set.size > 1) orders++
+  const out = rows.map((r) => {
+    if (!isGmarket(r) || !s(r[COL.orderNo])) return r
+    const k = keyOf(r)
+    if ((nos.get(k)?.size ?? 0) < 2) return r
+    const no = s(r[COL.orderNo])
+    const to = target.get(k)!
+    if (no !== to) merged++
+    return { ...r, [COL.orderNo]: to, [ORIGINAL_ORDER_NO]: r[ORIGINAL_ORDER_NO] ?? no }
+  })
+  return { rows: out, merged, orders }
+}
 
 /** 주문 목록에 보일 전화번호: 전화번호1이 비면 전화번호2, 둘 다 있으면 휴대폰(01x) 번호 우선 */
 export function pickPhone(p1: unknown, p2: unknown): string {
