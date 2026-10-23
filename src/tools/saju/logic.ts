@@ -200,7 +200,7 @@ export function computeChart(input: ChartInput, now = new Date()): Chart {
   }
 }
 
-function lunarToSolarSafe(input: ChartInput) {
+function lunarToSolarSafe(input: ChartInput): SolarYmd {
   return lunarToSolar(input.year, input.month, input.day, input.leap)
 }
 
@@ -254,3 +254,87 @@ export const CITIES: Array<{ name: string; lon: number }> = [
   { name: '창원', lon: 128.68 },
   { name: '제주', lon: 126.53 },
 ]
+
+// ── 윤달 자동 판단 ──────────────────────────────────────
+/**
+ * 음력 날짜의 양력 날짜. 그해에 같은 달 윤달이 있으면 평달·윤달 두 가지를 모두 돌려준다.
+ * (같은 음력 날짜가 한 해에 두 번 있는 경우라 이때만 사람이 골라야 한다)
+ */
+export function lunarOptions(year: number, month: number, day: number): { normal: SolarYmd | null; leap: SolarYmd | null } {
+  const tryConv = (leap: boolean) => {
+    try {
+      return lunarToSolar(year, month, day, leap)
+    } catch {
+      return null
+    }
+  }
+  return { normal: tryConv(false), leap: tryConv(true) }
+}
+export type SolarYmd = { year: number; month: number; day: number }
+
+// ── 십신 묶음(다섯 갈래) ─────────────────────────────────
+export type TenGroup = '비겁' | '식상' | '재성' | '관성' | '인성'
+export const TEN_GROUPS: TenGroup[] = ['비겁', '식상', '재성', '관성', '인성']
+export const TEN_GROUP_OF: Record<string, TenGroup> = {
+  비견: '비겁', 겁재: '비겁', 식신: '식상', 상관: '식상', 편재: '재성', 정재: '재성', 편관: '관성', 정관: '관성', 편인: '인성', 정인: '인성',
+}
+export const TEN_GROUP_NOTE: Record<TenGroup, { short: string; long: string }> = {
+  비겁: { short: '나·동료', long: '자존심·독립심·경쟁, 형제·친구·동료' },
+  식상: { short: '표현·재능', long: '말·끼·창작·아이디어, 베풀고 드러내는 힘' },
+  재성: { short: '재물·결과', long: '돈·실속·현실 감각, 일의 성과' },
+  관성: { short: '직장·규율', long: '책임감·명예·조직, 나를 다듬는 힘' },
+  인성: { short: '배움·도움', long: '공부·자격·어머니, 받아들이고 생각하는 힘' },
+}
+/** 일간을 뺀 천간과 지지(정기)의 십신을 다섯 갈래로 센다 */
+export function tenGroupCounts(c: Chart): Record<TenGroup, number> {
+  const out = Object.fromEntries(TEN_GROUPS.map((g) => [g, 0])) as Record<TenGroup, number>
+  for (const p of c.pillars) {
+    if (p.key !== 'day') out[TEN_GROUP_OF[p.stemTenGod]]++
+    out[TEN_GROUP_OF[p.branchTenGod]]++
+  }
+  return out
+}
+
+/**
+ * 일간의 힘(간이 판정). 나를 돕는 글자(비겁·인성)의 무게 비율 0~100.
+ * 월지 3, 일지 1.5, 나머지 지지·천간 1. 학파마다 판단이 다를 수 있어 '간이'로만 쓴다.
+ */
+export function dayStrength(c: Chart): { score: number; label: '신강' | '중화' | '신약' } {
+  let help = 0
+  let total = 0
+  for (const p of c.pillars) {
+    if (p.key !== 'day') {
+      total += 1
+      if (['비겁', '인성'].includes(TEN_GROUP_OF[p.stemTenGod])) help += 1
+    }
+    const w = p.key === 'month' ? 3 : p.key === 'day' ? 1.5 : 1
+    total += w
+    if (['비겁', '인성'].includes(TEN_GROUP_OF[p.branchTenGod])) help += w
+  }
+  const score = Math.round((help / total) * 100)
+  return { score, label: score >= 55 ? '신강' : score <= 40 ? '신약' : '중화' }
+}
+
+/** 띠(연지) */
+export const ZODIAC: Record<string, { animal: string; emoji: string }> = {
+  자: { animal: '쥐', emoji: '🐭' }, 축: { animal: '소', emoji: '🐮' }, 인: { animal: '호랑이', emoji: '🐯' }, 묘: { animal: '토끼', emoji: '🐰' },
+  진: { animal: '용', emoji: '🐲' }, 사: { animal: '뱀', emoji: '🐍' }, 오: { animal: '말', emoji: '🐴' }, 미: { animal: '양', emoji: '🐑' },
+  신: { animal: '원숭이', emoji: '🐵' }, 유: { animal: '닭', emoji: '🐔' }, 술: { animal: '개', emoji: '🐶' }, 해: { animal: '돼지', emoji: '🐷' },
+}
+
+/** 일간 별명(그림 카드용) */
+export const DAY_MASTER_NAME: Record<string, string> = {
+  갑: '큰 나무', 을: '꽃과 풀', 병: '태양', 정: '촛불', 무: '큰 산', 기: '기름진 땅', 경: '바위와 쇠', 신: '보석', 임: '큰 바다', 계: '비와 이슬',
+}
+
+/** 오행 보완 생활 팁(전통 배속: 색·방향·숫자·계절·음식) */
+export const ELEMENT_TIPS: Record<Element, { colors: Array<{ name: string; hex: string }>; direction: string; numbers: string; season: string; food: string; activity: string }> = {
+  목: { colors: [{ name: '초록', hex: '#3f9a5f' }, { name: '청록', hex: '#2a8c8c' }], direction: '동쪽', numbers: '3 · 8', season: '봄', food: '신맛 · 푸른 채소', activity: '산책·식물 가꾸기·새 공부 시작' },
+  화: { colors: [{ name: '빨강', hex: '#d2462f' }, { name: '분홍', hex: '#e07a9a' }], direction: '남쪽', numbers: '2 · 7', season: '여름', food: '쓴맛 · 붉은 과일', activity: '햇볕 쬐기·운동·사람 많은 곳 나가기' },
+  토: { colors: [{ name: '노랑', hex: '#d9a63a' }, { name: '베이지', hex: '#c9ae84' }], direction: '가운데', numbers: '5 · 10', season: '환절기', food: '단맛 · 곡물·뿌리채소', activity: '규칙적인 생활·정리정돈·등산' },
+  금: { colors: [{ name: '흰색', hex: '#f4f4f2' }, { name: '은색', hex: '#b9bec6' }], direction: '서쪽', numbers: '4 · 9', season: '가을', food: '매운맛 · 흰 음식', activity: '계획 세우기·악기·정리된 공간' },
+  수: { colors: [{ name: '검정', hex: '#20262e' }, { name: '남색', hex: '#2b4c7e' }], direction: '북쪽', numbers: '1 · 6', season: '겨울', food: '짠맛 · 검은 콩·해산물', activity: '물 가까이·명상·충분한 잠' },
+}
+/** 상생 순서(목→화→토→금→수→목)와 상극(목→토→수→화→금→목) */
+export const GENERATES: Record<Element, Element> = { 목: '화', 화: '토', 토: '금', 금: '수', 수: '목' }
+export const CONTROLS: Record<Element, Element> = { 목: '토', 토: '수', 수: '화', 화: '금', 금: '목' }

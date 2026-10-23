@@ -1,6 +1,7 @@
 import { calculateFourPillars } from 'manseryeok'
 import { describe, expect, it } from 'vitest'
-import { branchTenGod, chartForAi, computeChart, tenGod, twelveStage, yearGanji, type ChartInput } from './logic'
+import { branchTenGod, chartForAi, computeChart, dayStrength, lunarOptions, tenGod, tenGroupCounts, TEN_GROUPS, twelveStage, yearGanji, type ChartInput } from './logic'
+import { AXES, QUESTIONS, scoreAnswers, TYPE_ORDER, TYPES } from './mbti/data'
 
 const base: ChartInput = { calendar: 'solar', leap: false, year: 1990, month: 5, day: 15, hour: 14, minute: 30, gender: 'male', longitude: null, dayBoundary: 'midnight' }
 
@@ -78,5 +79,82 @@ describe('서버: AI 풀이 입력 검사', () => {
     expect(cleanChart({ ...a, pillars: a.pillars.filter((p) => p.key !== 'day') })).toBeNull()
     // 시간 모름(세 기둥)도 받는다
     expect(cleanChart(chartForAi(computeChart({ ...base, hour: null })))?.pillars).toHaveLength(3)
+  })
+})
+
+describe('윤달 자동 판단', () => {
+  it('윤달이 있는 달만 두 가지, 나머지는 하나', () => {
+    // 2023년 윤2월, 2020년 윤4월
+    const a = lunarOptions(2023, 2, 1)
+    expect(a.normal).toEqual({ year: 2023, month: 2, day: 20 })
+    expect(a.leap).toEqual({ year: 2023, month: 3, day: 22 })
+    const b = lunarOptions(2023, 3, 1)
+    expect(b.normal).not.toBeNull()
+    expect(b.leap).toBeNull()
+    // 윤달이 29일까지인 해의 30일은 평달만
+    expect(lunarOptions(2020, 4, 30).leap).toBeNull()
+    // 없는 날짜
+    const c = lunarOptions(2023, 1, 31)
+    expect(c.normal ?? c.leap).toBeNull()
+  })
+})
+
+describe('도표 값', () => {
+  it('십신 다섯 갈래 개수와 일간의 힘', () => {
+    const c = computeChart(base)
+    const g = tenGroupCounts(c)
+    expect(TEN_GROUPS.reduce((a, k) => a + g[k], 0)).toBe(7) // 일간 빼고 천간 3 + 지지 4
+    const s = dayStrength(c)
+    expect(s.score).toBeGreaterThanOrEqual(0)
+    expect(s.score).toBeLessThanOrEqual(100)
+    expect(['신강', '중화', '신약']).toContain(s.label)
+    expect(TEN_GROUPS.reduce((a, k) => a + tenGroupCounts(computeChart({ ...base, hour: null }))[k], 0)).toBe(5)
+  })
+})
+
+describe('MBTI', () => {
+  it('문항: 축마다 12개, 양쪽 6개씩', () => {
+    expect(QUESTIONS).toHaveLength(48)
+    for (const a of AXES) {
+      const qs = QUESTIONS.filter((q) => q.axis === a)
+      expect(qs).toHaveLength(12)
+      expect(qs.filter((q) => q.pole === a[0])).toHaveLength(6)
+    }
+  })
+  it('점수: 모두 한쪽이면 100%, 반대면 0%', () => {
+    const allE = Object.fromEntries(QUESTIONS.map((q) => [q.id, q.pole === q.axis[0] ? 3 : -3]))
+    const r = scoreAnswers(allE)
+    expect(r.type).toBe('ESTJ')
+    expect(r.pct).toEqual({ EI: 100, SN: 100, TF: 100, JP: 100 })
+    const allI = Object.fromEntries(QUESTIONS.map((q) => [q.id, q.pole === q.axis[0] ? -3 : 3]))
+    expect(scoreAnswers(allI).type).toBe('INFP')
+    // 모두 ‘보통’이면 50%
+    expect(scoreAnswers({}).pct.EI).toBe(50)
+  })
+  it('16유형 풀이가 모두 있고 궁합 유형이 실제 유형', () => {
+    expect(TYPE_ORDER).toHaveLength(16)
+    for (const t of TYPE_ORDER) {
+      const info = TYPES[t]
+      expect(info.overview.length).toBeGreaterThan(0)
+      expect(info.strengths.length).toBeGreaterThanOrEqual(4)
+      expect(info.careers.length).toBeGreaterThanOrEqual(5)
+      for (const x of [...info.best, ...info.hard]) expect(TYPE_ORDER).toContain(x)
+      expect(info.best.filter((x) => info.hard.includes(x))).toEqual([])
+    }
+  })
+})
+
+describe('서버: AI 답 정리', () => {
+  it('점수는 1~5로, 빠진 항목은 빈칸으로', async () => {
+    const { shapeReading, SCORE_KEYS } = await import('../../../server/routes/saju.mjs')
+    const r = shapeReading({ summary: '요약', keywords: ['a', 'b'], scores: { wealth: 9, career: 0, love: 3.6 }, sections: { personality: { headline: 'h', points: ['p1', 'p2'], body: 'b' } } })
+    expect(r.scores.wealth).toBe(5)
+    expect(r.scores.career).toBe(1)
+    expect(r.scores.love).toBe(4)
+    expect(r.scores.health).toBe(3)
+    expect(Object.keys(r.scores)).toEqual(SCORE_KEYS)
+    expect(r.sections).toHaveLength(11)
+    expect(r.sections[0]).toMatchObject({ key: 'personality', headline: 'h', points: ['p1', 'p2'], body: 'b' })
+    expect(r.sections[1]).toMatchObject({ headline: '', points: [], body: '' })
   })
 })
