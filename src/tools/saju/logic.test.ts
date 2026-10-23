@@ -191,3 +191,15 @@ describe('공유 링크', () => {
     vi.unstubAllGlobals()
   })
 })
+
+describe('세운 충·합', () => {
+  it('육충·육합 짝', async () => {
+    const { isClash, isHarmony } = await import('./guide')
+    expect(isClash('자', '오')).toBe(true)
+    expect(isClash('오', '자')).toBe(true)
+    expect(isClash('자', '축')).toBe(false)
+    expect(isHarmony('오', '미')).toBe(true)
+    expect(isHarmony('사', '신')).toBe(true)
+    expect(isHarmony('자', '오')).toBe(false)
+  })
+})
