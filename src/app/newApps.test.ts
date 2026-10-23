@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { normalizeConfig } from './config'
 
 describe('신상앱', () => {
-  it('설정이 없던 서버: 출시 뒤 추가한 앱(바코드·주문서만들기·SNS 영상 받기·체험단 SNS 선발)이 신상앱', () => {
-    expect(normalizeConfig({ version: 1, tools: {} }).newApps.items.sort()).toEqual(['barcode', 'orders', 'saver', 'sns'])
+  it('설정이 없던 서버: 출시 뒤 추가한 앱(바코드·주문서만들기·사주풀이·SNS 영상 받기·체험단 SNS 선발)이 신상앱', () => {
+    expect(normalizeConfig({ version: 1, tools: {} }).newApps.items.sort()).toEqual(['barcode', 'orders', 'saju', 'saver', 'sns'])
   })
   it('SNS 영상 받기는 처음엔 직원등급 이상만', () => {
     expect(normalizeConfig({ version: 1, tools: {} }).tools.saver.roles.sort()).toEqual(['admin', 'member', 'staff'])
@@ -47,11 +47,11 @@ describe('카테고리 옮기기', () => {
 })
 
 describe('카테고리 순서', () => {
-  it('기본은 문서·영상·이미지·SNS·마켓 수수료', () => {
-    expect(normalizeConfig({ version: 1, tools: {} }).groupOrder).toEqual(['doc', 'video', 'image', 'sns', 'fees'])
+  it('기본은 문서·영상·이미지·SNS·마켓 수수료·생활', () => {
+    expect(normalizeConfig({ version: 1, tools: {} }).groupOrder).toEqual(['doc', 'video', 'image', 'sns', 'fees', 'life'])
   })
   it('저장된 순서를 따르고, 빠진 카테고리는 뒤에 붙인다', () => {
-    expect(normalizeConfig({ version: 1, tools: {}, groupOrder: ['fees', 'image', 'bad'] }).groupOrder).toEqual(['fees', 'image', 'doc', 'video', 'sns'])
+    expect(normalizeConfig({ version: 1, tools: {}, groupOrder: ['fees', 'image', 'bad'] }).groupOrder).toEqual(['fees', 'image', 'doc', 'video', 'sns', 'life'])
   })
 })
 
@@ -66,7 +66,7 @@ describe('블로그·마케팅 → SNS 카테고리', () => {
       tools: { qr: { enabled: true, badge: null, roles: ['guest'], deleted: false, group: 'blog' } },
       links: [{ id: 'l1', title: '링크', summary: '', url: 'https://example.com', group: 'marketing', enabled: true, badge: null, roles: ['guest'], deleted: false }],
     })
-    expect(c.groupOrder).toEqual(['doc', 'video', 'image', 'sns', 'fees'])
+    expect(c.groupOrder).toEqual(['doc', 'video', 'image', 'sns', 'fees', 'life'])
     expect(c.groups.sns.enabled).toBe(true)
     expect(groupOf(c, TOOL_BY_ID.qr)).toBe('sns')
     expect(groupOf(c, TOOL_BY_ID.blog)).toBe('sns')

@@ -50,6 +50,17 @@
   /* 주문서 ‘취소요청’ 표시 */
   --color-pink: #c2185b;
   --color-pink-soft: #fde4ee;
+  /* 사주풀이 오행 색(목·화·토·금·수) */
+  --color-wood: #2e7d4f;
+  --color-wood-soft: #dff1e5;
+  --color-fire: #c2412d;
+  --color-fire-soft: #fbe2dc;
+  --color-earth: #a7731c;
+  --color-earth-soft: #f6ead0;
+  --color-metal: #6b7280;
+  --color-metal-soft: #eceef1;
+  --color-water: #24527a;
+  --color-water-soft: #dde8f3;
   --color-warn: #96590a;
   --color-warn-soft: #fbedc9;
   --color-info: #1f4fbf;
