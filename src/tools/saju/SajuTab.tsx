@@ -543,7 +543,7 @@ function ChartView({ chart, name, actions }: { chart: Chart; name: string; actio
           </Reading>
         </Card>
         <Card title="십신 다섯 갈래" hint="나를 둘러싼 관계와 힘" icon={Sparkles}>
-          <TenGroupDonut counts={groups} dayEl={dayEl} />
+          <TenGroupDonut counts={groups} dayEl={dayEl} hourKnown={inp.hour != null} />
           <Reading>
             {topGroups.length > 1 && (
               <p>
