@@ -18,6 +18,8 @@ export interface MailAccount {
   port: number
   user: string
   savedAt: string
+  /** 실제로 보내는 주소(로그인 계정). 담당자 주소와 다르면 답장은 담당자 주소로 온다 */
+  fromAddress: string
 }
 export interface BookEntry {
   id: string
@@ -31,6 +33,8 @@ export interface MailLogEntry {
   id: string
   at: string
   from: string
+  /** 답장 받는 주소(담당자 주소) */
+  replyTo?: string
   by: string
   to: string[]
   cc: string[]
@@ -63,7 +67,7 @@ export const loadMail = () => api<MailState>('/quote/mail')
 export const saveAccount = (contactId: string, a: { host: string; port: number; user: string; pass: string }) =>
   api<{ account: MailAccount }>(`/quote/mail/accounts/${contactId}`, { method: 'PUT', body: a })
 export const removeAccount = (contactId: string) => api(`/quote/mail/accounts/${contactId}`, { method: 'DELETE' })
-export const testAccount = (contactId: string) => api(`/quote/mail/accounts/${contactId}/test`, { method: 'POST' })
+export const testAccount = (contactId: string) => api<{ ok: true; from: string; to: string }>(`/quote/mail/accounts/${contactId}/test`, { method: 'POST' })
 export const saveBook = (entries: BookEntry[]) => api<{ addressBook: BookEntry[] }>('/quote/addressbook', { method: 'PUT', body: { entries } })
 
 export interface SendRequest {

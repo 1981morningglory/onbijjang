@@ -68,15 +68,34 @@ export function openSecret(sealed, secret) {
   }
 }
 
-/** 메일 서버가 돌려준 오류를 사람이 알아볼 말로 */
-export function mailErrorText(err) {
+/**
+ * 실제로 보내는 주소(From): 메일 서버에 로그인한 계정 주소.
+ * 네이버·다음 등은 로그인한 계정과 다른 주소(예: 회사 도메인)로 보내면 거절하므로, 담당자 주소와 다르면
+ * 로그인 계정으로 보내고 답장은 담당자 주소로 오게(Reply-To) 한다. 아이디만 넣었으면(네이버 'abc') 서비스 도메인을 붙인다.
+ */
+export function senderAddress(acc, contactEmail) {
+  const user = String(acc?.user ?? '').trim()
+  if (isEmail(user)) return user
+  const p = MAIL_PROVIDERS.find((x) => x.host === acc?.host)
+  if (user && p?.domains[0]) return `${user}@${p.domains[0]}`
+  return String(contactEmail ?? '').trim()
+}
+
+/** 메일 서버가 돌려준 오류를 사람이 알아볼 말로(서버 원문을 괄호로 덧붙인다) */
+export function mailErrorText(err, ctx = {}) {
   const code = err?.code ?? ''
-  const resp = String(err?.response ?? err?.message ?? '')
-  if (code === 'EAUTH' || /\b535\b|auth/i.test(resp))
-    return '메일 계정 또는 비밀번호가 맞지 않습니다. Gmail·네이버 등은 로그인 비밀번호가 아니라 ‘앱 비밀번호’를 넣어야 하고, 네이버·다음은 메일 환경설정에서 SMTP 사용을 켜야 합니다.'
-  if (code === 'EDNS' || code === 'ENOTFOUND') return '메일 서버 주소를 찾을 수 없습니다. SMTP 주소를 확인해 주세요.'
-  if (code === 'ETIMEDOUT' || code === 'ECONNECTION' || code === 'ESOCKET' || code === 'ECONNREFUSED') return '메일 서버에 연결하지 못했습니다. SMTP 주소·포트를 확인해 주세요.'
-  if (code === 'EENVELOPE') return '받는 사람 주소를 메일 서버가 받지 않았습니다. 주소를 확인해 주세요.'
-  if (/\b55[0-9]\b/.test(resp) && /size|large|exceed/i.test(resp)) return '첨부 파일이 너무 커서 메일 서버가 받지 않았습니다.'
-  return `메일을 보내지 못했습니다: ${resp.slice(0, 200) || code || '알 수 없는 오류'}`
+  const resp = String(err?.response ?? err?.message ?? '').replace(/\s+/g, ' ').trim()
+  const raw = resp ? ` (메일 서버: ${resp.slice(0, 160)})` : ''
+  const cmd = String(err?.command ?? '').toUpperCase()
+  // 보내는 주소를 거절: 로그인한 계정과 다른 주소로 보낼 때(네이버 553 등)
+  if (cmd.startsWith('MAIL') || /sender|not owned|from address|mail from|relay/i.test(resp))
+    return `메일 서버가 보내는 주소${ctx.from ? `(${ctx.from})` : ''}를 받지 않았습니다. 로그인한 메일 계정과 같은 주소로만 보낼 수 있는 서버입니다. 팀 설정 → 메일·주소록에서 ‘메일 계정(아이디)’을 실제 로그인 주소로 넣어 주세요.${raw}`
+  if (code === 'EAUTH' || /^535\b|\b535[ -]/.test(resp))
+    return `메일 계정 또는 비밀번호가 맞지 않습니다. Gmail·네이버 등은 로그인 비밀번호가 아니라 ‘앱 비밀번호’를 넣어야 하고, 네이버·다음은 메일 환경설정에서 SMTP 사용을 켜야 합니다.${raw}`
+  if (code === 'EDNS' || code === 'ENOTFOUND') return `메일 서버 주소를 찾을 수 없습니다. SMTP 주소를 확인해 주세요.${raw}`
+  if (code === 'ETIMEDOUT' || code === 'ECONNECTION' || code === 'ESOCKET' || code === 'ECONNREFUSED') return `메일 서버에 연결하지 못했습니다. SMTP 주소·포트를 확인해 주세요.${raw}`
+  if (cmd.startsWith('RCPT') || code === 'EENVELOPE') return `받는 사람 주소를 메일 서버가 받지 않았습니다. 주소를 확인해 주세요.${raw}`
+  if (/size|large|exceed/i.test(resp)) return `첨부 파일이 너무 커서 메일 서버가 받지 않았습니다.${raw}`
+  if (/spam|limit|quota|too many/i.test(resp)) return `메일 서버가 발송을 막았습니다(보내는 양 제한 또는 스팸 차단). 잠시 뒤에 다시 보내 주세요.${raw}`
+  return `메일을 보내지 못했습니다.${raw || ` (${code || '알 수 없는 오류'})`}`
 }

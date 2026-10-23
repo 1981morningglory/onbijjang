@@ -344,7 +344,9 @@ function ComposeMail({ open, onClose, title, senderId: initialSender, initial, b
             <Field label="보내는 사람">
               {(id) => <Select id={id} value={senderId} onValue={changeSender} options={contacts.map((c) => ({ value: c.id, label: [c.name, c.title].filter(Boolean).join(' ') || c.email }))} />}
             </Field>
-            <Field label="보내는 주소">{(id) => <TextInput id={id} value={sender?.email ?? ''} readOnly className="bg-sunken!" />}</Field>
+            <Field label="보내는 주소" hint={account && sender && account.fromAddress.toLowerCase() !== sender.email.toLowerCase() ? `답장은 ${sender.email}로 옵니다` : undefined}>
+              {(id) => <TextInput id={id} value={account?.fromAddress ?? sender?.email ?? ''} readOnly className="bg-sunken!" />}
+            </Field>
           </div>
           {!account && (
             <Callout tone="warn" title={`${sender?.name || '이 담당자'}의 메일 계정이 아직 없습니다`}>
@@ -468,7 +470,7 @@ export function MailBox({ onOpenSettings }: { onOpenSettings: () => void }) {
   }, [log, query, filter])
   const opened = (log ?? []).find((e) => e.id === openId) ?? null
   const contacts = kit.contacts
-  const senderOf = (e: MailLogEntry) => contacts.find((c) => c.email.toLowerCase() === e.from.toLowerCase())?.id
+  const senderOf = (e: MailLogEntry) => contacts.find((c) => [e.replyTo, e.from].some((x) => x && c.email.toLowerCase() === x.toLowerCase()))?.id
 
   /** 다시 보내기·전달: 저장된 본문·첨부를 그대로 새 메일로 */
   const reuse = async (e: MailLogEntry, saved: SavedMail | null, mode: 'again' | 'forward') => {
@@ -664,6 +666,7 @@ function MailDetail({ entry, onClose, onReuse, onDeleted }: { entry: MailLogEntr
               <dt className="w-20 shrink-0 text-muted">보낸 사람</dt>
               <dd className="text-ink">
                 {e.by} &lt;{e.from}&gt;
+                {e.replyTo && e.replyTo !== e.from && <span className="text-muted"> · 답장 {e.replyTo}</span>}
               </dd>
             </div>
             {line('받는 사람', e.to)}
@@ -814,8 +817,18 @@ function AccountEditor({ contact, state, onSaved, onGoContacts }: { contact: Con
           ) : (
             <>
               {saved && (
-                <Button size="sm" icon={Plug} loading={busy === 'test'} disabled={!!busy} onClick={() => void run('test', async () => (await testAccount(contact.id), toast.success(`${name}: 메일 서버에 잘 연결됩니다.`)))}>
-                  연결 시험
+                <Button
+                  size="sm"
+                  icon={Plug}
+                  loading={busy === 'test'}
+                  disabled={!!busy}
+                  title={`${contact.email}로 시험 메일 한 통을 보내 봅니다`}
+                  onClick={() => void run('test', async () => {
+                    const r = await testAccount(contact.id)
+                    toast.success(`시험 메일을 보냈습니다(${r.from} → ${r.to}). 받은편지함을 확인해 보세요.`)
+                  })}
+                >
+                  시험 메일 보내기
                 </Button>
               )}
               <Button size="sm" variant={saved ? 'secondary' : 'primary'} icon={Mail} onClick={() => (open ? setOpen(false) : start())}>
@@ -825,6 +838,11 @@ function AccountEditor({ contact, state, onSaved, onGoContacts }: { contact: Con
           )}
         </div>
       </div>
+      {saved && saved.fromAddress.toLowerCase() !== contact.email.toLowerCase() && (
+        <p className="mt-1.5 text-xs text-muted">
+          보내는 주소는 로그인 계정 <b className="text-ink-2">{saved.fromAddress}</b>이고, 답장은 <b className="text-ink-2">{contact.email}</b>로 옵니다(메일 서버가 로그인한 계정 주소로만 보낼 수 있게 해 두어서).
+        </p>
+      )}
       {open && hasEmail && (
         <form
           className="mt-3 grid gap-2 border-t border-line pt-3 sm:grid-cols-2"
@@ -834,7 +852,7 @@ function AccountEditor({ contact, state, onSaved, onGoContacts }: { contact: Con
               await saveAccount(contact.id, { host: host.trim(), port: Number(port), user: user.trim(), pass })
               await onSaved()
               setOpen(false)
-              toast.success(`${name}의 메일 계정을 저장했습니다. ‘연결 시험’으로 확인해 보세요.`)
+              toast.success(`${name}의 메일 계정을 저장했습니다. ‘시험 메일 보내기’로 확인해 보세요.`)
             })
           }}
         >
@@ -847,7 +865,7 @@ function AccountEditor({ contact, state, onSaved, onGoContacts }: { contact: Con
           <Field label="포트" hint="보통 465(SSL) 또는 587">
             {(id) => <TextInput id={id} value={port} inputMode="numeric" onChange={(e) => setPort(e.target.value.replace(/\D/g, ''))} required />}
           </Field>
-          <Field label="메일 계정(아이디)" hint="보통 메일 주소 전체">
+          <Field label="메일 계정(아이디)" hint="로그인하는 메일 주소 전체(네이버는 abc@naver.com). 메일은 이 주소로 나갑니다">
             {(id) => <TextInput id={id} value={user} onChange={(e) => setUser(e.target.value)} autoComplete="off" required />}
           </Field>
           <Field label="메일 비밀번호(앱 비밀번호)" hint={saved ? '비워 두면 전에 넣은 비밀번호를 그대로 씁니다' : undefined}>
