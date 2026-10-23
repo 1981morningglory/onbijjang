@@ -1,5 +1,5 @@
 import { calculateFourPillars } from 'manseryeok'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { branchTenGod, chartForAi, computeChart, dayStrength, lunarOptions, tenGod, tenGroupCounts, TEN_GROUPS, twelveStage, yearGanji, type ChartInput } from './logic'
 import { AXES, QUESTIONS, scoreAnswers, TYPE_ORDER, TYPES } from './mbti/data'
 
@@ -156,5 +156,38 @@ describe('서버: AI 답 정리', () => {
     expect(r.sections).toHaveLength(11)
     expect(r.sections[0]).toMatchObject({ key: 'personality', headline: 'h', points: ['p1', 'p2'], body: 'b' })
     expect(r.sections[1]).toMatchObject({ headline: '', points: [], body: '' })
+  })
+})
+
+describe('공유 링크', () => {
+  it('사주 링크를 다시 읽으면 같은 입력', async () => {
+    vi.stubGlobal('location', { origin: 'https://example.test' })
+    const { sajuLink, parseSajuLink } = await import('./share')
+    const cases: ChartInput[] = [
+      base,
+      { ...base, calendar: 'lunar', leap: true, year: 2023, month: 2, day: 1, hour: null, minute: 0, gender: 'female', longitude: 129.08, dayBoundary: 'jasi' },
+    ]
+    for (const inp of cases) {
+      const url = sajuLink(inp, '홍길동')
+      expect(url.startsWith('https://example.test/tools/saju?')).toBe(true)
+      const got = parseSajuLink(new URL(url).search)!
+      expect(got.input).toEqual(inp)
+      expect(got.name).toBe('홍길동')
+    }
+    expect(parseSajuLink('?y=abc&m=1&d=1')).toBeNull()
+    expect(parseSajuLink('?y=1990&m=13&d=1')).toBeNull()
+    expect(parseSajuLink('?y=1990&m=1&d=1&t=2599')).toBeNull()
+    vi.unstubAllGlobals()
+  })
+  it('MBTI 링크: 유형·비율, 유형과 안 맞는 비율은 버림', async () => {
+    vi.stubGlobal('location', { origin: 'https://example.test' })
+    const { mbtiLink, parseMbtiLink } = await import('./share')
+    const pct = { EI: 58, SN: 30, TF: 70, JP: 45 }
+    const url = mbtiLink('ENTP', pct)
+    expect(parseMbtiLink(new URL(url).search)).toEqual({ type: 'ENTP', pct })
+    expect(parseMbtiLink('?r=ESTJ&p=58.30.70.45')).toEqual({ type: 'ESTJ', pct: null })
+    expect(parseMbtiLink('?r=XXXX')).toBeNull()
+    expect(parseMbtiLink('?r=infp')).toEqual({ type: 'INFP', pct: null })
+    vi.unstubAllGlobals()
   })
 })

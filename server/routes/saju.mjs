@@ -202,6 +202,19 @@ export default async function sajuRoutes(app, ctx) {
     res.json({ allowed: ok, ai: ok ? Boolean(await aiKey()) : false })
   })
 
+  // 이미 받아 둔 풀이만 돌려준다(AI 를 부르지 않음). 공유 링크로 들어온 사람도 볼 수 있게 로그인 없이.
+  app.post('/api/saju/cached', async (req, res) => {
+    const chart = cleanChart(req.body?.chart)
+    if (!chart) return res.json({ reading: null })
+    const hash = crypto.createHash('sha256').update(JSON.stringify({ v: PROMPT_VERSION, chart })).digest('hex').slice(0, 32)
+    try {
+      const saved = JSON.parse(await fsp.readFile(cacheFile(hash), 'utf8'))
+      res.json({ reading: { ...saved, cached: true } })
+    } catch {
+      res.json({ reading: null })
+    }
+  })
+
   app.post('/api/saju/interpret', async (req, res) => {
     if (!(await allowed(req))) return res.status(401).json({ error: 'AI 풀이는 직원 계정으로 로그인하거나 팀 코드로 들어와야 쓸 수 있습니다.' })
     const chart = cleanChart(req.body?.chart)

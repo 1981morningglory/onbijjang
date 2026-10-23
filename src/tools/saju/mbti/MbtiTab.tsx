@@ -1,7 +1,9 @@
 import clsx from 'clsx'
-import { ArrowLeft, ArrowRight, BatteryLow, Briefcase, CheckCircle2, Copy, Grid3x3, Heart, ListChecks, RotateCcw, Sprout, ThumbsUp, TriangleAlert, Users, Zap, type LucideIcon } from 'lucide-react'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Button, Panel, toast } from '@/ui'
+import { ArrowLeft, ArrowRight, BatteryLow, Briefcase, CheckCircle2, FileDown, Grid3x3, Link2, Heart, ListChecks, RotateCcw, Sprout, ThumbsUp, TriangleAlert, Users, Zap, type LucideIcon } from 'lucide-react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { Button, Panel } from '@/ui'
+import { mbtiLink, parseMbtiLink } from '../share'
+import { ShareDialog, useShare, type ShareTarget } from '../ShareUI'
 import { AXES, AXIS_INFO, QUESTIONS, SCALE, scoreAnswers, TEMPERAMENT, temperamentOf, TYPE_ORDER, TYPES, type Axis } from './data'
 
 const PER_PAGE = 8
@@ -13,6 +15,8 @@ interface Result {
   /** 검사로 나온 결과면 축별 비율, 둘러보기면 없음 */
   pct: Record<Axis, number> | null
   at?: string
+  /** 공유 링크로 받은 결과 */
+  shared?: boolean
 }
 
 function loadLast(): Result | null {
@@ -37,7 +41,20 @@ export default function MbtiTab() {
   const [page, setPage] = useState(0)
   const [result, setResult] = useState<Result | null>(null)
   const [last, setLast] = useState<Result | null>(null)
-  useEffect(() => setLast(loadLast()), [])
+  const [shareOpen, setShareOpen] = useState(false)
+  useEffect(() => {
+    setLast(loadLast())
+    // 공유 링크(?tab=mbti&r=유형&p=비율)로 들어오면 그 결과를 바로 보여 준다
+    const got = parseMbtiLink(location.search)
+    if (got) {
+      setResult({ ...got, shared: true })
+      setMode('result')
+    }
+  }, [])
+  const target: ShareTarget | null = result
+    ? { containerId: 'mbti-result', filename: `MBTI_${result.type}_${TYPES[result.type].nick}.pdf`, title: `성격유형 ${result.type} ${TYPES[result.type].nick}`, link: mbtiLink(result.type, result.pct) }
+    : null
+  const share = useShare(target)
 
   const top = () => requestAnimationFrame(() => document.getElementById('mbti-top')?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
   const start = () => {
@@ -57,6 +74,7 @@ export default function MbtiTab() {
     saveLast(r)
     setLast(r)
     show(r)
+    setShareOpen(true)
   }
 
   return (
@@ -75,7 +93,15 @@ export default function MbtiTab() {
           onQuit={() => setMode('intro')}
         />
       )}
-      {mode === 'result' && result && <ResultView result={result} onRetry={start} onPick={(t) => show({ type: t, pct: null })} onBack={() => setMode('intro')} />}
+      {mode === 'result' && result && <ResultView result={result} share={share} onRetry={start} onPick={(t) => show({ type: t, pct: null })} onBack={() => setMode('intro')} />}
+      <ShareDialog
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+        heading="검사가 끝났어요!"
+        target={target}
+        share={share}
+        note="링크를 받은 사람은 같은 유형 풀이와 성향 비율을 볼 수 있습니다. 답한 내용은 들어가지 않습니다."
+      />
     </div>
   )
 }
@@ -215,34 +241,20 @@ function Test({ answers, page, onAnswer, onPage, onFinish, onQuit }: { answers: 
 }
 
 // ── 결과 ─────────────────────────────────────────────────
-function ResultView({ result, onRetry, onPick, onBack }: { result: Result; onRetry: () => void; onPick: (t: string) => void; onBack: () => void }) {
+function ResultView({ result, share, onRetry, onPick, onBack }: { result: Result; share: ReturnType<typeof useShare>; onRetry: () => void; onPick: (t: string) => void; onBack: () => void }) {
   const t = TYPES[result.type]
   const temp = TEMPERAMENT[temperamentOf(result.type)]
-  const copyText = useMemo(
-    () =>
-      [
-        `나의 성격유형: ${result.type} · ${t.nick}`,
-        t.tagline,
-        result.pct ? AXES.map((a) => { const i = AXIS_INFO[a]; const p = result.pct![a]; return `${i.left} ${p}% / ${i.right} ${100 - p}%` }).join(' · ') : '',
-        '',
-        `강점: ${t.strengths.join(', ')}`,
-        `추천 직업: ${t.careers.join(', ')}`,
-        `잘 맞는 유형: ${t.best.join(', ')}`,
-      ]
-        .filter((x) => x !== '')
-        .join('\n'),
-    [result, t],
-  )
   return (
     <>
-      <Panel className="overflow-hidden p-0">
+      <div id="mbti-result" className="flex flex-col gap-5">
+      <Panel data-pdf-block className="overflow-hidden p-0">
         <div className="flex flex-col items-center gap-3 p-6 text-center sm:flex-row sm:text-left" style={{ background: temp.soft }}>
           <span className="inline-flex size-28 shrink-0 items-center justify-center rounded-full border-4 bg-surface text-6xl shadow-2" style={{ borderColor: temp.color }} aria-hidden>
             {t.emoji}
           </span>
           <div className="flex min-w-0 flex-col gap-1.5">
             <p className="text-xs font-bold" style={{ color: temp.color }}>
-              {result.pct ? '나의 성격유형' : '성격유형 둘러보기'} · {temp.name} — {temp.note}
+              {result.shared ? '공유받은 성격유형 결과' : result.pct ? '나의 성격유형' : '성격유형 둘러보기'} · {temp.name} — {temp.note}
             </p>
             <p className="flex flex-wrap items-baseline justify-center gap-x-3 sm:justify-start">
               <span className="text-5xl font-black tracking-wider" style={{ color: temp.color }}>
@@ -275,7 +287,7 @@ function ResultView({ result, onRetry, onPick, onBack }: { result: Result; onRet
         )}
       </Panel>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div data-pdf-block className="grid gap-4 lg:grid-cols-2">
         <Box icon={Sprout} title="이런 사람이에요" className="lg:col-span-2">
           {t.overview.map((p) => (
             <p key={p} className="text-sm leading-relaxed text-ink-2">
@@ -363,14 +375,18 @@ function ResultView({ result, onRetry, onPick, onBack }: { result: Result; onRet
         <Button variant="primary" icon={ListChecks} onClick={onRetry}>
           {result.pct ? '다시 검사하기' : '검사해 보기'}
         </Button>
-        <Button icon={Copy} onClick={() => void navigator.clipboard.writeText(copyText).then(() => toast.success('결과를 복사했습니다.'), () => toast.error('복사하지 못했습니다.'))}>
-          결과 복사
+        <Button icon={FileDown} loading={share.busy} onClick={() => void share.pdf()}>
+          PDF 다운로드
+        </Button>
+        <Button icon={Link2} onClick={() => void share.link()}>
+          링크 복사
         </Button>
         <Button variant="ghost" icon={ArrowLeft} onClick={onBack}>
           처음으로
         </Button>
       </div>
 
+      </div>
       <TypeGrid title="16유형 한눈에" hint="눌러서 다른 유형 풀이 보기" current={result.type} onPick={onPick} />
     </>
   )
