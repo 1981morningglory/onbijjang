@@ -111,3 +111,35 @@ export const GROUP_DETAIL: Record<TenGroup, { hanja: string; members: string; re
   관성: { hanja: '官星', members: '편관 + 정관', relation: '나를 이기는(다스리는) 기운', meaning: '나를 다듬고 이끄는 힘. 직장·규율·책임·명예를 뜻합니다(여성에게는 남편, 남성에게는 자녀).' },
   인성: { hanja: '印星', members: '편인 + 정인', relation: '나를 낳는(도와주는) 기운', meaning: '나를 길러 주고 돕는 힘. 공부·자격·문서·어머니·후원을 뜻합니다.' },
 }
+
+/** 오행 자체의 성질 */
+export const ELEMENT_NATURE: Record<Element, { thing: string; season: string; dir: string; power: string }> = {
+  목: { thing: '나무', season: '봄', dir: '동쪽', power: '자라고 뻗어 나가는 힘' },
+  화: { thing: '불', season: '여름', dir: '남쪽', power: '위로 타오르고 밝히는 힘' },
+  토: { thing: '흙', season: '환절기', dir: '가운데', power: '받아 주고 중심을 잡는 힘' },
+  금: { thing: '쇠·바위', season: '가을', dir: '서쪽', power: '단단하게 맺고 거두는 힘' },
+  수: { thing: '물', season: '겨울', dir: '북쪽', power: '스며들고 모아 두는 힘' },
+}
+/** 개수 → 정도 */
+export function elementLevel(n: number): { label: string; note: string } {
+  if (n === 0) return { label: '없음', note: '' }
+  if (n === 1) return { label: '조금', note: '조금 있어요. 필요할 때 쓸 수는 있지만 넉넉하지는 않아요.' }
+  if (n === 2) return { label: '보통', note: '알맞게 있어 이 기운이 무리 없이 잘 쓰여요.' }
+  if (n === 3) return { label: '많음', note: '' }
+  return { label: '아주 많음', note: '' }
+}
+/** 상생·상극 짝과 쉬운 비유 */
+export const GENERATE_PAIRS: Array<[Element, Element, string]> = [
+  ['목', '화', '나무가 타서 불을 살려요'],
+  ['화', '토', '불탄 재가 흙이 돼요'],
+  ['토', '금', '흙 속에서 쇠와 바위가 나와요'],
+  ['금', '수', '차가운 쇠에 물방울이 맺혀요'],
+  ['수', '목', '물이 나무를 키워요'],
+]
+export const CONTROL_PAIRS: Array<[Element, Element, string]> = [
+  ['목', '토', '나무뿌리가 흙을 파고들어요'],
+  ['토', '수', '흙둑이 물을 막아요'],
+  ['수', '화', '물이 불을 꺼요'],
+  ['화', '금', '불이 쇠를 녹여요'],
+  ['금', '목', '도끼가 나무를 베어요'],
+]

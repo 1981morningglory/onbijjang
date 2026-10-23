@@ -50,10 +50,10 @@ import {
   type Element,
   type SolarYmd,
 } from './logic'
-import { ELEMENT_MANY, ELEMENT_MEANING, ELEMENT_NONE, GLOSSARY, GROUP_LUCK, GROUP_MANY, GROUP_NONE, STAGE_NOTE, STEM_READING, STRENGTH_TEXT } from './guide'
+import { GLOSSARY, GROUP_LUCK, GROUP_MANY, GROUP_NONE, STAGE_NOTE, STEM_READING, STRENGTH_TEXT } from './guide'
 import { parseSajuLink, safeName, sajuLink } from './share'
 import { ShareButtons, ShareDialog, useShare, type ShareTarget } from './ShareUI'
-import { EL_BAR, EL_BOX, EL_HANJA, EL_NAME, EL_SOFT, EL_TEXT, EL_VAR, ElementCycle, groupElement, Radar, Stars, StemBadge, StrengthGauge, TenGroupDonut } from './visuals'
+import { EL_BOX, EL_HANJA, EL_NAME, EL_SOFT, EL_TEXT, EL_VAR, ElementCycle, ElementTable, CycleGuide, groupElement, Radar, Stars, StemBadge, StrengthGauge, TenGroupDonut } from './visuals'
 
 const FEATURES: Array<[string, string]> = [
   ['한국천문연구원 기준 만세력', '음력·윤달과 24절기를 한국천문연구원(KASI) 자료로 계산합니다.'],
@@ -513,33 +513,14 @@ function ChartView({ chart, name, actions }: { chart: Chart; name: string; actio
       <div className="grid gap-4 lg:grid-cols-2">
         <Card title="오행 지도" hint="다섯 기운이 얼마나, 어떻게 이어지나" icon={Compass}>
           <ElementCycle counts={c.elements} dayEl={dayEl} />
-          <div className="flex h-3 overflow-hidden rounded-full">
-            {ELEMENTS.filter((e) => c.elements[e] > 0).map((e) => (
-              <div key={e} className={EL_BAR[e]} style={{ flex: c.elements[e] }} title={`${e} ${c.elements[e]}`} />
-            ))}
-          </div>
-          <p className="flex flex-wrap gap-x-3 gap-y-0.5 text-sm text-muted">
-            {ELEMENTS.map((e) => (
-              <span key={e}>
-                <b className={EL_TEXT[e]}>{EL_HANJA[e]}</b> {ELEMENT_MEANING[e]}
-              </span>
-            ))}
-          </p>
+          <ElementTable counts={c.elements} dayEl={dayEl} total={c.pillars.length * 2} />
+          <CycleGuide dayEl={dayEl} />
           <Reading>
-            {most.map((e) => (
-              <p key={e}>
-                <b className={EL_TEXT[e]}>
-                  {EL_NAME[e]} {c.elements[e]}개로 가장 많아요.
-                </b>{' '}
-                {ELEMENT_MANY[e]}
-              </p>
-            ))}
-            {ELEMENTS.filter((e) => c.elements[e] === 0).map((e) => (
-              <p key={e}>
-                <b className={EL_TEXT[e]}>{EL_NAME[e]} 기운이 없어요.</b> {ELEMENT_NONE[e]}
-              </p>
-            ))}
-            {min > 0 && <p>다섯 기운이 모두 있어 고르게 갖춘 편이에요.</p>}
+            <p>
+              <b>한 줄 정리</b> · {most.map((e) => EL_NAME[e]).join('·')} 기운이 {max}개로 가장 많고
+              {min === 0 ? `, ${ELEMENTS.filter((e) => c.elements[e] === 0).map((e) => EL_NAME[e]).join('·')} 기운은 없습니다.` : ', 다섯 기운이 모두 있어 고르게 갖춘 편입니다.'}
+              {min === 0 ? ' 없는 기운은 아래 ‘없는 기운 채우기’에서 생활 속으로 채우는 법을 볼 수 있어요.' : ''}
+            </p>
           </Reading>
         </Card>
         <Card title="십신 다섯 갈래" hint="나를 둘러싼 관계와 힘" icon={Sparkles}>

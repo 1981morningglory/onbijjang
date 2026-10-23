@@ -4,7 +4,7 @@
  */
 import clsx from 'clsx'
 import { CloudDrizzle, Flame, Flower2, Gem, Mountain, Pickaxe, Sun, TreePine, WavesHorizontal, Wheat, type LucideIcon } from 'lucide-react'
-import { GROUP_DETAIL } from './guide'
+import { CONTROL_PAIRS, ELEMENT_MANY, ELEMENT_NATURE, ELEMENT_NONE, elementLevel, GENERATE_PAIRS, GROUP_DETAIL } from './guide'
 import { CONTROLS, ELEMENTS, GENERATES, TEN_GROUP_NOTE, TEN_GROUPS, stemElement, type Element, type TenGroup } from './logic'
 
 export const EL_VAR: Record<Element, string> = { 목: 'var(--color-wood)', 화: 'var(--color-fire)', 토: 'var(--color-earth)', 금: 'var(--color-metal)', 수: 'var(--color-water)' }
@@ -294,5 +294,97 @@ export function Stars({ value, className }: { value: number; className?: string 
         </svg>
       ))}
     </span>
+  )
+}
+
+// ── 오행 표(개수·뜻) ─────────────────────────────────────
+/** 일간 오행에서 본 그 오행의 갈래 */
+const groupOfElement = (e: Element, dayEl: Element): TenGroup => TEN_GROUPS.find((g) => groupElement(g, dayEl) === e)!
+
+export function ElementTable({ counts, dayEl, total }: { counts: Record<Element, number>; dayEl: Element; total: number }) {
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-sm leading-relaxed text-ink-2">
+        <b>숫자는 글자 수입니다.</b> 내 사주 {total}글자(위 글자 {total / 2}개 + 아래 글자 {total / 2}개)가 각각 어떤 오행인지 셌습니다. 원국표 칸의 색이 그 글자의 오행이에요. 여덟 글자라면 한 오행에 <b>1~2개가 보통</b>, 3개 이상이면 많은 편, 0개면 없는 기운입니다.
+      </p>
+      <ul className="flex flex-col divide-y divide-line overflow-hidden rounded-md border border-line bg-surface">
+        {ELEMENTS.map((e) => {
+          const n = counts[e]
+          const lv = elementLevel(n)
+          const nat = ELEMENT_NATURE[e]
+          const g = groupOfElement(e, dayEl)
+          const text = n === 0 ? ELEMENT_NONE[e] : n >= 3 ? ELEMENT_MANY[e] : lv.note
+          return (
+            <li key={e} className={clsx('grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-3 px-3 py-2.5', n === 0 && 'bg-paper')}>
+              <div className="flex flex-col gap-1">
+                <span className="flex items-center gap-1.5">
+                  <span className="size-3 shrink-0 rounded-full" style={{ background: EL_VAR[e] }} />
+                  <b className="text-base" style={{ color: EL_VAR[e] }}>
+                    {e} {EL_HANJA[e]}
+                  </b>
+                </span>
+                <span className="flex gap-0.5" aria-hidden>
+                  {Array.from({ length: Math.max(total, 5) }, (_, i) => (
+                    <span key={i} className="size-2 rounded-full" style={{ background: i < n ? EL_VAR[e] : 'var(--color-sunken)' }} />
+                  ))}
+                </span>
+                <span className={clsx('num text-sm font-bold', n === 0 ? 'text-faint' : 'text-ink')}>
+                  {n}개 <span className="font-semibold text-muted">· {lv.label}</span>
+                </span>
+              </div>
+              <div className="flex min-w-0 flex-col gap-0.5">
+                <p className="text-sm font-semibold text-ink">
+                  {nat.thing}
+                  <span className="font-normal text-muted">
+                    {' '}
+                    · {nat.season} · {nat.dir} · {nat.power}
+                  </span>
+                </p>
+                <p className="text-sm text-ink-2">
+                  {e === dayEl ? (
+                    <b className="text-brand">‘나’(일간)의 오행이에요.</b>
+                  ) : (
+                    <>
+                      나에게는 <b>{g}</b>({TEN_GROUP_NOTE[g].short}) — {GROUP_DETAIL[g].relation}
+                    </>
+                  )}
+                </p>
+                {text && <p className="text-sm leading-relaxed text-ink-2">{text}</p>}
+              </div>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
+/** 화살표 보는 법: 상생·상극 짝 */
+export function CycleGuide({ dayEl }: { dayEl: Element }) {
+  const row = ([a, b, text]: [Element, Element, string], kind: 'g' | 'c') => {
+    const mine = a === dayEl || b === dayEl
+    return (
+      <li key={a + b} className={clsx('flex items-center gap-2 rounded px-1.5 py-0.5 text-sm', mine && 'bg-brand-soft/60')}>
+        <span className="w-[4.5rem] shrink-0 font-bold">
+          <span style={{ color: EL_VAR[a] }}>{EL_HANJA[a]}</span>
+          <span className="mx-1 text-faint">{kind === 'g' ? '→' : '⇢'}</span>
+          <span style={{ color: EL_VAR[b] }}>{EL_HANJA[b]}</span>
+        </span>
+        <span className="text-ink-2">{text}</span>
+      </li>
+    )
+  }
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      <div className="flex flex-col gap-1">
+        <p className="text-sm font-bold text-ink">상생 — 도와주는 흐름(굵은 화살표)</p>
+        <ul className="flex flex-col">{GENERATE_PAIRS.map((x) => row(x, 'g'))}</ul>
+      </div>
+      <div className="flex flex-col gap-1">
+        <p className="text-sm font-bold text-ink">상극 — 눌러 주는 관계(점선)</p>
+        <ul className="flex flex-col">{CONTROL_PAIRS.map((x) => row(x, 'c'))}</ul>
+      </div>
+      <p className="text-xs leading-relaxed text-muted sm:col-span-2">초록 바탕 줄은 ‘나’(일간 {EL_HANJA[dayEl]})와 직접 이어진 관계입니다. 상극은 나쁜 것이 아니라, 지나친 기운을 눌러 균형을 잡아 주는 역할도 합니다.</p>
+    </div>
   )
 }
