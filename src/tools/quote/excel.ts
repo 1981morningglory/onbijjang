@@ -4,7 +4,7 @@
  */
 import type { Borders, Cell, Fill, Worksheet } from 'exceljs'
 import { loadImageElement } from '@/lib/image'
-import { addDays, amountInWords, calcTotals, contactLine, dateKo, DOC_NAME, koreanAmount, styleOf, type CompanyKit, type QuoteDoc } from './model'
+import { addDays, amountInWords, calcTotals, contactLine, dateKo, DOC_NAME, docContact, koreanAmount, styleOf, type CompanyKit, type QuoteDoc } from './model'
 
 const thin = { style: 'thin' as const, color: { argb: 'FF4A524D' } }
 const hair = { style: 'hair' as const, color: { argb: 'FF8A928D' } }
@@ -85,7 +85,7 @@ function mainSheet(wb: import('exceljs').Workbook, doc: QuoteDoc, kit: CompanyKi
   const c = kit.company
   const rows = totals.lines.filter((l) => l.filled)
   const seal = doc.showSeal ? kit.seals.find((s) => s.id === doc.sealId) ?? kit.seals[0] : undefined
-  const contact = doc.showContact ? kit.contacts.find((k) => k.id === doc.contactId) ?? kit.contacts[0] : undefined
+  const contact = docContact(doc, kit)
   const vatLabel = doc.vatMode === 'included' ? 'VAT 포함' : doc.vatMode === 'excluded' ? 'VAT 별도' : '면세'
 
   // 열: A 여백 · B 번호/월일 · C 품목 · D 규격 · E 수량 · F 단가 · G 공급가액 · H 세액 · I 합계 · J 비고
@@ -249,7 +249,7 @@ async function shipmentSheet(wb: import('exceljs').Workbook, doc: QuoteDoc, kit:
   const c = kit.company
   const rows = totals.lines.filter((l) => l.filled)
   const seal = doc.showSeal ? kit.seals.find((s) => s.id === doc.sealId) ?? kit.seals[0] : undefined
-  const contact = doc.showContact ? kit.contacts.find((k) => k.id === doc.contactId) ?? kit.contacts[0] : undefined
+  const contact = docContact(doc, kit)
   const qtyFmt = '#,##0.##'
 
   // 열: A 여백 · B SEQ · C 품번 · D 품명 · E 규격 · F BOX수 · G 내품수량 · H 출고수량 · I 단가 · J 금액

@@ -7,6 +7,7 @@ import {
   amountInWords,
   calcTotals,
   contactLine,
+  docContact,
   dateKo,
   DOC_TITLE,
   styleOf,
@@ -165,7 +166,7 @@ function quotePages(doc: QuoteDoc, kit: CompanyKit, measure: Measure): Page[] {
   const totals = calcTotals(doc)
   const c = kit.company
   const seal = doc.showSeal ? kit.seals.find((s) => s.id === doc.sealId) ?? kit.seals[0] : undefined
-  const contact = doc.showContact ? kit.contacts.find((k) => k.id === doc.contactId) ?? kit.contacts[0] : undefined
+  const contact = docContact(doc, kit)
   const hasSpec = doc.items.some((i) => i.spec.trim())
   const vatLabel = doc.vatMode === 'included' ? '(VAT 포함)' : doc.vatMode === 'excluded' ? '(VAT 별도)' : '(면세)'
 
@@ -401,7 +402,7 @@ function statementCopy(
   const big = !doc.twoCopies
   const c = kit.company
   const seal = doc.showSeal ? kit.seals.find((s) => s.id === doc.sealId) ?? kit.seals[0] : undefined
-  const contact = doc.showContact ? kit.contacts.find((k) => k.id === doc.contactId) ?? kit.contacts[0] : undefined
+  const contact = docContact(doc, kit)
   let y = o.top
 
   // 머리: 제목 · 보관용 · 날짜/번호
@@ -585,7 +586,7 @@ function shipmentPages(doc: QuoteDoc, kit: CompanyKit, measure: Measure): Page[]
   const groups = chunk(filled, SHIP_ROWS)
   const c = kit.company
   const seal = doc.showSeal ? kit.seals.find((s) => s.id === doc.sealId) ?? kit.seals[0] : undefined
-  const contact = doc.showContact ? kit.contacts.find((k) => k.id === doc.contactId) ?? kit.contacts[0] : undefined
+  const contact = docContact(doc, kit)
   const L = 15
   const R = PAGE_W - 15
   const W = R - L

@@ -271,6 +271,10 @@ export function makeDocNo(type: DocType, iso: string, seq: number): string {
   return `${type === 'quote' ? 'Q' : 'T'}-${iso.replace(/-/g, '')}-${String(seq).padStart(2, '0')}`
 }
 
+/** 문서에 넣을 담당자: 고른 담당자만(아직 안 골랐으면 없음 — 다른 사람 이름을 대신 넣지 않는다) */
+export const docContact = (doc: Pick<QuoteDoc, 'showContact' | 'contactId'>, kit: Pick<CompanyKit, 'contacts'>): Contact | undefined =>
+  doc.showContact && doc.contactId ? kit.contacts.find((k) => k.id === doc.contactId) : undefined
+
 /** 담당자 연락처 한 줄: "홍길동 과장 · 직통 031-000-0000 · hong@… · 휴대폰 010-…" */
 export function contactLine(c: Contact | null | undefined): string {
   if (!c) return ''
