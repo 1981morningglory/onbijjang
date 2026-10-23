@@ -230,7 +230,7 @@ export default function SajuTab() {
         heading="AI 사주풀이가 완료됐어요"
         target={target}
         share={share}
-        note="PDF에는 원국·도표와 AI 풀이가 모두 담깁니다. 링크에는 생년월일시(와 이름)가 들어가며, 받은 사람도 같은 원국·도표와 AI 풀이를 볼 수 있습니다."
+        note="PDF에는 원국·도표와 AI 풀이가 모두 담깁니다. 짧은 링크를 받은 사람은 메뉴 없이 이 결과(원국·도표·AI 풀이)만 볼 수 있고, 링크 주소에는 생년월일이 드러나지 않습니다."
       />
     </div>
   )
