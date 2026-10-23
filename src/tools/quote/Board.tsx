@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { ChevronRight, Copy, FileDown, FileSpreadsheet, Inbox, PencilLine, Search, Trash2, X } from 'lucide-react'
+import { ChevronRight, Copy, FileDown, FileSpreadsheet, Inbox, Mail, PencilLine, Search, Trash2, X } from 'lucide-react'
 import { Fragment, useMemo, useState, type ReactNode } from 'react'
 import { downloadBlob } from '@/lib/files'
 import { Badge, Button, EmptyState, IconButton, Panel, Segmented, Select, Spinner, TextInput, toast } from '@/ui'
@@ -247,7 +247,14 @@ export function DocsBoard({ filter, setFilter, onOpen, onCopy }: { filter: Board
                         <Badge tone={r.type === 'quote' ? 'brand' : 'neutral'}>{DOC_NAME[r.type]}</Badge>
                       </td>
                       <td className="px-3 py-2">{r.type === 'quote' ? <StatusButton entry={r} /> : <span className="text-xs text-faint">-</span>}</td>
-                      <td className="whitespace-nowrap px-3 py-2 text-xs text-muted">{r.docNo}</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-xs text-muted">
+                        {r.docNo}
+                        {r.lastMail && (
+                          <span className="ml-1 inline-flex align-middle text-brand" title={`메일 보냄 · ${new Date(r.lastMail.at).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' })} → ${r.lastMail.to.join(', ')}`}>
+                            <Mail className="size-3.5" aria-label="메일 보냄" />
+                          </span>
+                        )}
+                      </td>
                       <td className="max-w-48 px-3 py-2">
                         <button type="button" className="truncate text-left font-semibold text-ink hover:underline" onClick={() => setFilter({ ...filter, customer: r.customer })} title="이 거래처 문서만 보기">
                           {r.customer || '(거래처 없음)'}

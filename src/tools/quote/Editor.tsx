@@ -1,10 +1,11 @@
 import clsx from 'clsx'
-import { ArrowDown, ArrowUp, Building2, CalendarDays, Download, FileSpreadsheet, FileText, Image as ImageIcon, Plus, Printer, RotateCcw, Save, Trash2, UserRound } from 'lucide-react'
+import { ArrowDown, ArrowUp, Building2, CalendarDays, Download, FileSpreadsheet, FileText, Image as ImageIcon, Mail, Plus, Printer, RotateCcw, Save, Trash2, UserRound } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { downloadBlob, downloadZip } from '@/lib/files'
 import { Badge, Button, Callout, Field, IconButton, MenuItem, NumberInput, Panel, Popover, Section, Segmented, Select, Switch, Textarea, TextInput, toast } from '@/ui'
 import { buildPages, canvasMeasure, type Page } from './layout'
 import { calcTotals, contactLine, DOC_NAME, emptyItem, fileBase, isAutoNo, newDoc, proposeDocNo, shipQty, styleOf, STYLE_NAME, todayIso, won, type DocType, type LineItem, type QuoteDoc, type StatementStyle, type VatMode } from './model'
+import { SendMailDialog } from './MailUI'
 import { PagePreview } from './Preview'
 import { useTeam } from './team'
 
@@ -236,7 +237,7 @@ export interface Draft {
 export const draftKey = (teamId: string) => `onbijjang:quote:draft:${teamId}`
 export const freshDraft = (type: DocType = 'quote'): Draft => ({ doc: newDoc(type), savedId: null, savedJson: null })
 
-export function Editor({ draft, setDraft, onOpenSettings }: { draft: Draft; setDraft: (fn: (d: Draft) => Draft) => void; onOpenSettings: (section: 'company' | 'contacts') => void }) {
+export function Editor({ draft, setDraft, onOpenSettings }: { draft: Draft; setDraft: (fn: (d: Draft) => Draft) => void; onOpenSettings: (section: 'company' | 'contacts' | 'mail') => void }) {
   const kit = useTeam((s) => s.kit)
   const docs = useTeam((s) => s.docs)
   const saveDoc = useTeam((s) => s.saveDoc)
@@ -244,6 +245,7 @@ export function Editor({ draft, setDraft, onOpenSettings }: { draft: Draft; setD
   const setDoc = (fn: QuoteDoc | ((d: QuoteDoc) => QuoteDoc)) => setDraft((dr) => ({ ...dr, doc: typeof fn === 'function' ? fn(dr.doc) : fn }))
   const [pageIndex, setPageIndex] = useState(0)
   const [busy, setBusy] = useState<string | null>(null)
+  const [mailing, setMailing] = useState(false)
   const patch = (p: Partial<QuoteDoc>) => setDoc((d) => ({ ...d, ...p }))
   const nextNo = (type: DocType, date: string) => proposeDocNo(type, date, (docs ?? []).map((d) => d.docNo))
 
@@ -364,6 +366,9 @@ export function Editor({ draft, setDraft, onOpenSettings }: { draft: Draft; setD
     setPageIndex(0)
   }
   const recentCustomers = useMemo(() => [...new Set((docs ?? []).map((d) => d.customer).filter(Boolean))].slice(0, 40), [docs])
+
+  /** 메일 보내기 전에 문서함에 저장(고친 내용이 있으면 덮어쓰기) */
+  const rememberForMail = async () => (!draft.savedId || dirty ? (await remember()).id : draft.savedId)
 
   const statement = doc.type === 'statement'
   const style = styleOf(doc)
@@ -564,6 +569,9 @@ export function Editor({ draft, setDraft, onOpenSettings }: { draft: Draft; setD
                   PDF+엑셀
                 </Button>
                 <IconButton icon={Printer} label="인쇄용 PDF 열기" variant="secondary" size="sm" disabled={!!busy} onClick={printPdf} />
+                <Button size="sm" variant="primary" icon={Mail} disabled={!!busy} onClick={() => guard() && setMailing(true)}>
+                  메일 보내기
+                </Button>
               </div>
             </div>
             <div className="mat flex justify-center rounded-md p-3 sm:p-5">
@@ -589,6 +597,22 @@ export function Editor({ draft, setDraft, onOpenSettings }: { draft: Draft; setD
         </div>
       </div>
 
+      <SendMailDialog
+        open={mailing}
+        onClose={() => setMailing(false)}
+        doc={doc}
+        kit={kit}
+        contact={contact}
+        total={totals.total}
+        base={base}
+        makePdf={makePdf}
+        makeXlsx={makeXlsx}
+        remember={rememberForMail}
+        onOpenSettings={() => {
+          setMailing(false)
+          onOpenSettings('mail')
+        }}
+      />
     </div>
   )
 }
