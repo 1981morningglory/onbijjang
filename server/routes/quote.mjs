@@ -542,6 +542,13 @@ export default async function quoteRoutes(app, ctx) {
       await writeJson(mailFile(teamId), m)
     })
 
+  /** 발송 목록에 보여 줄 문서 요약: 종류·첫 품목·품목 수·합계(VAT 포함) */
+  const docBrief = (d) => {
+    if (!d) return undefined
+    const items = (d.items ?? []).filter((i) => i.name)
+    return { type: d.type, item: items[0]?.name ?? d.title ?? '', itemCount: items.length, total: d.total ?? 0 }
+  }
+
   app.post('/api/quote/mail/send', requireTeam, requireMe, async (req, res) => {
     const teamId = req.team.id
     const b = req.body ?? {}
@@ -605,6 +612,7 @@ export default async function quoteRoutes(app, ctx) {
     }
     sentAt.set(teamId, [...recent, Date.now()])
     entry.ok = true
+    if (entry.docId) entry.doc = docBrief((await readJson(indexFile(teamId), [])).find((d) => d.id === entry.docId))
     entry.messageId = info.messageId ?? ''
     // 메일함에 저장: 본문·첨부 그대로(나중에 다시 보기·내려받기·다시 보내기)
     if (b.saveCopy !== false) {
@@ -635,8 +643,51 @@ export default async function quoteRoutes(app, ctx) {
 
   // ── 메일함: 발송 목록 · 저장한 메일 ───────────────────────
   app.get('/api/quote/mail/log', requireTeam, async (req, res) => {
+    const log = (await loadMail(req.team.id)).log
+    if (log.some((e) => e.docId && !e.doc)) {
+      const index = await readJson(indexFile(req.team.id), [])
+      for (const e of log) if (e.docId && !e.doc) e.doc = docBrief(index.find((d) => d.id === e.docId))
+    }
     res.setHeader('Cache-Control', 'no-store')
-    res.json({ log: (await loadMail(req.team.id)).log })
+    res.json({ log })
+  })
+  /** 발송 목록 한 줄 고치기: 업체명·업체 연락처·비고(팀 누구나) */
+  app.patch('/api/quote/mail/log/:mid', requireTeam, async (req, res) => {
+    if (!ID_RE.test(req.params.mid)) return res.status(400).json({ error: '메일 번호가 올바르지 않습니다.' })
+    const b = req.body ?? {}
+    const teamId = req.team.id
+    const entry = await serial(`mail:${teamId}`, async () => {
+      const m = await loadMail(teamId)
+      const e = m.log.find((x) => x.id === req.params.mid)
+      if (!e) return null
+      if (b.customer !== undefined) e.customer = str(b.customer, 60).trim()
+      if (b.contact !== undefined) e.contact = str(b.contact, 120).trim()
+      if (b.memo !== undefined) e.memo = str(b.memo, 1000)
+      e.editedAt = new Date().toISOString()
+      e.editedBy = currentUser?.(req)?.name ?? ''
+      await writeJson(mailFile(teamId), m)
+      return e
+    })
+    if (!entry) return res.status(404).json({ error: '발송 기록을 찾을 수 없습니다.' })
+    res.json({ entry })
+  })
+  /** 발송 목록에서 지우기(저장한 본문·첨부도 함께). 보낸 본인(또는 관리자)만 — 예전 기록은 누구나 */
+  app.delete('/api/quote/mail/log/:mid', requireTeam, async (req, res) => {
+    if (!ID_RE.test(req.params.mid)) return res.status(400).json({ error: '메일 번호가 올바르지 않습니다.' })
+    const teamId = req.team.id
+    const result = await serial(`mail:${teamId}`, async () => {
+      const m = await loadMail(teamId)
+      const e = m.log.find((x) => x.id === req.params.mid)
+      if (!e) return {}
+      if (e.userId && e.userId !== currentUser?.(req)?.id && !isAdmin(req)) return { error: `${e.by} 님이 보낸 메일이라 그분(또는 관리자)만 지울 수 있습니다.` }
+      m.log = m.log.filter((x) => x.id !== e.id)
+      await writeJson(mailFile(teamId), m)
+      await fsp.rm(boxFile(teamId, e.id), { force: true })
+      await fsp.rm(boxFilesDir(teamId, e.id), { recursive: true, force: true })
+      return {}
+    })
+    if (result.error) return res.status(403).json({ error: result.error })
+    res.json({ ok: true })
   })
   const savedMail = async (req, res) => {
     if (!ID_RE.test(req.params.mid)) return res.status(400).json({ error: '메일 번호가 올바르지 않습니다.' }), null

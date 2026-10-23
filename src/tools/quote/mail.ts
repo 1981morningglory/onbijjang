@@ -57,6 +57,11 @@ export interface MailLogEntry {
   error?: string
   /** 메일함에 본문·첨부까지 저장했는지 */
   saved: boolean
+  /** 보낸 문서 요약: 종류·첫 품목·품목 수·합계(VAT 포함) */
+  doc?: { type: 'quote' | 'statement'; item: string; itemCount: number; total: number }
+  /** 업체 연락처·비고(발송 목록에서 고쳐 넣는다) */
+  contact?: string
+  memo?: string
 }
 /** 메일함에 저장한 메일 */
 export interface SavedMail {
@@ -103,6 +108,10 @@ export interface SendRequest {
 export const loadLog = () => api<{ log: MailLogEntry[] }>('/quote/mail/log').then((r) => r.log)
 export const loadSaved = (id: string) => api<SavedMail>(`/quote/mailbox/${id}`)
 export const deleteSaved = (id: string) => api(`/quote/mailbox/${id}`, { method: 'DELETE' })
+export const editLog = (id: string, patch: { customer?: string; contact?: string; memo?: string }) => api<{ entry: MailLogEntry }>(`/quote/mail/log/${id}`, { method: 'PATCH', body: patch })
+export const deleteLog = (id: string) => api(`/quote/mail/log/${id}`, { method: 'DELETE' })
+/** 견적품목 한 줄: '스프링노트 외 2' */
+export const itemSummary = (d: MailLogEntry['doc']) => (!d?.item ? '' : d.itemCount > 1 ? `${d.item} 외 ${d.itemCount - 1}` : d.item)
 /** 메일함 파일 받기(첨부 n 또는 .eml) */
 export async function fetchSavedFile(id: string, what: number | 'eml'): Promise<Blob> {
   const res = await fetch(`/api/quote/mailbox/${id}/${what === 'eml' ? 'eml' : `files/${what}`}`, { credentials: 'same-origin' })
