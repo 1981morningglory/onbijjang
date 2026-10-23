@@ -13,4 +13,5 @@ export function cleanRecipients(list: unknown, max?: number): { list: string[]; 
 export function cleanAccount(a: unknown, email?: string): { error: string; account?: undefined } | { account: { host: string; port: number; secure: boolean; user: string }; error?: undefined }
 export function sealSecret(plain: string, secret: string): string
 export function openSecret(sealed: string, secret: string): string | null
-export function mailErrorText(err: unknown): string
+export function senderAddress(acc: { user?: string; host?: string } | null | undefined, contactEmail?: string): string
+export function mailErrorText(err: unknown, ctx?: { from?: string }): string

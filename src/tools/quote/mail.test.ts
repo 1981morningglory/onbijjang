@@ -72,6 +72,18 @@ describe('서버: 메일 도우미', () => {
     expect(S.openSecret(sealed, 'k1')).toBe('abcd efgh ijkl')
     expect(S.openSecret(sealed, 'k2')).toBeNull()
   })
+  it('보내는 주소는 로그인 계정(아이디만이면 서비스 도메인)', () => {
+    expect(S.senderAddress({ user: 'abc@naver.com', host: 'smtp.naver.com' }, 'jhk@morningglory.co.kr')).toBe('abc@naver.com')
+    expect(S.senderAddress({ user: 'abc', host: 'smtp.naver.com' }, 'jhk@morningglory.co.kr')).toBe('abc@naver.com')
+    expect(S.senderAddress({ user: 'abc', host: 'mail.company.kr' }, 'jhk@company.kr')).toBe('jhk@company.kr')
+  })
+  it('보내는 주소 거절(네이버 553)은 비밀번호 오류로 안내하지 않는다', () => {
+    const t = S.mailErrorText({ code: 'EENVELOPE', command: 'MAIL FROM', response: '553 5.7.1 Sender address rejected: not owned by auth user.' }, { from: 'jhk@morningglory.co.kr' })
+    expect(t).toContain('보내는 주소(jhk@morningglory.co.kr)')
+    expect(t).not.toContain('앱 비밀번호')
+    expect(t).toContain('553 5.7.1')
+    expect(S.mailErrorText({ code: 'EENVELOPE', command: 'RCPT TO', response: '550 5.1.1 no such user' })).toContain('받는 사람 주소')
+  })
   it('로그인 실패는 앱 비밀번호 안내로', () => {
     expect(S.mailErrorText({ code: 'EAUTH', response: '535 auth failed' })).toContain('앱 비밀번호')
   })
