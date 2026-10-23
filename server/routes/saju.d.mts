@@ -16,3 +16,10 @@ export function cleanChart(c: unknown): null | {
 export function chartText(c: NonNullable<ReturnType<typeof cleanChart>>): string
 declare const sajuRoutes: (app: unknown, ctx: unknown) => Promise<void>
 export default sajuRoutes
+export const SCORE_KEYS: string[]
+export function shapeReading(out: unknown): {
+  summary: string
+  keywords: string[]
+  scores: Record<string, number>
+  sections: Array<{ key: string; title: string; headline: string; points: string[]; body: string }>
+}
