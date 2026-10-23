@@ -1,12 +1,12 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react'
 import {
   Barcode, Blend, Calculator, Camera, ClipboardList, Clapperboard, ClipboardCheck, Crop, Download, Eraser, FileText, Files, Film, Gavel,
-  Grid3x3, Image as ImageIcon, Images, LayoutTemplate, MonitorPlay, NotebookPen, Package, PenLine, QrCode,
+  Grid3x3, Image as ImageIcon, Images, LayoutTemplate, MonitorPlay, NotebookPen, Package, PenLine, QrCode, Sparkles,
   ReceiptText, Rocket, Scale, Scissors, ShoppingBag, ShoppingCart, Signature, Store, Tags, FilePenLine, Megaphone, Trophy,
   type LucideIcon,
 } from 'lucide-react'
 
-export type GroupId = 'image' | 'video' | 'doc' | 'fees' | 'sns'
+export type GroupId = 'image' | 'video' | 'doc' | 'fees' | 'sns' | 'life'
 
 export interface ToolGroup {
   id: GroupId
@@ -44,6 +44,7 @@ export const GROUPS: ToolGroup[] = [
   { id: 'image', title: '이미지', blurb: '자르고, 지우고, 가리고, 꾸미기', icon: ImageIcon },
   { id: 'sns', title: 'SNS', blurb: '블로그 글 다듬기·체험단 선발', icon: Megaphone },
   { id: 'fees', title: '마켓 수수료', blurb: '남는 돈을 먼저 계산', icon: Calculator },
+  { id: 'life', title: '생활', blurb: '사주풀이 등 생활 도구', icon: Sparkles },
 ]
 
 export const TOOLS: ToolDef[] = [
@@ -259,6 +260,14 @@ export const TOOLS: ToolDef[] = [
     keywords: ['체험단', '인플루언서', '인스타그램', '인스타', '블로그', '네이버', '팔로워', '방문자', '이웃', '서포터즈', '선발', '순위'],
     icon: Trophy, art: 'sns', local: false, wide: true, roles: ['member', 'staff', 'admin'],
     component: lazy(() => import('@/tools/sns')),
+  },
+  // ── 생활 ────────────────────────────────────────────────
+  {
+    id: 'saju', group: 'life', title: '사주풀이',
+    summary: '생년월일시만 넣으면 한국천문연구원 기준 만세력으로 원국·십신·오행·대운을 세우고 AI가 한국어로 풀이',
+    keywords: ['사주', '사주팔자', '팔자', '만세력', '운세', '명리', '대운', '세운', '오행', '십신', '궁합', '토정비결', '신년운세', '생년월일'],
+    icon: Sparkles, art: 'saju', local: false, wide: true,
+    component: lazy(() => import('@/tools/saju')),
   },
 ]
 
