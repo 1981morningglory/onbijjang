@@ -3,10 +3,11 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { downloadBlob } from '@/lib/files'
 import { Badge, Button, Callout, Checkbox, EmptyState, Field, IconButton, Panel, Spinner, Tabs, TextInput, toast } from '@/ui'
 import { cleanSeal, fileToAttachment, kitFromFile, kitToBlob } from './kit'
+import { MailSection } from './MailUI'
 import { uid, type Company, type CompanyKit, type Contact } from './model'
 import { useTeam } from './team'
 
-export type SettingsSection = 'code' | 'contacts' | 'company'
+export type SettingsSection = 'code' | 'contacts' | 'company' | 'mail'
 type KitTab = 'info' | 'seal' | 'docs' | 'share'
 
 const COMPANY_FIELDS: Array<[keyof Company, string, string?]> = [
@@ -63,12 +64,14 @@ export function TeamSettings({ section, setSection }: { section: SettingsSection
           tabs={[
             { value: 'company', label: '회사 자료' },
             { value: 'contacts', label: '담당자' },
+            { value: 'mail', label: '메일·주소록' },
             { value: 'code', label: '팀 코드' },
           ]}
       />
       {section === 'code' && <CodeSection admin={admin} />}
       {section === 'contacts' && <ContactsSection />}
       {section === 'company' && <CompanySection />}
+      {section === 'mail' && <MailSection onGoContacts={() => setSection('contacts')} />}
     </div>
   )
 }

@@ -29,6 +29,8 @@ export interface DocEntry {
   author: string
   /** 진행 상태. 예전 문서에는 없다(견적중으로 본다) */
   status?: DocStatus
+  /** 마지막으로 메일 보낸 때·받는 사람 */
+  lastMail?: { at: string; to: string[] }
   createdAt: string
   updatedAt: string
 }
