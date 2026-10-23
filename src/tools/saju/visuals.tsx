@@ -102,7 +102,7 @@ export function ElementCycle({ counts, dayEl }: { counts: Record<Element, number
             <g key={e}>
               {e === dayEl && <circle cx={p.x} cy={p.y} r={r + 6} fill="none" stroke={EL_VAR[e]} strokeWidth="2" strokeDasharray="3 3" />}
               <circle cx={p.x} cy={p.y} r={r} fill={empty ? 'var(--color-surface)' : EL_SOFT[e]} stroke={EL_VAR[e]} strokeWidth={empty ? 1.5 : 2.5} strokeDasharray={empty ? '4 3' : undefined} />
-              <text x={p.x} y={p.y + 2} textAnchor="middle" dominantBaseline="middle" fontSize={r > 30 ? 22 : 16} fontWeight="700" fill={EL_VAR[e]}>
+              <text x={p.x} y={p.y + 2} textAnchor="middle" dominantBaseline="middle" fontSize={r > 30 ? 24 : 18} fontWeight="700" fill={EL_VAR[e]}>
                 {EL_HANJA[e]}
               </text>
               {(() => {
@@ -113,7 +113,7 @@ export function ElementCycle({ counts, dayEl }: { counts: Record<Element, number
                 const ly = p.y + d * Math.sin(a)
                 const anchor = Math.abs(Math.cos(a)) < 0.3 ? 'middle' : Math.cos(a) > 0 ? 'start' : 'end'
                 return (
-                  <text x={lx} y={ly} textAnchor={anchor} dominantBaseline="middle" fontSize="12" fontWeight="700" fill="var(--color-ink-2)">
+                  <text x={lx} y={ly} textAnchor={anchor} dominantBaseline="middle" fontSize="13.5" fontWeight="700" fill="var(--color-ink-2)">
                     {e} {counts[e]}
                     {e === dayEl ? ' · 나' : ''}
                   </text>
@@ -123,7 +123,7 @@ export function ElementCycle({ counts, dayEl }: { counts: Record<Element, number
           )
         })}
       </svg>
-      <figcaption className="flex flex-wrap justify-center gap-x-4 gap-y-1 text-2xs text-muted">
+      <figcaption className="flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs text-muted">
         <span>
           <b className="text-ink-2">━▶</b> 상생: 도와주는 흐름
         </span>
@@ -165,10 +165,10 @@ export function TenGroupDonut({ counts, dayEl }: { counts: Record<TenGroup, numb
           acc += len
           return seg
         })}
-        <text x="60" y="56" textAnchor="middle" fontSize="15" fontWeight="800" fill="var(--color-ink)">
+        <text x="60" y="56" textAnchor="middle" fontSize="16.5" fontWeight="800" fill="var(--color-ink)">
           {top[0]}
         </text>
-        <text x="60" y="73" textAnchor="middle" fontSize="9" fill="var(--color-muted)">
+        <text x="60" y="73" textAnchor="middle" fontSize="10.5" fill="var(--color-muted)">
           가장 많아요
         </text>
       </svg>
@@ -176,7 +176,7 @@ export function TenGroupDonut({ counts, dayEl }: { counts: Record<TenGroup, numb
         {TEN_GROUPS.map((g) => {
           const el = groupElement(g, dayEl)
           return (
-            <li key={g} className="flex items-center gap-2 text-xs">
+            <li key={g} className="flex items-center gap-2 text-sm">
               <span className="size-3 shrink-0 rounded-full" style={{ background: EL_VAR[el] }} />
               <span className="w-9 font-bold text-ink">{g}</span>
               <span className="num w-4 text-right font-semibold text-ink-2">{counts[g]}</span>
@@ -206,13 +206,13 @@ export function StrengthGauge({ score, label }: { score: number; label: string }
       <path d={arc(55, 100)} fill="none" stroke="var(--color-fire)" strokeWidth="12" opacity="0.75" />
       <line x1="70" y1="70" x2={70 + 44 * Math.cos(ang)} y2={70 - 44 * Math.sin(ang)} stroke="var(--color-ink)" strokeWidth="3" strokeLinecap="round" />
       <circle cx="70" cy="70" r="5" fill="var(--color-ink)" />
-      <text x="12" y="84" fontSize="9" fill="var(--color-muted)">
+      <text x="12" y="84" fontSize="10.5" fill="var(--color-muted)">
         신약
       </text>
-      <text x="62" y="12" fontSize="9" fill="var(--color-muted)">
+      <text x="62" y="12" fontSize="10.5" fill="var(--color-muted)">
         중화
       </text>
-      <text x="112" y="84" fontSize="9" fill="var(--color-muted)">
+      <text x="112" y="84" fontSize="10.5" fill="var(--color-muted)">
         신강
       </text>
     </svg>
@@ -246,7 +246,7 @@ export function Radar({ items }: { items: Array<{ label: string; value: number }
       {items.map((x, i) => {
         const p = pt(i, 6.15)
         return (
-          <text key={x.label} x={p.x} y={p.y} textAnchor="middle" dominantBaseline="middle" fontSize="11" fontWeight="700" fill="var(--color-ink-2)">
+          <text key={x.label} x={p.x} y={p.y} textAnchor="middle" dominantBaseline="middle" fontSize="12.5" fontWeight="700" fill="var(--color-ink-2)">
             {x.label} {x.value}
           </text>
         )

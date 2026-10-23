@@ -119,8 +119,8 @@ function Intro({ onStart, last, onLast, onPick }: { onStart: () => void; last: R
     <>
       <Panel className="flex flex-col gap-4 p-4 sm:p-5">
         <div className="flex flex-col gap-1.5">
-          <h2 className="text-lg font-bold text-ink">MBTI 성격유형이란?</h2>
-          <p className="text-sm leading-relaxed text-ink-2">
+          <h2 className="text-xl font-bold text-ink">MBTI 성격유형이란?</h2>
+          <p className="text-base leading-relaxed text-ink-2">
             사람마다 <b>에너지를 얻는 곳</b>, <b>정보를 받아들이는 법</b>, <b>결정하는 법</b>, <b>생활하는 방식</b>이 다릅니다. 이 네 가지 성향을 짝지어 16가지 유형으로 나눈 것이 MBTI 방식의 성격유형입니다. 짧은 검사로 내 유형을 찾고, 나와 주변 사람을 더 잘 이해하는 데 써 보세요.
           </p>
         </div>
@@ -129,8 +129,8 @@ function Intro({ onStart, last, onLast, onPick }: { onStart: () => void; last: R
             <li key={title} className="flex gap-2 rounded-md border border-line bg-paper p-3">
               <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-brand" aria-hidden />
               <div>
-                <p className="text-sm font-semibold text-ink">{title}</p>
-                <p className="mt-0.5 text-xs leading-relaxed text-muted">{body}</p>
+                <p className="text-base font-semibold text-ink">{title}</p>
+                <p className="mt-0.5 text-sm leading-relaxed text-muted">{body}</p>
               </div>
             </li>
           ))}
@@ -145,7 +145,7 @@ function Intro({ onStart, last, onLast, onPick }: { onStart: () => void; last: R
             </Button>
           )}
         </div>
-        <p className="text-xs text-faint">이 검사는 MBTI 이론을 바탕으로 새로 만든 참고용 성격유형 검사이며, 공식 MBTI® 검사가 아닙니다. 답과 결과는 이 브라우저에만 저장됩니다.</p>
+        <p className="text-sm text-faint">이 검사는 MBTI 이론을 바탕으로 새로 만든 참고용 성격유형 검사이며, 공식 MBTI® 검사가 아닙니다. 답과 결과는 이 브라우저에만 저장됩니다.</p>
       </Panel>
       <TypeGrid title="이미 내 유형을 알아요" hint="눌러서 바로 풀이 보기" onPick={onPick} />
     </>
@@ -169,7 +169,7 @@ function Test({ answers, page, onAnswer, onPage, onFinish, onQuit }: { answers: 
   return (
     <Panel className="flex flex-col gap-4 p-4 sm:p-5">
       <div className="sticky top-14 z-10 -mx-4 flex flex-col gap-1.5 border-b border-line bg-surface/95 px-4 pb-3 backdrop-blur sm:-mx-5 sm:px-5">
-        <div className="flex items-center justify-between text-sm">
+        <div className="flex items-center justify-between text-base">
           <span className="font-bold text-ink">
             {page + 1} / {PAGES} 쪽
           </span>
@@ -186,7 +186,7 @@ function Test({ answers, page, onAnswer, onPage, onFinish, onQuit }: { answers: 
           const v = answers[q.id]
           return (
             <li key={q.id} id={`q-${q.id}`} className={clsx('flex scroll-mt-40 flex-col items-center gap-3 rounded-lg border p-4 transition-colors', v != null ? 'border-line bg-paper' : 'border-line-strong bg-surface')}>
-              <p className="text-center text-base font-semibold text-ink">{q.text}</p>
+              <p className="text-center text-lg font-semibold text-ink">{q.text}</p>
               <div className="flex w-full max-w-md items-center justify-between gap-1" role="radiogroup" aria-label={q.text}>
                 {SCALE.map((s, i) => (
                   <button
@@ -205,7 +205,7 @@ function Test({ answers, page, onAnswer, onPage, onFinish, onQuit }: { answers: 
                   />
                 ))}
               </div>
-              <div className="-mt-1 flex w-full max-w-md justify-between text-xs font-semibold" aria-hidden>
+              <div className="-mt-1 flex w-full max-w-md justify-between text-sm font-semibold" aria-hidden>
                 <span className="text-accent">그렇지 않다</span>
                 <span className="text-brand">그렇다</span>
               </div>
@@ -224,7 +224,7 @@ function Test({ answers, page, onAnswer, onPage, onFinish, onQuit }: { answers: 
           </Button>
         )}
         <div className="ml-auto flex items-center gap-2">
-          {!pageDone && <span className="text-xs text-muted">이 쪽의 모든 문항에 답해 주세요</span>}
+          {!pageDone && <span className="text-sm text-muted">이 쪽의 모든 문항에 답해 주세요</span>}
           {page < PAGES - 1 ? (
             <Button variant="primary" icon={ArrowRight} disabled={!pageDone} onClick={() => onPage(page + 1)}>
               다음
@@ -253,16 +253,16 @@ function ResultView({ result, share, onRetry, onPick, onBack }: { result: Result
             {t.emoji}
           </span>
           <div className="flex min-w-0 flex-col gap-1.5">
-            <p className="text-xs font-bold" style={{ color: temp.color }}>
+            <p className="text-sm font-bold" style={{ color: temp.color }}>
               {result.shared ? '공유받은 성격유형 결과' : result.pct ? '나의 성격유형' : '성격유형 둘러보기'} · {temp.name} — {temp.note}
             </p>
             <p className="flex flex-wrap items-baseline justify-center gap-x-3 sm:justify-start">
-              <span className="text-5xl font-black tracking-wider" style={{ color: temp.color }}>
+              <span className="text-6xl font-black tracking-wider" style={{ color: temp.color }}>
                 {result.type}
               </span>
-              <span className="text-2xl font-extrabold text-ink">{t.nick}</span>
+              <span className="text-3xl font-extrabold text-ink">{t.nick}</span>
             </p>
-            <p className="text-base font-semibold text-ink-2">{t.tagline}</p>
+            <p className="text-lg font-semibold text-ink-2">{t.tagline}</p>
           </div>
         </div>
         {result.pct && (
@@ -278,7 +278,7 @@ function ResultView({ result, share, onRetry, onPick, onBack }: { result: Result
               const letter = result.type[i]
               const n = AXIS_INFO[a].names[letter]
               return (
-                <span key={a} className="rounded-full border border-line bg-paper px-3 py-1 text-xs text-ink-2">
+                <span key={a} className="rounded-full border border-line bg-paper px-3 py-1 text-sm text-ink-2">
                   <b style={{ color: temp.color }}>{letter}</b> {n.name} · {n.note}
                 </span>
               )
@@ -290,7 +290,7 @@ function ResultView({ result, share, onRetry, onPick, onBack }: { result: Result
       <div data-pdf-block className="grid gap-4 lg:grid-cols-2">
         <Box icon={Sprout} title="이런 사람이에요" className="lg:col-span-2">
           {t.overview.map((p) => (
-            <p key={p} className="text-sm leading-relaxed text-ink-2">
+            <p key={p} className="text-base leading-relaxed text-ink-2">
               {p}
             </p>
           ))}
@@ -298,7 +298,7 @@ function ResultView({ result, share, onRetry, onPick, onBack }: { result: Result
         <Box icon={ThumbsUp} title="강점" tone="brand">
           <ul className="flex flex-col gap-1.5">
             {t.strengths.map((s) => (
-              <li key={s} className="flex gap-2 text-sm text-ink-2">
+              <li key={s} className="flex gap-2 text-base text-ink-2">
                 <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-brand" aria-hidden />
                 {s}
               </li>
@@ -308,7 +308,7 @@ function ResultView({ result, share, onRetry, onPick, onBack }: { result: Result
         <Box icon={TriangleAlert} title="조심할 점" tone="accent">
           <ul className="flex flex-col gap-1.5">
             {t.weaknesses.map((s) => (
-              <li key={s} className="flex gap-2 text-sm text-ink-2">
+              <li key={s} className="flex gap-2 text-base text-ink-2">
                 <TriangleAlert className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden />
                 {s}
               </li>
@@ -316,38 +316,38 @@ function ResultView({ result, share, onRetry, onPick, onBack }: { result: Result
           </ul>
         </Box>
         <Box icon={Briefcase} title="일하는 스타일 · 추천 직업" className="lg:col-span-2">
-          <p className="text-sm leading-relaxed text-ink-2">{t.work}</p>
+          <p className="text-base leading-relaxed text-ink-2">{t.work}</p>
           <div className="flex flex-wrap gap-1.5">
             {t.careers.map((c) => (
-              <span key={c} className="rounded-full px-3 py-1 text-sm font-semibold" style={{ background: temp.soft, color: temp.color }}>
+              <span key={c} className="rounded-full px-3 py-1 text-base font-semibold" style={{ background: temp.soft, color: temp.color }}>
                 {c}
               </span>
             ))}
           </div>
         </Box>
         <Box icon={Heart} title="연애할 때">
-          <p className="text-sm leading-relaxed text-ink-2">{t.love}</p>
+          <p className="text-base leading-relaxed text-ink-2">{t.love}</p>
         </Box>
         <Box icon={Users} title="친구로서">
-          <p className="text-sm leading-relaxed text-ink-2">{t.friends}</p>
+          <p className="text-base leading-relaxed text-ink-2">{t.friends}</p>
         </Box>
         <Box icon={BatteryLow} title="스트레스를 받으면" className="lg:col-span-2">
           <div className="grid gap-2 sm:grid-cols-2">
             <div className="rounded-md border border-danger/25 bg-danger-soft/60 p-3">
-              <p className="mb-1 text-xs font-bold text-danger">이런 신호가 와요</p>
-              <p className="text-sm leading-relaxed text-ink-2">{t.stress.signs}</p>
+              <p className="mb-1 text-sm font-bold text-danger">이런 신호가 와요</p>
+              <p className="text-base leading-relaxed text-ink-2">{t.stress.signs}</p>
             </div>
             <div className="rounded-md border border-brand/25 bg-brand-soft/60 p-3">
-              <p className="mb-1 text-xs font-bold text-brand">이렇게 회복해요</p>
-              <p className="text-sm leading-relaxed text-ink-2">{t.stress.recover}</p>
+              <p className="mb-1 text-sm font-bold text-brand">이렇게 회복해요</p>
+              <p className="text-base leading-relaxed text-ink-2">{t.stress.recover}</p>
             </div>
           </div>
         </Box>
         <Box icon={Zap} title="성장 포인트">
           <ol className="flex flex-col gap-2">
             {t.growth.map((g, i) => (
-              <li key={g} className="flex gap-2 text-sm text-ink-2">
-                <span className="inline-flex size-5 shrink-0 items-center justify-center rounded-full text-2xs font-bold text-on-brand" style={{ background: temp.color }}>
+              <li key={g} className="flex gap-2 text-base text-ink-2">
+                <span className="inline-flex size-5 shrink-0 items-center justify-center rounded-full text-xs font-bold text-on-brand" style={{ background: temp.color }}>
                   {i + 1}
                 </span>
                 {g}
@@ -356,13 +356,13 @@ function ResultView({ result, share, onRetry, onPick, onBack }: { result: Result
           </ol>
         </Box>
         <Box icon={Heart} title="궁합" hint="흔히 말하는 궁합 · 재미로 보세요">
-          <p className="text-xs font-bold text-brand">잘 맞는 유형</p>
+          <p className="text-sm font-bold text-brand">잘 맞는 유형</p>
           <div className="flex flex-wrap gap-2">
             {t.best.map((x) => (
               <MiniType key={x} type={x} onClick={() => onPick(x)} />
             ))}
           </div>
-          <p className="text-xs font-bold text-accent">서로 노력이 필요한 유형</p>
+          <p className="text-sm font-bold text-accent">서로 노력이 필요한 유형</p>
           <div className="flex flex-wrap gap-2">
             {t.hard.map((x) => (
               <MiniType key={x} type={x} onClick={() => onPick(x)} />
@@ -399,8 +399,8 @@ function AxisBar({ axis, pct, color }: { axis: Axis; pct: number; color: string 
   const winLetter = leftWin ? info.left : info.right
   return (
     <div className="flex flex-col gap-1.5 rounded-md border border-line bg-paper p-3">
-      <p className="text-xs font-semibold text-muted">{info.title}</p>
-      <div className="flex items-center gap-2 text-sm">
+      <p className="text-sm font-semibold text-muted">{info.title}</p>
+      <div className="flex items-center gap-2 text-base">
         <span className={clsx('w-16 font-bold', leftWin ? 'text-ink' : 'text-faint')}>
           {info.left} {info.names[info.left].name}
         </span>
@@ -415,7 +415,7 @@ function AxisBar({ axis, pct, color }: { axis: Axis; pct: number; color: string 
           {info.names[info.right].name} {info.right}
         </span>
       </div>
-      <p className="text-xs text-ink-2">
+      <p className="text-sm text-ink-2">
         <b style={{ color }}>
           {info.names[winLetter].name} {winPct}%
         </b>{' '}
@@ -429,12 +429,12 @@ function AxisBar({ axis, pct, color }: { axis: Axis; pct: number; color: string 
 function Box({ icon: Icon, title, hint, tone, className, children }: { icon: LucideIcon; title: string; hint?: string; tone?: 'brand' | 'accent'; className?: string; children: ReactNode }) {
   return (
     <Panel className={clsx('flex flex-col gap-3 p-4 sm:p-5', className)}>
-      <h3 className="flex items-center gap-2 text-base font-bold text-ink">
+      <h3 className="flex items-center gap-2 text-lg font-bold text-ink">
         <span className={clsx('inline-flex size-8 items-center justify-center rounded-full', tone === 'accent' ? 'bg-accent-soft text-accent' : 'bg-brand-soft text-brand')}>
           <Icon className="size-4" aria-hidden />
         </span>
         {title}
-        {hint && <span className="text-xs font-normal text-muted">{hint}</span>}
+        {hint && <span className="text-sm font-normal text-muted">{hint}</span>}
       </h3>
       {children}
     </Panel>
@@ -446,14 +446,14 @@ function MiniType({ type, onClick }: { type: string; onClick: () => void }) {
   const temp = TEMPERAMENT[temperamentOf(type)]
   return (
     <button type="button" onClick={onClick} className="flex items-center gap-2 rounded-md border border-line bg-paper px-3 py-2 text-left transition-colors hover:border-line-strong">
-      <span className="text-2xl" aria-hidden>
+      <span className="text-3xl" aria-hidden>
         {t.emoji}
       </span>
       <span>
-        <span className="block text-sm font-extrabold" style={{ color: temp.color }}>
+        <span className="block text-base font-extrabold" style={{ color: temp.color }}>
           {type}
         </span>
-        <span className="block text-xs text-muted">{t.nick}</span>
+        <span className="block text-sm text-muted">{t.nick}</span>
       </span>
     </button>
   )
@@ -462,12 +462,12 @@ function MiniType({ type, onClick }: { type: string; onClick: () => void }) {
 function TypeGrid({ title, hint, current, onPick }: { title: string; hint: string; current?: string; onPick: (t: string) => void }) {
   return (
     <Panel className="flex flex-col gap-3 p-4 sm:p-5">
-      <h3 className="flex items-center gap-2 text-base font-bold text-ink">
+      <h3 className="flex items-center gap-2 text-lg font-bold text-ink">
         <Grid3x3 className="size-4 text-brand" aria-hidden />
         {title}
-        <span className="text-xs font-normal text-muted">{hint}</span>
+        <span className="text-sm font-normal text-muted">{hint}</span>
       </h3>
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-2xs text-muted">
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
         {Object.entries(TEMPERAMENT).map(([k, v]) => (
           <span key={k} className="inline-flex items-center gap-1">
             <span className="size-2.5 rounded-full" style={{ background: v.color }} />
@@ -488,13 +488,13 @@ function TypeGrid({ title, hint, current, onPick }: { title: string; hint: strin
               className={clsx('flex flex-col items-center gap-1 rounded-lg border-2 p-3 text-center transition-transform hover:-translate-y-0.5', current === type ? 'shadow-2' : 'border-transparent')}
               style={{ background: temp.soft, ...(current === type ? { borderColor: temp.color } : {}) }}
             >
-              <span className="text-3xl" aria-hidden>
+              <span className="text-4xl" aria-hidden>
                 {t.emoji}
               </span>
-              <span className="text-base font-black tracking-wide" style={{ color: temp.color }}>
+              <span className="text-lg font-black tracking-wide" style={{ color: temp.color }}>
                 {type}
               </span>
-              <span className="text-xs font-semibold text-ink-2">{t.nick}</span>
+              <span className="text-sm font-semibold text-ink-2">{t.nick}</span>
             </button>
           )
         })}

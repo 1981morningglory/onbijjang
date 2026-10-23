@@ -219,7 +219,3 @@
   .no-print { display: none !important; }
   html, body { background: #fff; }
 }
-
-/* 결과를 PDF 로 저장하는 동안: 접힌 글은 펼치고, 펼치기 단추는 숨긴다 */
-body[data-pdf] .pdf-show { display: block !important; }
-body[data-pdf] .pdf-hide { display: none !important; }

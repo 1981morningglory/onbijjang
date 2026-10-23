@@ -102,14 +102,7 @@ const GAP = 10
 /** 화면 덩어리들을 A4 PDF 로. container 안의 [data-pdf-block] 차례대로, [data-pdf-skip] 은 뺀다 */
 export async function exportPdf(container: HTMLElement, filename: string, title: string) {
   const [{ toCanvas, getFontEmbedCSS }, { PDFDocument, rgb }] = await Promise.all([import('html-to-image'), import('pdf-lib')])
-  // 접어 둔 글(자세히 읽기)도 PDF 에는 펼쳐서 담는다
-  document.body.dataset.pdf = '1'
-  try {
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
-    await buildPdf(container, filename, title, toCanvas, getFontEmbedCSS, PDFDocument, rgb)
-  } finally {
-    delete document.body.dataset.pdf
-  }
+  await buildPdf(container, filename, title, toCanvas, getFontEmbedCSS, PDFDocument, rgb)
 }
 
 async function buildPdf(
