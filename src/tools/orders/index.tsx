@@ -38,6 +38,7 @@ import { api, ApiError } from '@/lib/api'
 import { downloadBlob, makeZip } from '@/lib/files'
 import { Badge, Button, Callout, Dialog, Dropzone, EmptyState, Field, Panel, Segmented, Select, Spinner, Switch, Tabs, Textarea, TextInput, toast } from '@/ui'
 import { readAnyTable, readSabangnet, writeOutput, writeTable } from './excel'
+import { mallCode } from './mallCodes'
 import {
   batchStamp,
   centerOrder,
@@ -739,8 +740,8 @@ function OrdersList({ admin }: { admin: boolean }) {
   const dayExcel = async (date: string) => {
     setDayBusy(`x:${date}`)
     try {
-      const r = await api<{ batches: BatchFull[] }>(`/orders/days/${date}`)
-      await downloadDay(date, r.batches)
+      const r = await api<{ batches: BatchFull[]; carried?: Carried[] }>(`/orders/days/${date}`)
+      await downloadDay(date, r.batches, r.carried ?? [])
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '일마감 엑셀을 만들지 못했습니다.')
     } finally {
@@ -1126,6 +1127,18 @@ interface CsEntry {
   editedBy?: string
 }
 type BatchFull = Omit<BatchBrief, 'waybills'> & { cols: string[]; rows: OrderRow[]; waybills: Record<string, Waybill[]>; csLog: Record<string, CsEntry[]>; center?: CenterOrder | null }
+/** 지난 주문서의 줄인데 이날 늦게 출고된 것(일마감 엑셀에만 더한다) */
+interface Carried {
+  batchId: string
+  date: string
+  seq: number
+  line: number
+  no: number
+  row: OrderRow
+  /** manual: 담당자가 송장번호를 처음 넣거나 고친 날 · cj: CJ 송장 파일에 늦게 나온 날 */
+  how: 'manual' | 'cj'
+  waybills: Waybill[]
+}
 /** CS 수정 시각 '26.10.16 16:33'(한국 시각) */
 const csTime = (iso: string) => (iso ? dateTimeKst(iso).slice(2).replace(/-/g, '.') : '')
 const CS_BY = 'CS수정자'
@@ -1150,35 +1163,41 @@ function fullTable(batch: BatchFull) {
   return { cols, rows }
 }
 
-/** 일마감 엑셀리스트: 1차·2차·3차…를 차수 순서(차수 안에서는 센터주문서 NO 순서)로 이어 붙인 하루 전체. NO 는 하루 전체에서 1부터 */
-const DAY_COLS = ['NO.', '주문번호', '수취인명', '상품코드', '상품명', '옵션', '수량', '쇼핑몰', '물류처명', '취소내용', '비고(CS내용)', 'CS 수정자·시각']
-const DAY_WIDTHS = [6, 18, 11, 14, 40, 12, 6, 12, 18, 10, 30, 18]
-function dayTable(list: BatchFull[]) {
+/**
+ * 일마감 엑셀리스트: 1차·2차·3차…를 차수 순서(차수 안에서는 센터주문서 NO 순서)로 이어 붙인 하루 전체. NO 는 하루 전체에서 1부터.
+ * 그 뒤에 지난 주문서 중 이날 늦게 출고된 줄(송장번호를 이날 처음 넣거나 고친 주문)을 이어 붙인다 — 원래 주문서·화면 목록은 그대로.
+ */
+const DAY_COLS = ['NO.', '주문번호', '수취인명', '상품코드', '상품명', '옵션', '수량', '쇼핑몰', '쇼핑몰 코드', '물류처명', '취소내용', '비고(CS내용)', 'CS 수정자·시각', '이월 출고(원 주문일)']
+const DAY_WIDTHS = [6, 18, 11, 14, 40, 12, 6, 12, 11, 18, 10, 30, 18, 30]
+const shortDate = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`
+function dayRow(no: number, r: OrderRow, carriedNote: string | null): Array<string | number | null> {
+  const qty = r[COL.qty]
+  return [
+    no,
+    str(r[COL.orderNo]) || null,
+    str(r[COL.receiver]) || null,
+    str(r[COL.code]) || null,
+    str(r[COL.name]) || null,
+    str(r[COL.option]) || null,
+    qty == null || qty === '' ? null : Number.isFinite(Number(qty)) ? Number(qty) : qty,
+    str(r[COL.mall]) || null,
+    mallCode(str(r[COL.mall])) || null,
+    str(r[COL.warehouse]) || null,
+    str(r[CANCEL_COL]) || null,
+    str(r[CS_COL]) || null,
+    csWho(r),
+    carriedNote,
+  ]
+}
+function dayTable(list: BatchFull[], carried: Carried[] = []) {
   const rows: Array<Array<string | number | null>> = []
-  for (const b of [...list].sort((x, y) => x.seq - y.seq))
-    for (const n of resolveCenter(b.rows, b.center).order) {
-      const r = b.rows[n - 1]
-      const qty = r[COL.qty]
-      rows.push([
-        rows.length + 1,
-        str(r[COL.orderNo]) || null,
-        str(r[COL.receiver]) || null,
-        str(r[COL.code]) || null,
-        str(r[COL.name]) || null,
-        str(r[COL.option]) || null,
-        qty == null || qty === '' ? null : Number.isFinite(Number(qty)) ? Number(qty) : qty,
-        str(r[COL.mall]) || null,
-        str(r[COL.warehouse]) || null,
-        str(r[CANCEL_COL]) || null,
-        str(r[CS_COL]) || null,
-        csWho(r),
-      ])
-    }
+  for (const b of [...list].sort((x, y) => x.seq - y.seq)) for (const n of resolveCenter(b.rows, b.center).order) rows.push(dayRow(rows.length + 1, b.rows[n - 1], null))
+  for (const c of carried) rows.push(dayRow(rows.length + 1, c.row, `${shortDate(c.date)} ${c.seq}차 NO.${c.no} 주문 · ${c.how === 'manual' ? '송장번호 늦게 입력·수정' : 'CJ 송장 늦게 집화'}`))
   return { cols: DAY_COLS, rows }
 }
 const dayFileName = (date: string) => `${date.replace(/-/g, '')}_일마감.xlsx`
-async function downloadDay(date: string, list: BatchFull[]) {
-  const t = dayTable(list)
+async function downloadDay(date: string, list: BatchFull[], carried: Carried[] = []) {
+  const t = dayTable(list, carried)
   downloadBlob(await writeTable(`${date} 일마감`, t.cols, t.rows, DAY_WIDTHS), dayFileName(date))
 }
 const esc = (v: unknown) => str(v).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]!)
@@ -1199,13 +1218,20 @@ interface Item {
 /** 한 차수(id) 또는 일마감한 하루 전체(day)의 주문 */
 function BatchDetail({ id, day, lines, admin }: { id?: string; day?: string; lines?: Record<string, number[]>; admin: boolean }) {
   const [batches, setBatches] = useState<BatchFull[] | null>(null)
+  /** 일마감 엑셀에만 더할 늦게 출고된 지난 주문 줄 */
+  const [carried, setCarried] = useState<Carried[]>([])
   const [all, setAll] = useState(!lines)
   const [open, setOpen] = useState<string | null>(null)
   const [edit, setEdit] = useState<string | null>(null)
   const [editWaybill, setEditWaybill] = useState<string | null>(null)
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 } | null>(null)
   const load = useCallback(() => {
-    ;(day ? api<{ batches: BatchFull[] }>(`/orders/days/${day}`).then((r) => r.batches) : api<{ batch: BatchFull }>(`/orders/batches/${id}`).then((r) => [r.batch]))
+    ;(day
+      ? api<{ batches: BatchFull[]; carried?: Carried[] }>(`/orders/days/${day}`).then((r) => {
+          setCarried(r.carried ?? [])
+          return r.batches
+        })
+      : api<{ batch: BatchFull }>(`/orders/batches/${id}`).then((r) => [r.batch]))
       .then(setBatches)
       .catch((err) => toast.error(err instanceof Error ? err.message : '불러오지 못했습니다.'))
   }, [id, day])
@@ -1251,9 +1277,9 @@ function BatchDetail({ id, day, lines, admin }: { id?: string; day?: string; lin
 
   const first = batches[0]
   const title = day ? `${day} 일마감 주문내역` : first ? `${first.date} ${first.seq}차 주문내역` : '주문내역'
-  const table = () => (day ? dayTable(batches) : fullTable(first))
+  const table = () => (day ? dayTable(batches, carried) : fullTable(first))
   const exportExcel = async () => {
-    if (day) return downloadDay(day, batches)
+    if (day) return downloadDay(day, batches, carried)
     const t = table()
     downloadBlob(await writeTable(`${first.date} ${first.seq}차`, t.cols, t.rows), `${batchStamp(first.date, first.seq)}_주문내역.xlsx`)
   }
@@ -1292,6 +1318,11 @@ function BatchDetail({ id, day, lines, admin }: { id?: string; day?: string; lin
               </span>
             </>
           )
+        )}
+        {day && carried.length > 0 && (
+          <span className="font-semibold text-warn" title="지난 주문서의 주문인데 이날 송장번호를 처음 넣거나 고친 줄입니다. 원래 날짜 목록에 그대로 있고, 일마감 엑셀리스트에만 이어 붙습니다.">
+            + 늦게 출고된 지난 주문 {fmt(carried.length)}줄은 일마감 엑셀리스트 끝에 붙습니다
+          </span>
         )}
         <span className="inline-flex items-center gap-1.5">
           수량 합계 <b className="num text-ink-2">{fmt(totalQty)}</b>

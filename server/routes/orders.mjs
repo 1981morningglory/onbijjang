@@ -139,6 +139,44 @@ export default async function ordersRoutes(app, ctx) {
   // 담당자가 고친 송장번호(주문번호 → { invoices, by, at }) — CJ 파일보다 앞선다
   const EDITS = path.join(DIR, 'waybill-edits.json')
   let waybillEdits = await readJson(EDITS, {})
+  // 주문번호 → 담당자가 송장번호를 처음 넣거나 고친 시각(되돌려도 지우지 않는다 — ‘최초 1회’ 기준)
+  const FIRST = path.join(DIR, 'waybill-first.json')
+  let waybillFirst = await readJson(FIRST, null)
+  if (!waybillFirst) {
+    // 처음 한 번: 지금까지 고친 기록의 시각을 첫 입력으로 본다
+    waybillFirst = Object.fromEntries(Object.entries(waybillEdits).map(([k, v]) => [k, v.at]))
+    await writeJson(FIRST, waybillFirst)
+  }
+  const kstDate = (iso) => new Date(new Date(iso).getTime() + 9 * 3600_000).toISOString().slice(0, 10)
+  /** 주문번호가 CJ 송장 파일에 처음 나온 집화 날짜 */
+  const firstCj = (orderNo) => (waybillsByOrder.get(orderNo) ?? []).map((w) => w.date).filter(Boolean).sort()[0] ?? null
+  /**
+   * 늦게 출고된 주문의 출고일(일마감에 넣을 날). 제때 출고면 null.
+   * - 담당자가 송장번호를 처음 넣거나 고친 날(최초 1회)이 주문서 날짜보다 뒤
+   * - CJ 송장 파일에 처음 나온 집화 날짜가 그 차수의 평소 집화 날짜(그 차수 주문들이 가장 많이 나온 날, 없으면 주문서 날짜)보다 뒤
+   * 둘 다면 이른 날.
+   */
+  const lateShip = (r, batchDate, usualCj) => {
+    const orderNo = str(r['주문번호'])
+    if (!orderNo) return null
+    const cands = []
+    if (waybillFirst[orderNo]) {
+      const d = kstDate(waybillFirst[orderNo])
+      if (d > batchDate) cands.push({ date: d, how: 'manual' })
+    }
+    const cj = firstCj(orderNo)
+    if (cj && cj > batchDate && cj > (usualCj ?? batchDate)) cands.push({ date: cj, how: 'cj' })
+    return cands.sort((a, b) => a.date.localeCompare(b.date))[0] ?? null
+  }
+  /** 한 차수 주문들이 CJ 파일에 가장 많이 나온 집화 날짜(평소 출고일) */
+  const usualCjDate = (b) => {
+    const count = new Map()
+    for (const o of new Set(b.rows.map((r) => str(r['주문번호'])).filter(Boolean))) {
+      const d = firstCj(o)
+      if (d) count.set(d, (count.get(d) ?? 0) + 1)
+    }
+    return [...count].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))[0]?.[0] ?? null
+  }
   const waybillsOf = (r) => {
     const orderNo = str(r['주문번호'])
     const cj = waybillsByOrder.get(orderNo) ?? []
@@ -334,8 +372,27 @@ export default async function ordersRoutes(app, ctx) {
   app.get('/api/orders/days/:date', requireAllowed, (req, res) => {
     const date = req.params.date
     if (!DATE_RE.test(date)) return res.status(400).json({ error: '날짜를 확인해 주세요.' })
-    res.json({ date, closed: closedDays[date] ?? null, batches: dayBatches(date).map(full) })
+    res.json({ date, closed: closedDays[date] ?? null, batches: dayBatches(date).map(full), carried: carriedInto(date) })
   })
+  /**
+   * 이날 늦게 출고된 지난 주문 줄(일마감 엑셀에만 더한다 — 원래 주문서·화면 목록은 그대로).
+   * 원래 주문일·차수·센터주문서 NO 순서로.
+   */
+  function carriedInto(date) {
+    const out = []
+    const list = [...batches.values()].filter((b) => b.date < date).sort((a, b) => a.date.localeCompare(b.date) || a.seq - b.seq)
+    for (const b of list) {
+      const order = Array.isArray(b.center?.order) && b.center.order.length === b.rows.length ? b.center.order : b.rows.map((_, i) => i + 1)
+      const usual = usualCjDate(b)
+      order.forEach((n, i) => {
+        const r = b.rows[n - 1]
+        const late = r && lateShip(r, b.date, usual)
+        if (late?.date !== date) return
+        out.push({ batchId: b.id, date: b.date, seq: b.seq, line: n, no: i + 1, row: r, how: late.how, waybills: waybillsOf(r) })
+      })
+    }
+    return out
+  }
   app.post('/api/orders/days/:date/close', requireAllowed, async (req, res) => {
     const date = req.params.date
     if (!DATE_RE.test(date)) return res.status(400).json({ error: '날짜를 확인해 주세요.' })
@@ -501,6 +558,11 @@ export default async function ordersRoutes(app, ctx) {
       else {
         const invoices = [...new Set((Array.isArray(req.body?.invoices) ? req.body.invoices : []).map((v) => str(v).slice(0, 40)).filter(Boolean))].slice(0, 50)
         waybillEdits[orderNo] = { invoices, by: who(req), at: new Date().toISOString() }
+        // 처음 넣거나 고친 날만 기억(그 뒤에 또 고쳐도 일마감 날짜는 바뀌지 않는다)
+        if (invoices.length && !waybillFirst[orderNo]) {
+          waybillFirst[orderNo] = waybillEdits[orderNo].at
+          await writeJson(FIRST, waybillFirst)
+        }
       }
       await writeJson(EDITS, waybillEdits)
     })
