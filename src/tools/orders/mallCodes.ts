@@ -9,11 +9,11 @@ export const MALL_CODES: Record<string, string> = {
   'e-제너두': '023752',
   'i-Scream': '029852',
   YES24: '015005',
+  'SSG.COM': '020522',
   교보핫트랙스: '003331',
   롯데온: '022274',
   무신사: '014714',
   스마트스토어: '016275',
-  '신세계몰(신)': '020522',
   오너클랜: '019756',
   오늘의집: '020976',
   쿠팡: '019870',
@@ -30,7 +30,7 @@ const norm = (s: string) =>
     .replace(/\(.*?\)/g, '')
     .replace(/[\s\-_.]/g, '')
 /** 사방넷 쇼핑몰 이름이 조금 달라도 같은 곳으로 보는 이름 */
-const ALIASES: Record<string, string> = { g마켓: 'ESM지마켓', 지마켓: 'ESM지마켓', esmg마켓: 'ESM지마켓', 핫트랙스: '교보핫트랙스', 네이버스마트스토어: '스마트스토어', 알리익스프레스: 'AliExpress', 신세계몰: '신세계몰(신)', 현대이지웰: '현대이지웰(신)', 예스24: 'YES24', 아이스크림: 'i-Scream' }
+const ALIASES: Record<string, string> = { g마켓: 'ESM지마켓', 지마켓: 'ESM지마켓', esmg마켓: 'ESM지마켓', 핫트랙스: '교보핫트랙스', 네이버스마트스토어: '스마트스토어', 알리익스프레스: 'AliExpress', ssg: 'SSG.COM', 쓱닷컴: 'SSG.COM', 현대이지웰: '현대이지웰(신)', 예스24: 'YES24', 아이스크림: 'i-Scream' }
 const BY_NORM = new Map<string, string>([...Object.entries(MALL_CODES).map(([k, v]) => [norm(k), v] as const), ...Object.entries(ALIASES).map(([a, k]) => [norm(a), MALL_CODES[k]] as const)])
 
 /** 쇼핑몰 이름 → 코드(모르는 곳은 빈칸) */
