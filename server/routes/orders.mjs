@@ -139,34 +139,33 @@ export default async function ordersRoutes(app, ctx) {
   // 담당자가 고친 송장번호(주문번호 → { invoices, by, at }) — CJ 파일보다 앞선다
   const EDITS = path.join(DIR, 'waybill-edits.json')
   let waybillEdits = await readJson(EDITS, {})
-  // 주문번호 → 담당자가 송장번호를 처음 넣거나 고친 시각(되돌려도 지우지 않는다 — ‘최초 1회’ 기준)
-  const FIRST = path.join(DIR, 'waybill-first.json')
-  let waybillFirst = await readJson(FIRST, null)
-  if (!waybillFirst) {
-    // 처음 한 번: 지금까지 고친 기록의 시각을 첫 입력으로 본다
-    waybillFirst = Object.fromEntries(Object.entries(waybillEdits).map(([k, v]) => [k, v.at]))
-    await writeJson(FIRST, waybillFirst)
+  /**
+   * 주문번호 → 담당자가 송장번호를 넣거나 고치며 ‘금일 일마감 자료에 포함’을 고른 날들 [{ date, by, at }].
+   * 고를 때마다(횟수 제한 없이) 그날 일마감 엑셀에 들어간다.
+   */
+  const CLOSE_ADD = path.join(DIR, 'waybill-close.json')
+  let waybillClose = await readJson(CLOSE_ADD, null)
+  if (!waybillClose) {
+    // 처음 한 번: 바로 전 판(송장 첫 입력일을 자동으로 넣던 방식)의 기록을 옮긴다
+    const first = await readJson(path.join(DIR, 'waybill-first.json'), {})
+    waybillClose = Object.fromEntries(Object.entries(first).map(([k, at]) => [k, [{ date: new Date(new Date(at).getTime() + 9 * 3600_000).toISOString().slice(0, 10), by: '', at }]]))
+    await writeJson(CLOSE_ADD, waybillClose)
   }
   const kstDate = (iso) => new Date(new Date(iso).getTime() + 9 * 3600_000).toISOString().slice(0, 10)
   /** 주문번호가 CJ 송장 파일에 처음 나온 집화 날짜 */
   const firstCj = (orderNo) => (waybillsByOrder.get(orderNo) ?? []).map((w) => w.date).filter(Boolean).sort()[0] ?? null
   /**
-   * 늦게 출고된 주문의 출고일(일마감에 넣을 날). 제때 출고면 null.
-   * - 담당자가 송장번호를 처음 넣거나 고친 날(최초 1회)이 주문서 날짜보다 뒤
-   * - CJ 송장 파일에 처음 나온 집화 날짜가 그 차수의 평소 집화 날짜(그 차수 주문들이 가장 많이 나온 날, 없으면 주문서 날짜)보다 뒤
-   * 둘 다면 이른 날.
+   * 이 줄이 date 일마감에 이월로 들어가는지(주문서 날짜보다 뒤인 날만):
+   * - manual: 담당자가 송장번호를 넣거나 고치며 그날 ‘포함’을 고름
+   * - cj: CJ 송장 파일에 처음 나온 집화 날짜가 그날이고, 그 차수의 평소 집화 날짜(그 차수 주문이 가장 많이 나온 날)보다 뒤
    */
-  const lateShip = (r, batchDate, usualCj) => {
+  const carriedHow = (r, batchDate, usualCj, date) => {
     const orderNo = str(r['주문번호'])
-    if (!orderNo) return null
-    const cands = []
-    if (waybillFirst[orderNo]) {
-      const d = kstDate(waybillFirst[orderNo])
-      if (d > batchDate) cands.push({ date: d, how: 'manual' })
-    }
+    if (!orderNo || date <= batchDate) return null
+    if ((waybillClose[orderNo] ?? []).some((e) => e.date === date)) return 'manual'
     const cj = firstCj(orderNo)
-    if (cj && cj > batchDate && cj > (usualCj ?? batchDate)) cands.push({ date: cj, how: 'cj' })
-    return cands.sort((a, b) => a.date.localeCompare(b.date))[0] ?? null
+    if (cj === date && cj > (usualCj ?? batchDate)) return 'cj'
+    return null
   }
   /** 한 차수 주문들이 CJ 파일에 가장 많이 나온 집화 날짜(평소 출고일) */
   const usualCjDate = (b) => {
@@ -386,9 +385,9 @@ export default async function ordersRoutes(app, ctx) {
       const usual = usualCjDate(b)
       order.forEach((n, i) => {
         const r = b.rows[n - 1]
-        const late = r && lateShip(r, b.date, usual)
-        if (late?.date !== date) return
-        out.push({ batchId: b.id, date: b.date, seq: b.seq, line: n, no: i + 1, row: r, how: late.how, waybills: waybillsOf(r) })
+        const how = r && carriedHow(r, b.date, usual, date)
+        if (!how) return
+        out.push({ batchId: b.id, date: b.date, seq: b.seq, line: n, no: i + 1, row: r, how, waybills: waybillsOf(r) })
       })
     }
     return out
@@ -557,11 +556,16 @@ export default async function ordersRoutes(app, ctx) {
       if (req.body?.reset) delete waybillEdits[orderNo]
       else {
         const invoices = [...new Set((Array.isArray(req.body?.invoices) ? req.body.invoices : []).map((v) => str(v).slice(0, 40)).filter(Boolean))].slice(0, 50)
-        waybillEdits[orderNo] = { invoices, by: who(req), at: new Date().toISOString() }
-        // 처음 넣거나 고친 날만 기억(그 뒤에 또 고쳐도 일마감 날짜는 바뀌지 않는다)
-        if (invoices.length && !waybillFirst[orderNo]) {
-          waybillFirst[orderNo] = waybillEdits[orderNo].at
-          await writeJson(FIRST, waybillFirst)
+        const at = new Date().toISOString()
+        waybillEdits[orderNo] = { invoices, by: who(req), at }
+        // ‘금일 일마감 자료에 포함시킬까요?’ — 예: 오늘 일마감에 넣는다 / 아니오: 오늘 것만 뺀다(다른 날 넣은 것은 그대로)
+        if (typeof req.body?.includeToday === 'boolean') {
+          const today = kstDate(at)
+          const rest = (waybillClose[orderNo] ?? []).filter((e) => e.date !== today)
+          const next = req.body.includeToday && invoices.length ? [...rest, { date: today, by: who(req), at }] : rest
+          if (next.length) waybillClose[orderNo] = next
+          else delete waybillClose[orderNo]
+          await writeJson(CLOSE_ADD, waybillClose)
         }
       }
       await writeJson(EDITS, waybillEdits)
