@@ -1135,7 +1135,7 @@ interface Carried {
   line: number
   no: number
   row: OrderRow
-  /** manual: 담당자가 송장번호를 처음 넣거나 고친 날 · cj: CJ 송장 파일에 늦게 나온 날 */
+  /** manual: 담당자가 송장번호를 넣거나 고치며 그날 ‘일마감 포함’을 고름 · cj: CJ 송장 파일에 늦게 나온 날 */
   how: 'manual' | 'cj'
   waybills: Waybill[]
 }
@@ -1192,7 +1192,7 @@ function dayRow(no: number, r: OrderRow, carriedNote: string | null): Array<stri
 function dayTable(list: BatchFull[], carried: Carried[] = []) {
   const rows: Array<Array<string | number | null>> = []
   for (const b of [...list].sort((x, y) => x.seq - y.seq)) for (const n of resolveCenter(b.rows, b.center).order) rows.push(dayRow(rows.length + 1, b.rows[n - 1], null))
-  for (const c of carried) rows.push(dayRow(rows.length + 1, c.row, `${shortDate(c.date)} ${c.seq}차 NO.${c.no} 주문 · ${c.how === 'manual' ? '송장번호 늦게 입력·수정' : 'CJ 송장 늦게 집화'}`))
+  for (const c of carried) rows.push(dayRow(rows.length + 1, c.row, `${shortDate(c.date)} ${c.seq}차 NO.${c.no} 주문 · ${c.how === 'manual' ? '송장번호 입력·수정 때 일마감 포함 선택' : 'CJ 송장 늦게 집화'}`))
   return { cols: DAY_COLS, rows }
 }
 const dayFileName = (date: string) => `${date.replace(/-/g, '')}_일마감.xlsx`
@@ -1320,7 +1320,7 @@ function BatchDetail({ id, day, lines, admin }: { id?: string; day?: string; lin
           )
         )}
         {day && carried.length > 0 && (
-          <span className="font-semibold text-warn" title="지난 주문서의 주문인데 이날 송장번호를 처음 넣거나 고친 줄입니다. 원래 날짜 목록에 그대로 있고, 일마감 엑셀리스트에만 이어 붙습니다.">
+          <span className="font-semibold text-warn" title="지난 주문서의 주문인데 이날 송장번호를 넣거나 고치며 ‘일마감 포함’을 고른 줄(또는 CJ 송장이 늦게 나온 줄)입니다. 원래 날짜 목록에 그대로 있고, 일마감 엑셀리스트에만 이어 붙습니다.">
             + 늦게 출고된 지난 주문 {fmt(carried.length)}줄은 일마감 엑셀리스트 끝에 붙습니다
           </span>
         )}
@@ -1485,6 +1485,7 @@ function BatchDetail({ id, day, lines, admin }: { id?: string; day?: string; lin
         <EditWaybills
           orderNo={editWaybill}
           current={batches.find((b) => b.waybills[editWaybill])?.waybills[editWaybill] ?? []}
+          orderDate={batches.find((b) => b.rows.some((r) => str(r[COL.orderNo]) === editWaybill))?.date ?? null}
           onClose={() => setEditWaybill(null)}
           onDone={(list) => {
             const k = editWaybill
@@ -1584,15 +1585,27 @@ function CancelButton({ batchId, line, no, value, onSaved }: { batchId: string; 
 }
 
 /** 송장번호 고치기: 한 줄에 하나씩. 저장하면 이 주문번호의 송장은 이 목록이 된다 */
-function EditWaybills({ orderNo, current, onClose, onDone }: { orderNo: string; current: Waybill[]; onClose: () => void; onDone: (list: Waybill[]) => void }) {
+function EditWaybills({ orderNo, current, orderDate, onClose, onDone }: { orderNo: string; current: Waybill[]; orderDate: string | null; onClose: () => void; onDone: (list: Waybill[]) => void }) {
   const [text, setText] = useState(current.map((w) => w.invoice).join('\n'))
   const [busy, setBusy] = useState(false)
+  /** ‘금일 일마감 자료에 포함시킬까요?’ 묻는 중 */
+  const [ask, setAsk] = useState(false)
   const manual = current.some((w) => w.manual)
-  const send = async (body: { orderNo: string; invoices?: string[]; reset?: boolean }) => {
+  const today = todayKst()
+  const send = async (body: { orderNo: string; invoices?: string[]; reset?: boolean; includeToday?: boolean }) => {
+    setAsk(false)
     setBusy(true)
     try {
       const r = await api<{ waybills: Waybill[] }>('/orders/waybills', { method: 'PUT', body })
-      toast.success(body.reset ? 'CJ 파일 값으로 되돌렸습니다.' : '송장번호를 고쳤습니다.')
+      toast.success(
+        body.reset
+          ? 'CJ 파일 값으로 되돌렸습니다.'
+          : body.includeToday
+            ? `송장번호를 저장하고 오늘(${today}) 일마감 자료에 넣었습니다.`
+            : body.includeToday === false
+              ? '송장번호만 저장했습니다(일마감 자료에는 넣지 않음).'
+              : '송장번호를 고쳤습니다.',
+      )
       onDone(r.waybills)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '송장번호를 고치지 못했습니다.')
@@ -1605,6 +1618,7 @@ function EditWaybills({ orderNo, current, onClose, onDone }: { orderNo: string; 
     .map((v) => v.trim())
     .filter(Boolean)
   return (
+    <>
     <Dialog
       open
       onClose={onClose}
@@ -1618,7 +1632,15 @@ function EditWaybills({ orderNo, current, onClose, onDone }: { orderNo: string; 
             </Button>
           )}
           <Button onClick={onClose}>닫기</Button>
-          <Button variant="primary" loading={busy} onClick={() => void send({ orderNo, invoices })}>
+          <Button
+            variant="primary"
+            loading={busy}
+            onClick={() => {
+              // 지난 날 주문에 송장을 넣거나 고치면 오늘 일마감에 넣을지 묻는다(오늘 주문은 이미 오늘 일마감에 있다)
+              if (invoices.length && orderDate && orderDate < today) setAsk(true)
+              else void send({ orderNo, invoices })
+            }}
+          >
             저장
           </Button>
         </>
@@ -1631,6 +1653,30 @@ function EditWaybills({ orderNo, current, onClose, onDone }: { orderNo: string; 
         <p className="text-xs text-muted">송장 {invoices.length}개로 저장됩니다.{manual && ' 지금 값은 담당자가 고친 것입니다.'}</p>
       </div>
     </Dialog>
+    <Dialog
+      open={ask}
+      onClose={() => setAsk(false)}
+      size="sm"
+      title="일마감 자료"
+      footer={
+        <>
+          <Button onClick={() => void send({ orderNo, invoices, includeToday: false })}>아니오</Button>
+          <Button variant="primary" onClick={() => void send({ orderNo, invoices, includeToday: true })}>
+            예
+          </Button>
+        </>
+      }
+    >
+      {/* 표 칸(줄바꿈 안 함) 안에서 열려도 글이 줄바꿈되게 */}
+      <div className="flex flex-col gap-2 text-sm whitespace-normal">
+        <p className="text-base font-bold text-ink">금일 일마감 자료에 포함시킬까요?</p>
+        <p className="text-ink-2">
+          {orderDate} 주문(주문번호 {orderNo})입니다. <b>예</b>를 누르면 송장번호를 저장하고 오늘({today}) 일마감 엑셀리스트 끝에 넣습니다. <b>아니오</b>를 누르면 송장번호만 저장하고 일마감 자료에는 넣지 않습니다.
+        </p>
+        <p className="text-xs text-muted">원래 주문서({orderDate}) 목록에는 어느 쪽이든 그대로 남습니다.</p>
+      </div>
+    </Dialog>
+    </>
   )
 }
 
