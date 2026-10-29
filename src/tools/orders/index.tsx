@@ -195,7 +195,8 @@ export default function OrdersTool() {
   useEffect(() => {
     void load()
   }, [load])
-  const [tab, setTab] = useState<Tab>('make')
+  // 들어오면 주문 조회부터(주문서 만들기는 두 번째 탭)
+  const [tab, setTab] = useState<Tab>('search')
 
   if (offline)
     return (
@@ -222,8 +223,8 @@ export default function OrdersTool() {
         value={tab}
         onValue={setTab}
         tabs={[
-          { value: 'make', label: '주문서 만들기', icon: FileSpreadsheet },
           { value: 'search', label: '주문 조회', icon: History },
+          { value: 'make', label: '주문서 만들기', icon: FileSpreadsheet },
         ]}
       />
       <MeContext.Provider value={me.me ?? { id: null, name: null, master: false }}>{tab === 'make' ? <Make onGoList={() => setTab('search')} /> : <OrdersList admin={me.admin} />}</MeContext.Provider>
