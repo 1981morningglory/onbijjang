@@ -771,6 +771,26 @@ function OrdersList({ admin }: { admin: boolean }) {
   const showAmount = Boolean(data?.hasAmount)
   const colCount = 8 + (showAmount ? 1 : 0) + (admin ? 1 : 0)
   const searching = Boolean(applied.q.trim()) || Boolean(mall)
+  // ── 연도·월 보기: 들어오면 이번 달. 지난 달은 연도·월 버튼으로 펼쳐 본다(검색·기간을 넣으면 모든 달에서) ──
+  const thisMonth = todayKst().slice(0, 7)
+  const [month, setMonth] = useState(thisMonth)
+  const allMonths = Boolean(from || to || searching)
+  const monthCounts = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const b of data?.batches ?? []) m.set(b.date.slice(0, 7), (m.get(b.date.slice(0, 7)) ?? 0) + 1)
+    return m
+  }, [data])
+  const years = [...new Set([thisMonth.slice(0, 4), month.slice(0, 4), ...[...monthCounts.keys()].map((k) => k.slice(0, 4))])].sort().reverse()
+  const year = month.slice(0, 4)
+  /** 그 해에 보일 달: 주문서가 있는 달 + 이번 달 + 지금 고른 달 */
+  const monthsOfYear = [...new Set([...monthCounts.keys(), thisMonth, month])].filter((k) => k.startsWith(year)).sort()
+  const shownGroups = allMonths ? groups : groups.filter(([d]) => d.startsWith(month))
+  const shownBatches = shownGroups.reduce((n, [, l]) => n + l.length, 0)
+  const monthLabel = `${Number(year)}년 ${Number(month.slice(5, 7))}월`
+  const monthEnd = (ym: string) => {
+    const [y, mo] = ym.split('-').map(Number)
+    return `${ym}-${String(new Date(y, mo, 0).getDate()).padStart(2, '0')}`
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -827,13 +847,52 @@ function OrdersList({ admin }: { admin: boolean }) {
               { value: 'cj', label: 'CJ 송장' },
             ]}
           />
+          {allMonths ? (
+            <span className="rounded-full bg-sunken px-2.5 py-1 text-xs font-semibold text-muted" title="검색어·쇼핑몰·기간을 넣으면 모든 달에서 찾습니다">
+              모든 달
+            </span>
+          ) : (
+            <div className="flex flex-wrap items-center gap-1" role="group" aria-label="연도·월">
+              <Select
+                aria-label="연도"
+                value={year}
+                onValue={(y) => setMonth(y === thisMonth.slice(0, 4) ? thisMonth : ([...monthCounts.keys()].filter((k) => k.startsWith(y)).sort().at(-1) ?? `${y}-12`))}
+                options={years.map((y) => ({ value: y, label: `${y}년` }))}
+                className="h-8! w-[7.5rem]! text-sm"
+              />
+              {monthsOfYear.map((k) => {
+                const n = monthCounts.get(k) ?? 0
+                const sel = k === month
+                return (
+                  <button
+                    key={k}
+                    type="button"
+                    aria-pressed={sel}
+                    onClick={() => {
+                      setMonth(k)
+                      setOpen(null)
+                    }}
+                    title={`${Number(k.slice(5, 7))}월 주문서 ${n}개 차수`}
+                    className={clsx(
+                      'inline-flex h-8 items-center gap-1 rounded-md border px-2.5 text-sm font-semibold transition-colors duration-150',
+                      sel ? 'border-brand bg-brand text-on-brand' : 'border-line-strong bg-surface text-ink-2 hover:bg-panel',
+                    )}
+                  >
+                    {Number(k.slice(5, 7))}월
+                    {k === thisMonth && <span className={clsx('text-2xs', sel ? 'text-on-brand/80' : 'text-brand')}>이번 달</span>}
+                    {n > 0 && <span className={clsx('num text-2xs', sel ? 'text-on-brand/80' : 'text-muted')}>{n}</span>}
+                  </button>
+                )
+              })}
+            </div>
+          )}
           {view === 'orders' ? (
             <>
-              <h3 className="text-sm font-bold text-ink">{searching ? `‘${applied.q || mall}’ 주문이 있는 주문서` : '날짜·차수별 주문서'}</h3>
-              {data && <span className="text-xs text-muted">{fmt(data.batches.length)}개 차수</span>}
+              <h3 className="text-sm font-bold text-ink">{searching ? `‘${applied.q || mall}’ 주문이 있는 주문서` : allMonths ? '날짜·차수별 주문서' : `${monthLabel} 날짜·차수별 주문서`}</h3>
+              {data && <span className="text-xs text-muted">{fmt(shownBatches)}개 차수</span>}
             </>
           ) : (
-            <h3 className="text-sm font-bold text-ink">집화 날짜별 CJ 송장</h3>
+            <h3 className="text-sm font-bold text-ink">{allMonths ? '' : `${monthLabel} `}집화 날짜별 CJ 송장</h3>
           )}
           <Button size="sm" variant="secondary" icon={Truck} className="ml-auto" onClick={() => invoiceRef.current?.click()}>
             CJ 송장 파일 올리기
@@ -851,14 +910,18 @@ function OrdersList({ admin }: { admin: boolean }) {
           />
         </div>
         {view === 'cj' ? (
-          <CjList admin={admin} from={from} to={to} tick={cjTick} />
+          <CjList admin={admin} from={allMonths ? from : `${month}-01`} to={allMonths ? to : monthEnd(month)} tick={cjTick} />
         ) : !data ? (
           <div className="flex items-center gap-2 py-10 text-muted">
             <Spinner /> 불러오는 중
           </div>
-        ) : data.batches.length === 0 ? (
-          <EmptyState icon={ClipboardList} title={searching ? '찾은 주문이 없습니다' : '저장된 주문서가 없습니다'}>
-            {searching ? '검색어나 기간을 바꿔 보세요.' : '‘주문서 만들기’에서 사방넷 파일을 올리면 날짜·차수별로 쌓입니다.'}
+        ) : shownGroups.length === 0 ? (
+          <EmptyState icon={ClipboardList} title={searching ? '찾은 주문이 없습니다' : allMonths ? '저장된 주문서가 없습니다' : `${monthLabel} 주문서가 아직 없습니다`}>
+            {searching
+              ? '검색어나 기간을 바꿔 보세요.'
+              : allMonths
+                ? '‘주문서 만들기’에서 사방넷 파일을 올리면 날짜·차수별로 쌓입니다.'
+                : '‘주문서 만들기’에서 사방넷 파일을 올리면 이 달 목록에 날짜별로 쌓입니다. 지난 달은 위의 연도·월 버튼으로 볼 수 있습니다.'}
           </EmptyState>
         ) : (
           <div className="overflow-x-auto rounded-lg border border-line">
@@ -877,7 +940,7 @@ function OrdersList({ admin }: { admin: boolean }) {
                 </tr>
               </thead>
               <tbody>
-                {groups.map(([date, list]) => {
+                {shownGroups.map(([date, list]) => {
                   const done = closed[date]
                   const dayKey = `day:${date}`
                   const sum = (f: (b: BatchBrief) => number) => list.reduce((s, b) => s + f(b), 0)
