@@ -48,6 +48,16 @@ export function parseOld(payload) {
   return d ? [d] : []
 }
 
+/** 받기 실패 이유를 화면에 보일 한국어로 */
+export function koreanError(err) {
+  const m = String(err?.message ?? err ?? '')
+  if (/abort/i.test(m)) return '동행복권 응답이 15초 넘게 없었습니다'
+  if (/fetch failed|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|certificate/i.test(m)) return '서버가 동행복권에 연결하지 못했습니다(네트워크 차단 또는 점검)'
+  const http = /HTTP (\d+)/.exec(m)
+  if (http) return `동행복권이 요청을 거절했습니다(HTTP ${http[1]})`
+  return m.slice(0, 200)
+}
+
 export default async function lottoRoutes(app, ctx) {
   const { requireStaff, DATA_DIR } = ctx
   const FILE = path.join(DATA_DIR, 'lotto', 'draws.json')
@@ -130,7 +140,7 @@ export default async function lottoRoutes(app, ctx) {
             fails = 0
           } else {
             fails++
-            meta.lastError = String(r.reason?.message ?? r.reason).slice(0, 200)
+            meta.lastError = koreanError(r.reason)
           }
         }
         if (++n % 15 === 0) await save()

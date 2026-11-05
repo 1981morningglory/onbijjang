@@ -6,3 +6,4 @@ export function parseNew(payload: unknown): D[]
 export function parseOld(payload: unknown): D[]
 declare const lottoRoutes: (app: unknown, ctx: unknown) => Promise<void>
 export default lottoRoutes
+export function koreanError(err: unknown): string
