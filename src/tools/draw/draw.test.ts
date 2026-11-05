@@ -140,6 +140,17 @@ describe('로또', () => {
     for (let n = 1; n <= 45; n++) expect(a.filter((p) => p.numbers.includes(n)).length).toBeLessThanOrEqual(2)
     expect(recommend(draws, { seed: 42, samples: 6000 }).map((p) => p.numbers)).toEqual(a.map((p) => p.numbers))
   })
+  it('사람마다 다른 추천(spread): 접속자 번호가 다르면 대체로 다른 조합, 같은 사람은 같은 조합', async () => {
+    const { weekSeed } = await import('./lotto')
+    const sets = new Set<string>()
+    for (let v = 1; v <= 8; v++) sets.add(recommend(draws, { seed: weekSeed(1200, v), samples: 4000, mode: 'spread' }).map((p) => p.numbers.join(',')).join('|'))
+    expect(sets.size).toBeGreaterThanOrEqual(7)
+    const a = recommend(draws, { seed: weekSeed(1200, 3), samples: 4000, mode: 'spread' })
+    const b = recommend(draws, { seed: weekSeed(1200, 3), samples: 4000, mode: 'spread' })
+    expect(a.map((p) => p.numbers)).toEqual(b.map((p) => p.numbers))
+    expect(a).toHaveLength(5)
+    for (let n = 1; n <= 45; n++) expect(a.filter((p) => p.numbers.includes(n)).length).toBeLessThanOrEqual(2)
+  })
   it('인기 꼴 벌점', () => {
     expect(popularity([1, 5, 12, 18, 25, 31]).reasons).toContain('모두 31 이하(생일 번호)')
     expect(popularity([5, 10, 15, 20, 25, 30]).reasons).toContain('일정한 간격(등차)')
