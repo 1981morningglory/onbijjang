@@ -1,10 +1,5 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react'
-import {
-  Barcode, Blend, Calculator, Camera, ClipboardList, Clapperboard, ClipboardCheck, Crop, Download, Eraser, FileText, Files, Film, Gavel,
-  Grid3x3, Image as ImageIcon, Images, LayoutTemplate, MonitorPlay, NotebookPen, Package, PenLine, QrCode, Sparkles,
-  ReceiptText, Rocket, Scale, Scissors, ShoppingBag, ShoppingCart, Signature, Store, Tags, FilePenLine, Megaphone, Trophy,
-  type LucideIcon,
-} from 'lucide-react'
+import { Barcode, Blend, Calculator, Camera, Clapperboard, ClipboardCheck, ClipboardList, Crop, Download, Eraser, FilePenLine, FileText, Files, Film, Gavel, Gift, Grid3x3, Image as ImageIcon, Images, LayoutTemplate, Megaphone, MonitorPlay, NotebookPen, Package, PenLine, QrCode, ReceiptText, Rocket, Scale, Scissors, ShoppingBag, ShoppingCart, Signature, Sparkles, Store, Tags, Trophy, type LucideIcon } from 'lucide-react'
 
 export type GroupId = 'image' | 'video' | 'doc' | 'fees' | 'sns' | 'life'
 
@@ -268,6 +263,13 @@ export const TOOLS: ToolDef[] = [
     keywords: ['사주', '사주풀이', '사주팔자', '팔자', '만세력', '운세', '명리', '대운', '세운', '오행', '십신', '궁합', '토정비결', '신년운세', '생년월일', 'MBTI', '엠비티아이', '성격유형', '성격검사', '성향', '16유형'],
     icon: Sparkles, art: 'saju', local: false, wide: true,
     component: lazy(() => import('@/tools/saju')),
+  },
+  {
+    id: 'draw', group: 'life', title: '추첨 시스템',
+    summary: '명단(붙여 넣기·엑셀) 무작위 추첨과 핸드폰번호 중복 제외, 사다리·룰렛·주사위 순위, 이번 주 로또 AI 추천·당첨번호 분석',
+    keywords: ['추첨', '경품', '이벤트', '당첨자', '랜덤', '무작위', '뽑기', '사다리', '사다리타기', '룰렛', '돌림판', '주사위', '순위', '로또', '로또번호', '번호추천', '당첨번호', '복권'],
+    icon: Gift, art: 'draw', local: false, wide: true,
+    component: lazy(() => import('@/tools/draw')),
   },
 ]
 
