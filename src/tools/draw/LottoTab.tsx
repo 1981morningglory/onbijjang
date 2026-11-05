@@ -600,7 +600,7 @@ function DrawList({ draws }: { draws: Draw[] }) {
     const n = Number(t)
     return all.filter((d) => String(d.round).includes(t) || (Number.isInteger(n) && (d.numbers.includes(n) || d.bonus === n)) || d.date.includes(t))
   }, [draws, q])
-  const SRC: Record<string, string> = { auto: '동행복권 자동', excel: '엑셀', manual: '직접 입력' }
+  const SRC: Record<string, string> = { seed: '기본 자료(동행복권 엑셀)', auto: '동행복권 자동', excel: '엑셀', manual: '직접 입력' }
   return (
     <details className="rounded-md border border-line bg-paper px-3 py-2">
       <summary className="cursor-pointer text-sm font-semibold text-ink-2">

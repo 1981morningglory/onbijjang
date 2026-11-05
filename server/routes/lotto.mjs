@@ -31,7 +31,9 @@ export function cleanDraw(d) {
   const numbers = (Array.isArray(d?.numbers) ? d.numbers : []).map(Number).sort((a, b) => a - b)
   const bonus = Number(d?.bonus)
   const ok = Number.isInteger(round) && round > 0 && numbers.length === 6 && new Set([...numbers, bonus]).size === 7 && [...numbers, bonus].every((n) => Number.isInteger(n) && n >= 1 && n <= 45)
-  return ok ? { round, date: ymd(d.date), numbers, bonus } : null
+  // 추첨일이 없으면(동행복권 엑셀에는 없음) 회차로 계산한다: 1회 2002-12-07부터 매주 토요일
+  const date = ymd(d.date) || new Date(Date.UTC(2002, 11, 7) + (round - 1) * 7 * 86400e3).toISOString().slice(0, 10)
+  return ok ? { round, date, numbers, bonus } : null
 }
 /** 새 주소 응답(data.list[]) → 회차들 */
 export function parseNew(payload) {
@@ -69,11 +71,30 @@ export default async function lottoRoutes(app, ctx) {
     for (const d of saved.draws ?? []) {
       const c = cleanDraw(d)
       // src: auto(동행복권 자동) · excel(엑셀) · manual(건별 입력), at: 넣은 시각
-      if (c) draws.set(c.round, { ...c, src: ['auto', 'excel', 'manual'].includes(d.src) ? d.src : 'auto', at: typeof d.at === 'string' ? d.at : null })
+      if (c) draws.set(c.round, { ...c, src: ['auto', 'excel', 'manual', 'seed'].includes(d.src) ? d.src : 'auto', at: typeof d.at === 'string' ? d.at : null })
     }
     meta = { ...meta, ...(saved.meta ?? {}) }
   } catch {
     // 아직 없다
+  }
+  // 기본 자료(동행복권 회차별 당첨번호 엑셀, lotto-seed.json): 비어 있는 회차만 채운다(엑셀·직접 입력한 값은 그대로)
+  try {
+    const seed = JSON.parse(await fsp.readFile(new URL('./lotto-seed.json', import.meta.url), 'utf8'))
+    let added = 0
+    for (const [round, date, ...nums] of seed.rows ?? []) {
+      if (draws.has(round)) continue
+      const c = cleanDraw({ round, date, numbers: nums.slice(0, 6), bonus: nums[6] })
+      if (c) {
+        draws.set(c.round, { ...c, src: 'seed', at: null })
+        added++
+      }
+    }
+    if (added) {
+      meta.updatedAt = new Date().toISOString()
+      console.log(`[온비짱] 로또 기본 자료 ${added}개 회차를 채웠습니다`)
+    }
+  } catch {
+    // 기본 자료 파일이 없으면 넘어간다
   }
   const save = async () => {
     await fsp.mkdir(path.dirname(FILE), { recursive: true })

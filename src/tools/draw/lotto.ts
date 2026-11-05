@@ -13,8 +13,8 @@ export interface Draw {
   date: string
   numbers: number[]
   bonus: number
-  /** 어디서 왔나: auto(동행복권 자동) · excel(엑셀) · manual(건별 입력) */
-  src?: 'auto' | 'excel' | 'manual'
+  /** 어디서 왔나: seed(기본 자료) · auto(동행복권 자동) · excel(엑셀) · manual(건별 입력) */
+  src?: 'seed' | 'auto' | 'excel' | 'manual'
   /** 넣은 시각 */
   at?: string | null
 }

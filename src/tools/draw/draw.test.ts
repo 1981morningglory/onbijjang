@@ -215,3 +215,20 @@ describe('로또 자료 엑셀 읽기', () => {
     expect(rangesText([1196, 1197, 1198, 1200, 1202, 1203])).toBe('1196~1198, 1200, 1202~1203')
   })
 })
+
+describe('로또 기본 자료(동행복권 엑셀)', () => {
+  it('1회부터 빠짐없이, 번호는 1~45 서로 다른 7개, 추첨일은 회차와 맞음', async () => {
+    const fs = await import('node:fs')
+    const seed = JSON.parse(fs.readFileSync(new URL('../../../server/routes/lotto-seed.json', import.meta.url), 'utf8')) as { rows: Array<[number, string, ...number[]]> }
+    const { roundDate } = await import('./lotto')
+    expect(seed.rows.length).toBeGreaterThanOrEqual(1248)
+    seed.rows.forEach(([round, date, ...nums], i) => {
+      expect(round).toBe(i + 1)
+      expect(date).toBe(roundDate(round))
+      expect(nums).toHaveLength(7)
+      expect(new Set(nums).size).toBe(7)
+      for (const n of nums) expect(n >= 1 && n <= 45).toBe(true)
+    })
+    expect(seed.rows[0]).toEqual([1, '2002-12-07', 10, 23, 29, 33, 37, 40, 16])
+  })
+})
