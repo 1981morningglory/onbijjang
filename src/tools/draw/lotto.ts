@@ -13,6 +13,18 @@ export interface Draw {
   date: string
   numbers: number[]
   bonus: number
+  /** 어디서 왔나: auto(동행복권 자동) · excel(엑셀) · manual(건별 입력) */
+  src?: 'auto' | 'excel' | 'manual'
+  /** 넣은 시각 */
+  at?: string | null
+}
+
+/** 회차의 추첨일(토요일, 1회 2002-12-07부터 매주) */
+export const roundDate = (round: number) => new Date(Date.UTC(2002, 11, 7) + (round - 1) * 7 * 86400e3).toISOString().slice(0, 10)
+
+/** 자료 점검: 추첨일이 회차와 맞지 않는 줄(엑셀에서 회차가 밀려 들어간 경우를 잡는다) */
+export function dateMismatches(draws: Draw[]): Draw[] {
+  return draws.filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d.date) && Math.abs(new Date(d.date).getTime() - new Date(roundDate(d.round)).getTime()) > 3 * 86400e3)
 }
 
 export const NUMS = Array.from({ length: 45 }, (_, i) => i + 1)
@@ -259,7 +271,7 @@ export interface Pick {
  * 3) 모양이 흔할수록·인기 꼴이 아닐수록 점수가 높다
  * 4) 서로 3개 이상 겹치지 않고 한 번호는 두 게임까지만 들어가게 점수 순으로 고른다
  */
-export function recommend(draws: Draw[], opts: { games?: number; seed?: number; samples?: number } = {}): Pick[] {
+export function recommend(draws: Draw[], opts: { games?: number; seed?: number; samples?: number; mode?: 'top' | 'spread' } = {}): Pick[] {
   const games = opts.games ?? 5
   const rnd = seeded(opts.seed ?? 1)
   const sorted = [...draws].sort((a, b) => a.round - b.round)
@@ -315,20 +327,49 @@ export function recommend(draws: Draw[], opts: { games?: number; seed?: number; 
   const out: Pick[] = []
   // 다섯 게임이 고르게 퍼지도록: 서로 3개 이상 겹치지 않고, 한 번호는 두 게임까지만
   const used = new Map<number, number>()
-  for (const c of ranked) {
-    const okOverlap = out.every((o) => o.numbers.filter((n) => c.numbers.includes(n)).length <= 2)
-    const okSpread = c.numbers.every((n) => (used.get(n) ?? 0) < 2)
-    if (okOverlap && okSpread) {
-      out.push(c)
-      for (const n of c.numbers) used.set(n, (used.get(n) ?? 0) + 1)
+  const fits = (c: Pick) => out.every((o) => o.numbers.filter((n) => c.numbers.includes(n)).length <= 2) && c.numbers.every((n) => (used.get(n) ?? 0) < 2)
+  const take = (c: Pick) => {
+    out.push(c)
+    for (const n of c.numbers) used.set(n, (used.get(n) ?? 0) + 1)
+  }
+  if (opts.mode === 'spread') {
+    // 사람마다 다른 추천: 점수 위쪽 25%(최소 300개) 안에서 점수에 비례한 확률로 뽑는다
+    const pool = ranked.slice(0, Math.max(300, Math.floor(ranked.length * 0.25)))
+    const top = pool[0]?.score ?? 0
+    let left = pool.map((c) => ({ c, w: Math.exp((c.score - top) / 2) }))
+    while (out.length < games && left.length) {
+      left = left.filter((x) => fits(x.c))
+      const total = left.reduce((sum, x) => sum + x.w, 0)
+      if (!total) break
+      let r = rnd() * total
+      const hit = left.find((x) => (r -= x.w) <= 0) ?? left[left.length - 1]
+      take(hit.c)
+      left = left.filter((x) => x !== hit)
     }
+  }
+  for (const c of ranked) {
     if (out.length >= games) break
+    if (!out.includes(c) && fits(c)) take(c)
   }
   return out
 }
 
-/** 이번 주 추천의 씨앗: 다음 회차 번호 기준(같은 주에는 누구에게나 같은 추천) */
-export const weekSeed = (nextRound: number) => nextRound * 2654435761
+/** 이번 주 추천의 씨앗: 다음 회차 × 접속자 번호(같은 사람은 그 주 내내 같은 추천, 사람마다 다른 추천) */
+export const weekSeed = (nextRound: number, visitor = 0) => (Math.imul(nextRound, 2654435761) ^ Math.imul(visitor | 0, 0x9e3779b1)) >>> 0
+
+/** 이 브라우저(접속자)의 번호 — 처음 들어올 때 무작위로 정해 브라우저에 둔다 */
+export function visitorId(): number {
+  const KEY = 'onbijjang.lotto.visitor'
+  try {
+    const v = Number(localStorage.getItem(KEY))
+    if (Number.isInteger(v) && v > 0) return v
+    const n = (crypto.getRandomValues(new Uint32Array(1))[0] || 1) >>> 0
+    localStorage.setItem(KEY, String(n))
+    return n
+  } catch {
+    return (crypto.getRandomValues(new Uint32Array(1))[0] || 1) >>> 0
+  }
+}
 
 /**
  * 되짚어 보기(백테스트): 지난 n회마다 그 전 회차까지만으로 추천을 만들어 실제 당첨번호와 몇 개 맞았는지.

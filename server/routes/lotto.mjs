@@ -68,7 +68,8 @@ export default async function lottoRoutes(app, ctx) {
     const saved = JSON.parse(await fsp.readFile(FILE, 'utf8'))
     for (const d of saved.draws ?? []) {
       const c = cleanDraw(d)
-      if (c) draws.set(c.round, c)
+      // src: auto(동행복권 자동) · excel(엑셀) · manual(건별 입력), at: 넣은 시각
+      if (c) draws.set(c.round, { ...c, src: ['auto', 'excel', 'manual'].includes(d.src) ? d.src : 'auto', at: typeof d.at === 'string' ? d.at : null })
     }
     meta = { ...meta, ...(saved.meta ?? {}) }
   } catch {
@@ -135,7 +136,7 @@ export default async function lottoRoutes(app, ctx) {
         const results = await Promise.allSettled(batch.map(fetchRound))
         for (const r of results) {
           if (r.status === 'fulfilled') {
-            for (const d of r.value.got) draws.set(d.round, d)
+            for (const d of r.value.got) if (!draws.has(d.round)) draws.set(d.round, { ...d, src: 'auto', at: new Date().toISOString() })
             meta.source = r.value.source
             fails = 0
           } else {
@@ -148,6 +149,7 @@ export default async function lottoRoutes(app, ctx) {
       }
       if (fails < 5) meta.lastError = null
       meta.lastSyncAt = new Date().toISOString()
+      if (todo.some((r) => draws.has(r))) meta.updatedAt = meta.lastSyncAt
       await save()
     })().finally(() => {
       syncing = null
@@ -165,6 +167,8 @@ export default async function lottoRoutes(app, ctx) {
     syncing: Boolean(syncing),
     lastSyncAt: meta.lastSyncAt,
     lastError: meta.lastError,
+    /** 자료가 마지막으로 바뀐 때(화면이 새로 그릴지 보는 데 씀) */
+    updatedAt: meta.updatedAt ?? meta.lastSyncAt,
   })
 
   app.get('/api/lotto', (_req, res) => {
@@ -179,10 +183,12 @@ export default async function lottoRoutes(app, ctx) {
   })
   /** 엑셀에서 읽은 회차 넣기(스탭 이상): { draws: [{ round, date, numbers, bonus }] } */
   app.post('/api/lotto/import', requireStaff, async (req, res) => {
-    const list = (Array.isArray(req.body?.draws) ? req.body.draws : []).slice(0, 5000).map(cleanDraw).filter(Boolean)
+    const src = req.body?.source === 'manual' ? 'manual' : 'excel'
+    const at = new Date().toISOString()
+    const list = (Array.isArray(req.body?.draws) ? req.body.draws : []).slice(0, 5000).map(cleanDraw).filter(Boolean).map((d) => ({ ...d, src, at }))
     if (!list.length) return res.status(400).json({ error: '회차·번호 6개·보너스를 읽지 못했습니다.' })
     for (const d of list) draws.set(d.round, d)
-    meta.source = meta.source ?? 'excel'
+    meta.updatedAt = at
     await save()
     res.json({ added: list.length, ...body() })
   })

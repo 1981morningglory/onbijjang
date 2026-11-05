@@ -5,7 +5,7 @@ import { api } from '@/lib/api'
 import { downloadBlob } from '@/lib/files'
 import { writeTable } from '@/tools/orders/excel'
 import { Badge, Button, Callout, Dialog, Field, Panel, Segmented, Spinner, TextInput, toast } from '@/ui'
-import { backtest, ballColor, chiSquare, parseLottoRows, rangesText, frequency, gaps, nextDraw, NUMS, numberWeights, recommend, shapeStats, topPairs, TOTAL_COMBOS, weekSeed, type Draw, type Pick } from './lotto'
+import { backtest, ballColor, chiSquare, dateMismatches, parseLottoRows, rangesText, roundDate, visitorId, frequency, gaps, nextDraw, NUMS, numberWeights, recommend, shapeStats, topPairs, TOTAL_COMBOS, weekSeed, type Draw, type Pick } from './lotto'
 
 interface LottoData {
   draws: Draw[]
@@ -14,6 +14,7 @@ interface LottoData {
   syncing: boolean
   lastSyncAt: string | null
   lastError: string | null
+  updatedAt?: string | null
 }
 
 export function Ball({ n, size = 34, dim }: { n: number; size?: number; dim?: boolean }) {
@@ -33,19 +34,25 @@ export default function LottoTab() {
   const load = () =>
     api<LottoData>('/lotto')
       .then((d) => {
-        setData(d)
+        // 자료가 그대로면 그래프를 다시 계산하지 않는다
+        setData((cur) => (cur && cur.draws.length === d.draws.length && cur.updatedAt === d.updatedAt && cur.syncing === d.syncing && cur.missing === d.missing ? cur : d))
         setError(null)
       })
       .catch((err) => setError(err instanceof Error ? err.message : '불러오지 못했습니다.'))
   useEffect(() => {
     void load()
   }, [])
-  // 서버가 받아 오는 중이면 몇 초마다 다시 본다
+  // 서버가 받아 오는 중이면 몇 초마다, 아니면 1분마다·창으로 돌아올 때 새 자료가 있는지 본다
+  // (누가 한 주 자료를 넣으면 열어 둔 화면에도 그래프·추천이 저절로 바뀐다)
   useEffect(() => {
-    if (!data?.syncing) return
-    const t = setTimeout(() => void load(), 4000)
+    const t = setTimeout(() => document.visibilityState === 'visible' && void load(), data?.syncing ? 4000 : 60_000)
     return () => clearTimeout(t)
   }, [data])
+  useEffect(() => {
+    const onFocus = () => void load()
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [])
 
   const draws = data?.draws ?? []
   const ready = draws.length >= 100
@@ -90,8 +97,8 @@ function SyncStatus({ data, onReload, onImported }: { data: LottoData; onReload:
   const n = data.draws.length
   const have = new Set(data.draws.map((d) => d.round))
   const missing = Array.from({ length: data.expectedLatest }, (_, i) => i + 1).filter((r) => !have.has(r))
-  const send = async (draws: Draw[]) => {
-    const r = await api<LottoData & { added: number }>('/lotto/import', { method: 'POST', body: { draws } })
+  const send = async (draws: Draw[], source: 'excel' | 'manual' = 'excel') => {
+    const r = await api<LottoData & { added: number }>('/lotto/import', { method: 'POST', body: { draws, source } })
     onImported(r)
     return r.added
   }
@@ -181,13 +188,12 @@ function SyncStatus({ data, onReload, onImported }: { data: LottoData; onReload:
       <p className="text-xs text-muted">
         엑셀 양식에는 비어 있는 회차의 회차·추첨일이 미리 들어 있습니다. 번호 6개와 보너스만 채워 올리면 됩니다. 동행복권 홈페이지의 ‘회차별 당첨번호’ 엑셀을 그대로 올려도 됩니다. 이미 있는 회차를 넣으면 새 값으로 고칩니다. 입력·올리기는 스탭 이상만 됩니다.
       </p>
-      {entry && <EntryDialog draws={data.draws} suggest={missing.at(-1) ?? (data.draws.at(-1)?.round ?? 0) + 1} max={data.expectedLatest + 1} onClose={() => setEntry(false)} onSave={send} />}
+      <DrawList draws={data.draws} />
+      {entry && <EntryDialog draws={data.draws} suggest={missing.at(-1) ?? (data.draws.at(-1)?.round ?? 0) + 1} max={data.expectedLatest + 1} onClose={() => setEntry(false)} onSave={(d) => send(d, 'manual')} />}
     </Panel>
   )
 }
 
-/** 회차의 추첨일(토요일) */
-const roundDate = (round: number) => new Date(Date.UTC(2002, 11, 7) + (round - 1) * 7 * 86400e3).toISOString().slice(0, 10)
 
 /** 한 회차씩 입력(지난 회차 넣기·잘못 들어간 회차 고치기) */
 function EntryDialog({ draws, suggest, max, onClose, onSave }: { draws: Draw[]; suggest: number; max: number; onClose: () => void; onSave: (d: Draw[]) => Promise<number> }) {
@@ -267,21 +273,29 @@ function EntryDialog({ draws, suggest, max, onClose, onSave }: { draws: Draw[]; 
 function Analysis({ draws }: { draws: Draw[] }) {
   const latest = draws.at(-1)!
   const next = nextDraw(latest)
-  const [seed, setSeed] = useState(() => weekSeed(next.round))
-  const picks = useMemo(() => recommend(draws, { games: 5, seed, samples: 20000 }), [draws, seed])
-  const weekly = seed === weekSeed(next.round)
+  const me = useMemo(() => visitorId(), [])
+  const mine = weekSeed(next.round, me)
+  const [seed, setSeed] = useState(mine)
+  useEffect(() => setSeed(weekSeed(next.round, me)), [next.round, me])
+  const picks = useMemo(() => recommend(draws, { games: 5, seed, samples: 20000, mode: 'spread' }), [draws, seed])
+  const weekly = seed === mine
   const copy = () => {
     const text = [`제${next.round}회 AI 추천 번호`, ...picks.map((p, i) => `${String.fromCharCode(65 + i)}: ${p.numbers.join(' ')}`)].join('\n')
     void navigator.clipboard.writeText(text).then(() => toast.success('추천 번호를 복사했습니다.'))
   }
+  const first = draws[0]
+  const gapsInData = latest.round - first.round + 1 - draws.length
   return (
     <>
+      <Callout tone={gapsInData ? 'warn' : 'success'} title={`분석 기준: ${first.round}회 ~ ${latest.round}회, ${draws.length.toLocaleString()}개 회차`}>
+        아래 추천·그래프·검정·되짚어 보기는 모두 서버에 저장된 이 자료로 계산합니다{gapsInData ? ` (중간에 빠진 회차 ${gapsInData}개 — 위 ‘당첨번호 자료 관리’에서 채워 주세요)` : ''}. 새 회차를 넣으면 열어 둔 화면도 1분 안에 저절로 다시 계산합니다.
+      </Callout>
       <Panel className="flex flex-col gap-4 p-4 sm:p-5">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="flex items-center gap-1.5 text-xl font-bold text-ink">
             <BrainCircuit className="size-5 text-accent" aria-hidden /> 제{next.round}회 AI 추천 번호
           </h2>
-          <span className="text-sm text-muted">{next.date} 추첨 · 1~{latest.round}회 {draws.length.toLocaleString()}개 회차 분석</span>
+          <span className="text-sm text-muted">{next.date} 추첨</span>
           <div className="ml-auto flex gap-1.5">
             <Button size="sm" icon={Copy} onClick={copy}>
               번호 복사
@@ -290,8 +304,8 @@ function Analysis({ draws }: { draws: Draw[] }) {
               다른 조합 추천
             </Button>
             {!weekly && (
-              <Button size="sm" variant="ghost" onClick={() => setSeed(weekSeed(next.round))}>
-                이번 주 기본 추천
+              <Button size="sm" variant="ghost" onClick={() => setSeed(mine)}>
+                이번 주 내 추천
               </Button>
             )}
           </div>
@@ -301,7 +315,7 @@ function Analysis({ draws }: { draws: Draw[] }) {
             <PickRow key={p.numbers.join()} p={p} label={String.fromCharCode(65 + i)} />
           ))}
         </ul>
-        <p className="text-xs text-muted">{weekly ? '이번 주 기본 추천은 같은 주에는 누가 봐도 같습니다. ‘다른 조합 추천’으로 새로 뽑을 수 있습니다.' : '새로 뽑은 조합입니다.'} 지난 1등 조합과 같은 조합은 넣지 않습니다.</p>
+        <p className="text-xs text-muted">{weekly ? '이번 주 내 추천은 접속한 사람마다 다르게 뽑고(점수 위쪽 조합들 가운데서), 같은 사람은 그 주 내내 같은 번호를 봅니다. ‘다른 조합 추천’으로 새로 뽑을 수 있습니다.' : '새로 뽑은 조합입니다.'} 지난 1등 조합과 같은 조합은 넣지 않습니다.</p>
       </Panel>
 
       <RecentDraws draws={draws} />
@@ -571,5 +585,72 @@ function Backtest({ draws }: { draws: Draw[] }) {
         </>
       )}
     </Panel>
+  )
+}
+
+/** 회차별 당첨번호 전체(최신부터) + 자료 점검 */
+function DrawList({ draws }: { draws: Draw[] }) {
+  const [q, setQ] = useState('')
+  const [limit, setLimit] = useState(30)
+  const bad = useMemo(() => dateMismatches(draws), [draws])
+  const list = useMemo(() => {
+    const t = q.trim()
+    const all = [...draws].reverse()
+    if (!t) return all
+    const n = Number(t)
+    return all.filter((d) => String(d.round).includes(t) || (Number.isInteger(n) && (d.numbers.includes(n) || d.bonus === n)) || d.date.includes(t))
+  }, [draws, q])
+  const SRC: Record<string, string> = { auto: '동행복권 자동', excel: '엑셀', manual: '직접 입력' }
+  return (
+    <details className="rounded-md border border-line bg-paper px-3 py-2">
+      <summary className="cursor-pointer text-sm font-semibold text-ink-2">
+        회차별 당첨번호 전체 보기 · 자료 점검 ({draws.length.toLocaleString()}개 회차){bad.length > 0 && <span className="ml-1 text-danger"> — 추첨일이 회차와 맞지 않는 줄 {bad.length}개</span>}
+      </summary>
+      <div className="mt-3 flex flex-col gap-2">
+        {bad.length > 0 && (
+          <Callout tone="danger" title={`추첨일이 회차와 맞지 않는 줄 ${bad.length}개`}>
+            엑셀을 올릴 때 회차가 한 칸씩 밀려 들어갔을 수 있습니다. 예: {bad.slice(0, 5).map((d) => `${d.round}회(자료 ${d.date} / 실제 ${roundDate(d.round)})`).join(', ')}. 바른 엑셀을 다시 올리면 덮어씁니다.
+          </Callout>
+        )}
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="회차·번호·날짜로 찾기 (예: 1150, 7, 2024-12)" className="h-9 w-full max-w-sm rounded-md border border-line-strong bg-surface px-3 text-sm" aria-label="당첨번호 찾기" />
+        <div className="max-h-[28rem] overflow-auto rounded border border-line bg-surface">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-surface text-left text-xs text-muted">
+              <tr>
+                <th className="px-2 py-1.5">회차</th>
+                <th className="px-2 py-1.5">추첨일</th>
+                <th className="px-2 py-1.5">당첨번호 + 보너스</th>
+                <th className="px-2 py-1.5">출처</th>
+                <th className="px-2 py-1.5">넣은 때</th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.slice(0, limit).map((d) => (
+                <tr key={d.round} className={clsx('border-t border-line', bad.includes(d) && 'bg-danger-soft/60')}>
+                  <td className="num px-2 py-1 font-semibold">{d.round}</td>
+                  <td className="num px-2 py-1 text-muted">{d.date || roundDate(d.round)}</td>
+                  <td className="px-2 py-1">
+                    <span className="flex items-center gap-1">
+                      {d.numbers.map((n) => (
+                        <Ball key={n} n={n} size={24} />
+                      ))}
+                      <span className="mx-0.5 text-muted">+</span>
+                      <Ball n={d.bonus} size={24} />
+                    </span>
+                  </td>
+                  <td className="px-2 py-1 text-xs text-muted">{SRC[d.src ?? 'auto']}</td>
+                  <td className="px-2 py-1 text-xs text-muted">{d.at ? new Date(d.at).toLocaleDateString('ko-KR') : ''}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {list.length > limit && (
+          <Button size="sm" variant="ghost" onClick={() => setLimit((n) => n + 100)}>
+            더 보기 ({(list.length - limit).toLocaleString()}개 남음)
+          </Button>
+        )}
+      </div>
+    </details>
   )
 }
