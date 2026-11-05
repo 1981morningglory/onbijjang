@@ -1,9 +1,11 @@
 import clsx from 'clsx'
-import { BarChart3, BrainCircuit, Copy, FileSpreadsheet, FlaskConical, History, Info, RefreshCw, Sparkles } from 'lucide-react'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { BarChart3, BrainCircuit, Copy, Database, Download, FlaskConical, History, Info, PencilLine, RefreshCw, Sparkles, Upload } from 'lucide-react'
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { api } from '@/lib/api'
-import { Badge, Button, Callout, Dropzone, Panel, Segmented, Spinner, toast } from '@/ui'
-import { backtest, ballColor, chiSquare, frequency, gaps, nextDraw, NUMS, numberWeights, recommend, shapeStats, topPairs, TOTAL_COMBOS, weekSeed, type Draw, type Pick } from './lotto'
+import { downloadBlob } from '@/lib/files'
+import { writeTable } from '@/tools/orders/excel'
+import { Badge, Button, Callout, Dialog, Field, Panel, Segmented, Spinner, TextInput, toast } from '@/ui'
+import { backtest, ballColor, chiSquare, parseLottoRows, rangesText, frequency, gaps, nextDraw, NUMS, numberWeights, recommend, shapeStats, topPairs, TOTAL_COMBOS, weekSeed, type Draw, type Pick } from './lotto'
 
 interface LottoData {
   draws: Draw[]
@@ -83,77 +85,181 @@ function Notice() {
 
 function SyncStatus({ data, onReload, onImported }: { data: LottoData; onReload: () => void; onImported: (d: LottoData) => void }) {
   const [busy, setBusy] = useState(false)
+  const [entry, setEntry] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
   const n = data.draws.length
+  const have = new Set(data.draws.map((d) => d.round))
+  const missing = Array.from({ length: data.expectedLatest }, (_, i) => i + 1).filter((r) => !have.has(r))
+  const send = async (draws: Draw[]) => {
+    const r = await api<LottoData & { added: number }>('/lotto/import', { method: 'POST', body: { draws } })
+    onImported(r)
+    return r.added
+  }
   const importExcel = async (file: File) => {
     setBusy(true)
     try {
       const XLSX = await import('xlsx')
-      const book = XLSX.read(await file.arrayBuffer())
-      const draws: Draw[] = []
-      for (const name of book.SheetNames) {
-        const rows = XLSX.utils.sheet_to_json<unknown[]>(book.Sheets[name], { header: 1, blankrows: false, defval: '', raw: true })
-        for (const row of rows) {
-          // 한 줄에서 ‘회차’ 다음에 1~45 숫자 7개(번호 6 + 보너스)가 이어지는 곳을 찾는다
-          const v = (row as unknown[]).map((c) => (typeof c === 'number' ? c : Number(String(c).replace(/[^\d]/g, '')) || NaN))
-          for (let i = 0; i + 7 < v.length; i++) {
-            const nums = v.slice(i + 1, i + 8)
-            if (Number.isInteger(v[i]) && v[i] > 0 && v[i] < 5000 && nums.every((x) => Number.isInteger(x) && x >= 1 && x <= 45) && new Set(nums).size === 7) {
-              const date = (row as unknown[]).map(String).find((c) => /\d{4}[.\-/]\d{2}[.\-/]\d{2}/.test(c))?.replace(/[./]/g, '-') ?? ''
-              draws.push({ round: v[i], date: date.slice(0, 10), numbers: nums.slice(0, 6), bonus: nums[6] })
-              break
-            }
-          }
-        }
-      }
-      if (!draws.length) throw new Error('회차와 번호 7개(보너스 포함)가 이어진 줄을 찾지 못했습니다.')
-      const r = await api<LottoData & { added: number }>('/lotto/import', { method: 'POST', body: { draws } })
-      onImported(r)
-      toast.success(`${r.added}개 회차를 넣었습니다.`)
+      const book = XLSX.read(await file.arrayBuffer(), { cellDates: true })
+      const rows = book.SheetNames.flatMap((name) => XLSX.utils.sheet_to_json<unknown[]>(book.Sheets[name], { header: 1, blankrows: false, defval: '', raw: true }))
+      const draws = parseLottoRows(rows, data.expectedLatest + 2)
+      if (!draws.length) throw new Error('회차와 번호 6개·보너스가 들어 있는 줄을 찾지 못했습니다. 양식의 번호 칸을 채웠는지 확인해 주세요.')
+      toast.success(`${await send(draws)}개 회차를 넣었습니다.`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '엑셀을 넣지 못했습니다.')
     } finally {
       setBusy(false)
     }
   }
+  /** 양식: 비어 있는 회차(없으면 다음 회차)의 회차·추첨일을 미리 채운다 */
+  const template = async () => {
+    const rounds = missing.length ? missing : [(data.draws.at(-1)?.round ?? 0) + 1]
+    const rows = rounds.map((r) => [r, null, null, null, null, null, null, null, roundDate(r)])
+    downloadBlob(await writeTable('로또 당첨번호', ['회차', '번호1', '번호2', '번호3', '번호4', '번호5', '번호6', '보너스', '추첨일'], rows, [8, 8, 8, 8, 8, 8, 8, 8, 12]), '로또_당첨번호_입력양식.xlsx')
+  }
   const resync = async () => {
     try {
       onImported(await api<LottoData>('/lotto/sync', { method: 'POST' }))
+      toast.info('동행복권에서 다시 받는 중입니다.')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '다시 받지 못했습니다.')
     }
   }
-  const complete = data.missing === 0
+  const complete = missing.length === 0
   return (
-    <Panel className="flex flex-col gap-3 p-4">
-      <div className="flex flex-wrap items-center gap-2 text-sm">
-        <History className="size-4 text-brand" aria-hidden />
-        <b className="text-ink">당첨번호 자료</b>
-        <span className="text-ink-2">
-          {n ? `1회 ~ ${data.draws.at(-1)!.round}회 중 ${n.toLocaleString()}회` : '아직 없음'}
-          {data.expectedLatest ? ` (최근 ${data.expectedLatest}회까지 있어야 함)` : ''}
-        </span>
-        {complete ? <Badge tone="brand">최신</Badge> : data.syncing ? <Badge tone="accent">동행복권에서 받는 중… {data.missing}회 남음</Badge> : <Badge tone="warn">{data.missing}회 비어 있음</Badge>}
-        <div className="ml-auto flex gap-1.5">
-          <Button size="sm" variant="ghost" icon={RefreshCw} onClick={onReload}>
-            새로 보기
-          </Button>
-          {!complete && !data.syncing && (
-            <Button size="sm" icon={RefreshCw} onClick={() => void resync()} title="스탭 이상만">
-              지금 다시 받기
-            </Button>
-          )}
-        </div>
+    <Panel className="flex flex-col gap-3 p-4 sm:p-5">
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="flex items-center gap-1.5 text-base font-bold text-ink">
+          <Database className="size-4 text-brand" aria-hidden /> 당첨번호 자료 관리
+        </h3>
+        {complete ? <Badge tone="brand">최신</Badge> : data.syncing ? <Badge tone="accent">동행복권에서 받는 중… {missing.length}회 남음</Badge> : <Badge tone="warn">{missing.length}회 비어 있음</Badge>}
+        <Button size="sm" variant="ghost" className="ml-auto" icon={RefreshCw} onClick={onReload}>
+          새로 보기
+        </Button>
       </div>
-      {data.syncing && n < 100 && <p className="text-sm text-muted">처음 한 번은 1회부터 모두 받느라 몇 분 걸립니다. 이 화면을 열어 두면 자동으로 새로 봅니다.</p>}
-      {!complete && !data.syncing && data.lastError && (
-        <Callout tone="warn" title="동행복권에서 자료를 받지 못했습니다">
-          <p>
-            서버가 동행복권에 닿지 못했거나 응답이 막혔습니다({data.lastError}). 잠시 뒤 ‘지금 다시 받기’를 누르거나, 동행복권 홈페이지 → 당첨결과 → 회차별 당첨번호에서 <b>엑셀로 내려받아</b> 아래에 올려 주세요(스탭 이상).
-          </p>
-          <Dropzone accept=".xlsx,.xls,.csv" multiple={false} paste={false} compact icon={FileSpreadsheet} title={busy ? '넣는 중…' : '당첨번호 엑셀 올리기'} hint="회차·번호 6개·보너스가 있는 파일" onFiles={(f) => void importExcel(f[0])} disabled={busy} className="mt-2" />
+      <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-[auto_minmax(0,1fr)]">
+        <dt className="text-muted">가지고 있는 자료</dt>
+        <dd className="text-ink-2">{n ? `${n.toLocaleString()}개 회차 (1회 ~ ${data.draws.at(-1)!.round}회)` : '아직 없음'}</dd>
+        <dt className="text-muted">최근 추첨 회차</dt>
+        <dd className="text-ink-2">
+          {data.expectedLatest}회 ({roundDate(data.expectedLatest)} 토요일)
+        </dd>
+        <dt className="text-muted">비어 있는 회차</dt>
+        <dd className={complete ? 'text-brand' : 'font-semibold text-warn'}>{complete ? '없음' : rangesText(missing).slice(0, 300)}</dd>
+        <dt className="text-muted">자동으로 받은 때</dt>
+        <dd className="text-ink-2">{data.lastSyncAt ? new Date(data.lastSyncAt).toLocaleString('ko-KR') : '아직 없음'}</dd>
+      </dl>
+      {data.lastError && !complete && !data.syncing && (
+        <Callout tone="warn" title="동행복권에서 자동으로 받지 못했습니다">
+          {data.lastError} — 잠시 뒤 ‘동행복권에서 다시 받기’를 누르거나, 아래 양식·건별 입력으로 채워 주세요.
         </Callout>
       )}
+      <div className="flex flex-wrap gap-2">
+        <Button variant="primary" icon={PencilLine} onClick={() => setEntry(true)}>
+          지난회차 자료 입력하기
+        </Button>
+        <Button icon={Download} onClick={() => void template()}>
+          엑셀 양식 받기
+        </Button>
+        <Button icon={Upload} loading={busy} onClick={() => fileRef.current?.click()}>
+          엑셀로 한꺼번에 넣기
+        </Button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".xlsx,.xls,.csv"
+          hidden
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            e.target.value = ''
+            if (f) void importExcel(f)
+          }}
+        />
+        <Button variant="ghost" icon={RefreshCw} onClick={() => void resync()} disabled={data.syncing}>
+          동행복권에서 다시 받기
+        </Button>
+      </div>
+      <p className="text-xs text-muted">
+        엑셀 양식에는 비어 있는 회차의 회차·추첨일이 미리 들어 있습니다. 번호 6개와 보너스만 채워 올리면 됩니다. 동행복권 홈페이지의 ‘회차별 당첨번호’ 엑셀을 그대로 올려도 됩니다. 이미 있는 회차를 넣으면 새 값으로 고칩니다. 입력·올리기는 스탭 이상만 됩니다.
+      </p>
+      {entry && <EntryDialog draws={data.draws} suggest={missing.at(-1) ?? (data.draws.at(-1)?.round ?? 0) + 1} max={data.expectedLatest + 1} onClose={() => setEntry(false)} onSave={send} />}
     </Panel>
+  )
+}
+
+/** 회차의 추첨일(토요일) */
+const roundDate = (round: number) => new Date(Date.UTC(2002, 11, 7) + (round - 1) * 7 * 86400e3).toISOString().slice(0, 10)
+
+/** 한 회차씩 입력(지난 회차 넣기·잘못 들어간 회차 고치기) */
+function EntryDialog({ draws, suggest, max, onClose, onSave }: { draws: Draw[]; suggest: number; max: number; onClose: () => void; onSave: (d: Draw[]) => Promise<number> }) {
+  const [round, setRound] = useState(String(suggest))
+  const r = Number(round)
+  const existing = draws.find((d) => d.round === r)
+  const [nums, setNums] = useState<string[]>(() => (existing ? [...existing.numbers.map(String), String(existing.bonus)] : Array(7).fill('')))
+  const [busy, setBusy] = useState(false)
+  // 회차를 바꾸면 그 회차 값(있으면)으로 채운다
+  useEffect(() => {
+    const d = draws.find((x) => x.round === Number(round))
+    setNums(d ? [...d.numbers.map(String), String(d.bonus)] : Array(7).fill(''))
+  }, [round, draws])
+  const values = nums.map((v) => Number(v))
+  const filled = nums.every((v) => v.trim())
+  const invalid = filled && (!values.every((v) => Number.isInteger(v) && v >= 1 && v <= 45) || new Set(values).size !== 7)
+  const okRound = Number.isInteger(r) && r >= 1 && r <= max
+  const save = async () => {
+    if (!okRound) return toast.error(`회차는 1~${max} 사이로 넣어 주세요.`)
+    if (!filled || invalid) return toast.error('번호 6개와 보너스를 1~45 사이 서로 다른 수로 넣어 주세요.')
+    setBusy(true)
+    try {
+      await onSave([{ round: r, date: roundDate(r), numbers: values.slice(0, 6), bonus: values[6] }])
+      toast.success(`${r}회 당첨번호를 ${existing ? '고쳤습니다' : '넣었습니다'}.`)
+      onClose()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '저장하지 못했습니다.')
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      size="sm"
+      title="지난회차 자료 입력하기"
+      footer={
+        <>
+          <Button onClick={onClose}>닫기</Button>
+          <Button variant="primary" loading={busy} onClick={() => void save()}>
+            {existing ? '고쳐 저장' : '저장'}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-3 text-sm whitespace-normal">
+        <Field label="회차" hint={okRound ? `${roundDate(r)} 토요일 추첨${existing ? ' · 이미 있는 회차 — 저장하면 고칩니다' : ''}` : `1~${max} 사이`}>
+          {(id) => <TextInput id={id} type="number" min={1} max={max} value={round} onChange={(e) => setRound(e.target.value)} className="w-32!" />}
+        </Field>
+        <div>
+          <p className="mb-1.5 font-semibold text-ink-2">당첨번호 6개 + 보너스</p>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {nums.map((v, i) => (
+              <Fragment key={i}>
+                {i === 6 && <span className="mx-1 text-muted">+</span>}
+                <input
+                  aria-label={i === 6 ? '보너스 번호' : `번호 ${i + 1}`}
+                  inputMode="numeric"
+                  maxLength={2}
+                  value={v}
+                  onChange={(e) => setNums((list) => list.map((x, j) => (j === i ? e.target.value.replace(/\D/g, '').slice(0, 2) : x)))}
+                  className="num h-11 w-11 rounded-full border-2 text-center text-base font-black text-white outline-none focus:ring-2 focus:ring-brand"
+                  style={{ background: Number(v) >= 1 && Number(v) <= 45 ? ballColor(Number(v)) : 'var(--color-sunken)', borderColor: i === 6 ? 'var(--color-accent)' : 'transparent', color: Number(v) >= 1 && Number(v) <= 45 ? '#fff' : 'var(--color-ink)' }}
+                />
+              </Fragment>
+            ))}
+          </div>
+          {invalid && <p className="mt-1.5 text-xs font-semibold text-danger">1~45 사이 서로 다른 수 7개여야 합니다.</p>}
+        </div>
+      </div>
+    </Dialog>
   )
 }
 

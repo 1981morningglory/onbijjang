@@ -366,3 +366,53 @@ export function nextDraw(latest: Draw | undefined): { round: number; date: strin
   const d = new Date(base + (round - 1) * 7 * 86400e3)
   return { round, date: d.toISOString().slice(0, 10) }
 }
+
+/**
+ * 엑셀(시트의 줄들)에서 회차·번호 6개·보너스 읽기.
+ * - 우리 양식(회차, 번호1~6, 보너스, 추첨일)과 동행복권 ‘회차별 당첨번호’ 엑셀(회차와 번호 사이에 추첨일·당첨금 칸)을 모두 읽는다
+ * - 머리줄에 ‘회차’ 칸이 있으면 그 칸을, 없으면 번호 7개 앞의 첫 회차다운 정수를 회차로 본다
+ * - 한 줄에서 1~45 사이 서로 다른 수 7개가 이어진 곳(마지막 7칸 우선)을 번호 6개 + 보너스로 본다
+ */
+export function parseLottoRows(rows: unknown[][], maxRound: number): Draw[] {
+  const num = (c: unknown) => (typeof c === 'number' ? c : /^\s*\d+\s*$/.test(String(c ?? '')) ? Number(String(c).trim()) : NaN)
+  let roundCol = -1
+  const out = new Map<number, Draw>()
+  for (const row of rows) {
+    const cells = Array.isArray(row) ? row : []
+    const head = cells.findIndex((c) => /^\s*회\s*차\s*$/.test(String(c ?? '')))
+    if (head >= 0) {
+      roundCol = head
+      continue
+    }
+    const v = cells.map(num)
+    let at = -1
+    for (let i = v.length - 7; i >= 0; i--) {
+      const seven = v.slice(i, i + 7)
+      if (seven.every((x) => Number.isInteger(x) && x >= 1 && x <= 45) && new Set(seven).size === 7) {
+        at = i
+        break
+      }
+    }
+    if (at < 0) continue
+    const okRound = (x: number) => Number.isInteger(x) && x >= 1 && x <= maxRound
+    const round = roundCol >= 0 && roundCol < at && okRound(v[roundCol]) ? v[roundCol] : v.slice(0, at).find(okRound)
+    if (!round) continue
+    const dateCell = cells.map((c) => (c instanceof Date ? c.toISOString().slice(0, 10) : String(c ?? ''))).find((c) => /\d{4}[.\-/]\s?\d{1,2}[.\-/]\s?\d{1,2}/.test(c))
+    const date = dateCell ? dateCell.replace(/\s/g, '').replace(/[./]/g, '-').replace(/-(\d)(?=-|$)/g, '-0$1').slice(0, 10) : ''
+    out.set(round, { round, date, numbers: v.slice(at, at + 6).sort((a, b) => a - b), bonus: v[at + 6] })
+  }
+  return [...out.values()].sort((a, b) => a.round - b.round)
+}
+
+/** 회차 목록을 ‘1196~1248, 1250’처럼 줄여 쓰기 */
+export function rangesText(list: number[]): string {
+  const s = [...list].sort((a, b) => a - b)
+  const parts: string[] = []
+  for (let i = 0; i < s.length; ) {
+    let j = i
+    while (j + 1 < s.length && s[j + 1] === s[j] + 1) j++
+    parts.push(j > i ? `${s[i]}~${s[j]}` : String(s[i]))
+    i = j + 1
+  }
+  return parts.join(', ')
+}

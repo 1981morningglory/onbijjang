@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { ClipboardPaste, Copy, Download, EyeOff, FileSpreadsheet, Gift, Plus, RotateCcw, Sparkles, Trash2, Trophy, UserX } from 'lucide-react'
+import { ClipboardPaste, Copy, Download, EyeOff, FileSpreadsheet, Gift, History, Plus, RotateCcw, Sparkles, Trash2, Trophy, UserX } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { downloadBlob } from '@/lib/files'
 import { Badge, Button, Callout, Checkbox, Dropzone, Field, Panel, Segmented, Select, Textarea, TextInput, toast } from '@/ui'
@@ -32,6 +32,12 @@ export default function RaffleTab() {
   const [winners, setWinners] = useState<Winner[] | null>(null)
   const [drawnAt, setDrawnAt] = useState<string>('')
   const [rolling, setRolling] = useState<string | null>(null)
+  const [history, setHistory] = useState<HistoryItem[]>(loadHistory)
+  const clearHistory = () => {
+    if (!confirm('이 브라우저에 남은 추첨 기록을 모두 지울까요?')) return
+    setHistory([])
+    saveHistory([])
+  }
   const [revealed, setRevealed] = useState(0)
   const timer = useRef<number[]>([])
   useEffect(() => () => timer.current.forEach(clearTimeout), [])
@@ -81,7 +87,20 @@ export default function RaffleTab() {
       else {
         setRolling(null)
         setWinners(result)
-        setDrawnAt(new Date().toLocaleString('ko-KR'))
+        const at = new Date().toLocaleString('ko-KR')
+        setDrawnAt(at)
+        // 추첨 기록(이 브라우저에만, 가린 이름으로 최근 20회)
+        const item: HistoryItem = {
+          at,
+          total: entries.length,
+          removed: removed.length,
+          prizes: [...new Set(result.map((w) => w.prize))].map((p) => ({ name: p, names: result.filter((w) => w.prize === p).map((w) => maskName(w.entry.cells[nameCol] ?? '') || `${w.entry.line}번째 줄`) })),
+        }
+        setHistory((h) => {
+          const next = [item, ...h].slice(0, 20)
+          saveHistory(next)
+          return next
+        })
         // 등수 하나씩 차례로 열기(뒤 등수부터 → 1등이 마지막)
         const groups = [...new Set(result.map((w) => w.prize))]
         groups.forEach((_, i) => timer.current.push(window.setTimeout(() => setRevealed(i + 1), 500 * (i + 1))))
@@ -209,42 +228,45 @@ export default function RaffleTab() {
         )}
       </Panel>
 
-      <Panel className="flex flex-col gap-4 p-4 sm:p-5">
-        <h2 className="text-lg font-bold text-ink">② 등수와 당첨자 수</h2>
-        <div className="flex flex-col gap-2">
-          {prizes.map((p, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <Trophy className={clsx('size-5 shrink-0', i === 0 ? 'text-warn' : 'text-faint')} aria-hidden />
-              <TextInput aria-label={`${i + 1}번째 등수 이름`} value={p.name} maxLength={20} className="w-40" onChange={(e) => setPrizes((list) => list.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
-              <TextInput
-                aria-label={`${p.name} 인원`}
-                type="number"
-                min={0}
-                max={9999}
-                value={String(p.count)}
-                className="w-24"
-                onChange={(e) => setPrizes((list) => list.map((x, j) => (j === i ? { ...x, count: Math.max(0, Math.min(9999, Math.floor(Number(e.target.value) || 0))) } : x)))}
-              />
-              <span className="text-sm text-muted">명</span>
-              <Button size="sm" variant="ghost" icon={Trash2} aria-label={`${p.name} 지우기`} disabled={prizes.length <= 1} onClick={() => setPrizes((list) => list.filter((_, j) => j !== i))} />
+      <Panel className="grid gap-5 p-4 sm:p-5 lg:grid-cols-[minmax(0,25rem)_minmax(0,1fr)]">
+        <div className="flex flex-col gap-4">
+          <h2 className="text-lg font-bold text-ink">② 등수와 당첨자 수</h2>
+          <div className="flex flex-col gap-2">
+            {prizes.map((p, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <Trophy className={clsx('size-5 shrink-0', i === 0 ? 'text-warn' : 'text-faint')} aria-hidden />
+                <TextInput aria-label={`${i + 1}번째 등수 이름`} value={p.name} maxLength={20} className="w-36!" onChange={(e) => setPrizes((list) => list.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
+                <TextInput
+                  aria-label={`${p.name} 인원`}
+                  type="number"
+                  min={0}
+                  max={9999}
+                  value={String(p.count)}
+                  className="w-24!"
+                  onChange={(e) => setPrizes((list) => list.map((x, j) => (j === i ? { ...x, count: Math.max(0, Math.min(9999, Math.floor(Number(e.target.value) || 0))) } : x)))}
+                />
+                <span className="text-sm text-muted">명</span>
+                <Button size="sm" variant="ghost" icon={Trash2} aria-label={`${p.name} 지우기`} disabled={prizes.length <= 1} onClick={() => setPrizes((list) => list.filter((_, j) => j !== i))} />
+              </div>
+            ))}
+            <div className="flex flex-wrap items-center gap-3">
+              <Button size="sm" icon={Plus} onClick={() => setPrizes((list) => [...list, { name: `${list.length + 1}등`, count: 1 }])}>
+                등수 더하기
+              </Button>
+              <span className={clsx('text-sm', need > entries.length && entries.length ? 'font-semibold text-danger' : 'text-muted')}>
+                당첨자 모두 {need}명 · 추첨 대상 {entries.length}명
+              </span>
             </div>
-          ))}
-          <div className="flex flex-wrap items-center gap-3">
-            <Button size="sm" icon={Plus} onClick={() => setPrizes((list) => [...list, { name: `${list.length + 1}등`, count: 1 }])}>
-              등수 더하기
+          </div>
+          <Checkbox checked={mask} onChange={setMask} label="발표용으로 이름·번호 가리기(홍*동 · 010-****-5678)" />
+          <div className="flex flex-col items-start gap-1.5">
+            <Button variant="primary" icon={Sparkles} onClick={run} disabled={Boolean(rolling)}>
+              {winners ? '다시 추첨하기' : '추첨 시작'}
             </Button>
-            <span className={clsx('text-sm', need > entries.length && entries.length ? 'font-semibold text-danger' : 'text-muted')}>
-              당첨자 모두 {need}명 · 추첨 대상 {entries.length}명
-            </span>
+            <span className="text-xs text-muted">브라우저의 암호용 난수로 공정하게 뽑습니다. 한 사람은 한 등수에만 당첨됩니다.</span>
           </div>
         </div>
-        <Checkbox checked={mask} onChange={setMask} label="발표용으로 이름·번호 가리기(홍*동 · 010-****-5678)" />
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="primary" icon={Sparkles} onClick={run} disabled={Boolean(rolling)}>
-            {winners ? '다시 추첨하기' : '추첨 시작'}
-          </Button>
-          <span className="text-xs text-muted">브라우저의 암호용 난수로 공정하게 뽑습니다. 한 사람은 한 등수에만 당첨됩니다.</span>
-        </div>
+        <Helper prizes={prizes} total={entries.length} onPreset={setPrizes} history={history} onClearHistory={clearHistory} />
       </Panel>
 
       {rolling && (
@@ -310,6 +332,107 @@ export default function RaffleTab() {
           명단을 붙여 넣거나 엑셀을 올리면 → 핸드폰번호가 겹치는 사람은 위 줄만 남기고 → 등수별 인원을 정해 → 추첨 시작. 결과는 복사하거나 엑셀로 받을 수 있습니다.
         </Callout>
       )}
+    </div>
+  )
+}
+
+// ── 오른쪽: 빠른 설정 · 당첨 확률 · 추첨 기록 ─────────────
+interface HistoryItem {
+  at: string
+  total: number
+  removed: number
+  prizes: Array<{ name: string; names: string[] }>
+}
+const HISTORY_KEY = 'onbijjang.raffle.history'
+function loadHistory(): HistoryItem[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(HISTORY_KEY) ?? '[]')
+    return Array.isArray(v) ? v.slice(0, 20) : []
+  } catch {
+    return []
+  }
+}
+function saveHistory(list: HistoryItem[]) {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(list))
+  } catch {
+    // 저장이 안 되는 브라우저는 넘어간다
+  }
+}
+
+const PRESETS: Array<{ label: string; prizes: Prize[] }> = [
+  { label: '1·2·3등 (1·2·3명)', prizes: DEFAULT_PRIZES },
+  { label: '1~5등 각 1명', prizes: [1, 2, 3, 4, 5].map((n) => ({ name: `${n}등`, count: 1 })) },
+  { label: '당첨 10명', prizes: [{ name: '당첨', count: 10 }] },
+  { label: '1등 1 · 2등 3 · 3등 10', prizes: [{ name: '1등', count: 1 }, { name: '2등', count: 3 }, { name: '3등', count: 10 }] },
+  { label: '대상 1 · 예비 3', prizes: [{ name: '당첨', count: 1 }, { name: '예비 당첨', count: 3 }] },
+]
+
+function Helper({ prizes, total, onPreset, history, onClearHistory }: { prizes: Prize[]; total: number; onPreset: (p: Prize[]) => void; history: HistoryItem[]; onClearHistory: () => void }) {
+  const need = prizes.reduce((s, p) => s + Math.max(0, p.count), 0)
+  const pct = (n: number) => (total ? `${((n / total) * 100).toFixed(n / total < 0.01 ? 2 : 1)}%` : '-')
+  return (
+    <div className="flex flex-col gap-4 lg:border-l lg:border-line lg:pl-5">
+      <section className="flex flex-col gap-2">
+        <h3 className="text-sm font-bold text-ink">빠른 설정</h3>
+        <div className="flex flex-wrap gap-1.5">
+          {PRESETS.map((p) => (
+            <button key={p.label} type="button" onClick={() => onPreset(p.prizes.map((x) => ({ ...x })))} className="rounded-full border border-line-strong bg-surface px-3 py-1 text-sm font-semibold text-ink-2 transition-colors hover:bg-panel">
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </section>
+      <section className="flex flex-col gap-2">
+        <h3 className="text-sm font-bold text-ink">
+          당첨 확률 <span className="text-xs font-normal text-muted">대상 {total.toLocaleString()}명 기준, 한 사람이</span>
+        </h3>
+        <div className="overflow-hidden rounded-md border border-line">
+          <table className="w-full text-sm">
+            <tbody>
+              {prizes.map((p, i) => (
+                <tr key={i} className="border-b border-line last:border-0">
+                  <td className="px-3 py-1.5 font-semibold text-ink">{p.name || `${i + 1}번째`}</td>
+                  <td className="num px-3 py-1.5 text-right text-ink-2">{p.count}명</td>
+                  <td className="num px-3 py-1.5 text-right font-semibold text-brand">{pct(p.count)}</td>
+                </tr>
+              ))}
+              <tr className="bg-paper">
+                <td className="px-3 py-1.5 font-bold text-ink">무엇이든 당첨</td>
+                <td className="num px-3 py-1.5 text-right text-ink-2">{need}명</td>
+                <td className={clsx('num px-3 py-1.5 text-right font-bold', need > total && total ? 'text-danger' : 'text-accent')}>{need > total && total ? '인원 초과' : pct(need)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section className="flex flex-col gap-2">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-bold text-ink">
+            <History className="mr-1 inline size-4 text-muted" aria-hidden />
+            최근 추첨 기록 <span className="text-xs font-normal text-muted">이 브라우저에만 · 가린 이름</span>
+          </h3>
+          {history.length > 0 && (
+            <button type="button" className="ml-auto text-xs text-muted hover:text-danger" onClick={onClearHistory}>
+              기록 지우기
+            </button>
+          )}
+        </div>
+        {history.length === 0 ? (
+          <p className="text-sm text-faint">추첨하면 여기에 시각·대상 수·당첨자가 남습니다.</p>
+        ) : (
+          <ul className="flex max-h-60 flex-col gap-1.5 overflow-auto">
+            {history.map((h, i) => (
+              <li key={h.at + i} className="rounded-md border border-line bg-paper px-3 py-2 text-xs">
+                <p className="font-semibold text-ink-2">
+                  {h.at} · 대상 {h.total}명{h.removed ? ` (중복 ${h.removed}명 제외)` : ''}
+                </p>
+                <p className="mt-0.5 text-muted">{h.prizes.map((p) => `${p.name}: ${p.names.join(', ')}`).join(' / ')}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   )
 }

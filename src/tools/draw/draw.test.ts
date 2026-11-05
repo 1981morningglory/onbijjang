@@ -169,5 +169,38 @@ describe('서버: 동행복권 응답 읽기', () => {
     expect(r).toBe(Math.floor((Date.UTC(2026, 10, 5) - Date.UTC(2002, 11, 7, 11, 45) - 3600e3) / (7 * 86400e3)) + 1)
     expect(expectedLatest(Date.UTC(2002, 11, 7, 13, 0))).toBe(1)
     expect(expectedLatest(Date.UTC(2002, 11, 7, 11, 0))).toBe(0)
+    const { koreanError } = await import('../../../server/routes/lotto.mjs')
+    expect(koreanError(new Error('fetch failed'))).toContain('연결하지 못했습니다')
+    expect(koreanError(new Error('HTTP 403'))).toContain('403')
+  })
+})
+
+describe('로또 자료 엑셀 읽기', () => {
+  it('우리 양식·동행복권 엑셀·날짜 모양', async () => {
+    const { parseLottoRows, rangesText } = await import('./lotto')
+    // 우리 양식: 회차, 번호1~6, 보너스, 추첨일
+    const ours = parseLottoRows(
+      [
+        ['회차', '번호1', '번호2', '번호3', '번호4', '번호5', '번호6', '보너스', '추첨일'],
+        [1196, 3, 7, 12, 25, 33, 41, 9, '2025-11-08'],
+        [1197, '', '', '', '', '', '', '', '2025-11-15'],
+      ],
+      1300,
+    )
+    expect(ours).toEqual([{ round: 1196, date: '2025-11-08', numbers: [3, 7, 12, 25, 33, 41], bonus: 9 }])
+    // 동행복권: 년도, 회차, 추첨일, 1등 당첨자수, 1등 금액, … 번호 6, 보너스
+    const official = parseLottoRows(
+      [
+        ['년도', '회차', '추첨일', '당첨자수', '당첨금액', '당첨자수', '당첨금액', '1', '2', '3', '4', '5', '6', '보너스'],
+        [2025, 1195, '2025.11.1', 12, '2,000,000,000', 40, '50,000,000', 41, 3, 15, 20, 27, 38, 6],
+      ],
+      1300,
+    )
+    expect(official).toEqual([{ round: 1195, date: '2025-11-01', numbers: [3, 15, 20, 27, 38, 41], bonus: 6 }])
+    // 머리줄 없이: 앞의 첫 회차다운 정수
+    expect(parseLottoRows([[1000, 2, 8, 19, 22, 32, 42, 39]], 1300)[0].round).toBe(1000)
+    // 번호가 겹치거나 범위 밖이면 읽지 않음
+    expect(parseLottoRows([[5, 1, 1, 2, 3, 4, 5, 6], [2, 1, 2, 3, 4, 5, 6, 46]], 1300)).toEqual([])
+    expect(rangesText([1196, 1197, 1198, 1200, 1202, 1203])).toBe('1196~1198, 1200, 1202~1203')
   })
 })
