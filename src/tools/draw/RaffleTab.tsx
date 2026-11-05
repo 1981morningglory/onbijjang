@@ -126,7 +126,9 @@ export default function RaffleTab() {
 
   return (
     <div className="flex flex-col gap-5">
-      <Panel className="flex flex-col gap-4 p-4 sm:p-5">
+      {/* ① 명단(왼쪽 반) · ② 등수와 당첨자 수(오른쪽 반)를 한 칸에 */}
+      <Panel className="grid gap-6 p-4 sm:p-5 lg:grid-cols-2">
+        <div className="flex min-w-0 flex-col gap-4">
         <div className="flex flex-wrap items-center gap-3">
           <h2 className="text-lg font-bold text-ink">① 추첨 명단</h2>
           <Segmented
@@ -226,9 +228,8 @@ export default function RaffleTab() {
             </div>
           </div>
         )}
-      </Panel>
-
-      <Panel className="grid gap-5 p-4 sm:p-5 lg:grid-cols-[minmax(0,25rem)_minmax(0,1fr)]">
+        </div>
+        <div className="flex min-w-0 flex-col gap-5 border-t border-line pt-5 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-6">
         <div className="flex flex-col gap-4">
           <h2 className="text-lg font-bold text-ink">② 등수와 당첨자 수</h2>
           <div className="flex flex-col gap-2">
@@ -266,7 +267,8 @@ export default function RaffleTab() {
             <span className="text-xs text-muted">브라우저의 암호용 난수로 공정하게 뽑습니다. 한 사람은 한 등수에만 당첨됩니다.</span>
           </div>
         </div>
-        <Helper prizes={prizes} total={entries.length} onPreset={setPrizes} history={history} onClearHistory={clearHistory} />
+        <Helper prizes={prizes} total={entries.length} history={history} onClearHistory={clearHistory} />
+        </div>
       </Panel>
 
       {rolling && (
@@ -336,7 +338,7 @@ export default function RaffleTab() {
   )
 }
 
-// ── 오른쪽: 빠른 설정 · 당첨 확률 · 추첨 기록 ─────────────
+// ── 등수 아래: 당첨 확률 · 추첨 기록 ─────────────────────
 interface HistoryItem {
   at: string
   total: number
@@ -360,29 +362,11 @@ function saveHistory(list: HistoryItem[]) {
   }
 }
 
-const PRESETS: Array<{ label: string; prizes: Prize[] }> = [
-  { label: '1·2·3등 (1·2·3명)', prizes: DEFAULT_PRIZES },
-  { label: '1~5등 각 1명', prizes: [1, 2, 3, 4, 5].map((n) => ({ name: `${n}등`, count: 1 })) },
-  { label: '당첨 10명', prizes: [{ name: '당첨', count: 10 }] },
-  { label: '1등 1 · 2등 3 · 3등 10', prizes: [{ name: '1등', count: 1 }, { name: '2등', count: 3 }, { name: '3등', count: 10 }] },
-  { label: '대상 1 · 예비 3', prizes: [{ name: '당첨', count: 1 }, { name: '예비 당첨', count: 3 }] },
-]
-
-function Helper({ prizes, total, onPreset, history, onClearHistory }: { prizes: Prize[]; total: number; onPreset: (p: Prize[]) => void; history: HistoryItem[]; onClearHistory: () => void }) {
+function Helper({ prizes, total, history, onClearHistory }: { prizes: Prize[]; total: number; history: HistoryItem[]; onClearHistory: () => void }) {
   const need = prizes.reduce((s, p) => s + Math.max(0, p.count), 0)
   const pct = (n: number) => (total ? `${((n / total) * 100).toFixed(n / total < 0.01 ? 2 : 1)}%` : '-')
   return (
-    <div className="flex flex-col gap-4 lg:border-l lg:border-line lg:pl-5">
-      <section className="flex flex-col gap-2">
-        <h3 className="text-sm font-bold text-ink">빠른 설정</h3>
-        <div className="flex flex-wrap gap-1.5">
-          {PRESETS.map((p) => (
-            <button key={p.label} type="button" onClick={() => onPreset(p.prizes.map((x) => ({ ...x })))} className="rounded-full border border-line-strong bg-surface px-3 py-1 text-sm font-semibold text-ink-2 transition-colors hover:bg-panel">
-              {p.label}
-            </button>
-          ))}
-        </div>
-      </section>
+    <div className="flex flex-col gap-4">
       <section className="flex flex-col gap-2">
         <h3 className="text-sm font-bold text-ink">
           당첨 확률 <span className="text-xs font-normal text-muted">대상 {total.toLocaleString()}명 기준, 한 사람이</span>
