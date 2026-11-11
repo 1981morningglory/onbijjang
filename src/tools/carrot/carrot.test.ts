@@ -1,97 +1,103 @@
 import { describe, expect, it } from 'vitest'
-import { CATALOG, MODEL_BY_KEY, buildInput, extFor, hfError, isExpired, outputUrls, pickEndpoint, planRequest, usageByOwner } from '../../../server/lib/carrot.mjs'
-import { choices, daysLeft, durationSteps, fitOptions, hasEndFrame, hasStartFrame, maxRefs, modelChipLabel, ratioLabel } from './logic'
+import { SNAPSHOT, extFor, isExpired, jobIds, jobResult, normalizeModel, planRequest, toolError, usageByOwner } from '../../../server/lib/carrot.mjs'
+import { DEFAULT_MODEL, DEFAULT_OPTIONS, choices, daysLeft, durationSteps, fitOptions, hasEndFrame, hasStartFrame, maxRefs, modelChipLabel, ratioLabel } from './logic'
 
-const U = 'https://cdn.example.com/a.png'
-const U2 = 'https://cdn.example.com/b.png'
+const M = (key: string) => {
+  const m = SNAPSHOT.find((x) => x.key === key)
+  if (!m) throw new Error(`없는 모델 ${key}`)
+  return m
+}
+const ID = '276007ef-6f89-47d5-ab07-6124b4fef216'
+const ID2 = '41da35f2-5598-4c4a-bd72-31c18c0394b9'
 
-describe('모델 목록', () => {
-  it('이미지·영상 모델이 모두 있고 엔드포인트마다 입력 형식이 있다', () => {
-    expect(CATALOG.models.filter((m) => m.kind === 'image').length).toBeGreaterThanOrEqual(8)
-    expect(CATALOG.models.filter((m) => m.kind === 'video').length).toBeGreaterThanOrEqual(15)
-    for (const m of CATALOG.models) for (const id of Object.values(m.endpoints)) expect(m.fields[id!]).toBeTruthy()
+describe('모델 목록(힉스필드 MCP)', () => {
+  it('이미지·영상·오디오 모델이 있고, 편집·보정 전용 모델은 뺀다', () => {
+    expect(SNAPSHOT.filter((m) => m.kind === 'image').length).toBeGreaterThanOrEqual(25)
+    expect(SNAPSHOT.filter((m) => m.kind === 'video').length).toBeGreaterThanOrEqual(25)
+    expect(SNAPSHOT.filter((m) => m.kind === 'audio').map((m) => m.key)).toEqual(expect.arrayContaining(['seed_audio', 'text2speech_v2', 'elevenlabs_v4_turbo', 'elevenlabs_music_v2_5']))
+    for (const k of ['image_background_remover', 'video_upscale', 'reframe', 'dubbing']) expect(SNAPSHOT.some((m) => m.key === k)).toBe(false)
   })
-  it('기본 모델(GPT 이미지 2.0)은 품질 보통·1K 가 기본', () => {
-    const m = MODEL_BY_KEY['gpt-image-2']
-    expect(fitOptions(m, {})).toMatchObject({ quality: 'medium', resolution: '1k' })
-    expect(modelChipLabel(m, { quality: 'medium' })).toBe('GPT 이미지 2.0 보통')
+  it('기본 모델이 목록에 있고 챗GPT 이미지 2.0 이 맨 앞', () => {
+    for (const k of Object.values(DEFAULT_MODEL)) expect(SNAPSHOT.some((m) => m.key === k)).toBe(true)
+    expect(SNAPSHOT[0].key).toBe('gpt_image_2')
+    expect(M('gpt_image_2').label).toBe('챗GPT 이미지 2.0')
+  })
+  it('캐럿처럼 처음엔 보통 품질 · 가로 4:3', () => {
+    const m = M('gpt_image_2')
+    const o = fitOptions(m, {}, DEFAULT_OPTIONS.gpt_image_2)
+    expect(o).toMatchObject({ quality: 'medium', aspect_ratio: '4:3', resolution: '1k' })
+    expect(modelChipLabel(m, o)).toBe('챗GPT 이미지 2.0 보통')
+  })
+  it('채울 수 없는 필수 값이 있는 모델은 뺀다', () => {
+    expect(normalizeModel({ id: 'x', name: 'X', output_type: 'image', parameters: [{ name: 'secret_id', required: 'required', type: 'string' }] })).toBeNull()
   })
 })
 
-describe('엔드포인트 고르기', () => {
-  const sd = MODEL_BY_KEY['seedance-2-5']
-  it('영상: 아무것도 없으면 글→영상, 시작 프레임이면 이미지→영상, 레퍼런스면 레퍼런스→영상', () => {
-    expect(pickEndpoint(sd, {})).toBe('bytedance/seedance-2.5/text-to-video')
-    expect(pickEndpoint(sd, { start: U })).toBe('bytedance/seedance-2.5/image-to-video')
-    expect(pickEndpoint(sd, { refs: [U] })).toBe('bytedance/seedance-2.5/reference-to-video')
+describe('요청 만들기', () => {
+  it('이미지: 모델·프롬프트·비율·품질·개수, 레퍼런스는 image_references', () => {
+    const p = planRequest({ model: 'gpt_image_2', prompt: '꽃병', options: { quality: 'medium', aspect_ratio: '4:3', resolution: '1k' }, count: 3, refs: [ID] }, SNAPSHOT)
+    expect(p.tool).toBe('generate_image')
+    expect(p.params).toMatchObject({ model: 'gpt_image_2', prompt: '꽃병', quality: 'medium', aspect_ratio: '4:3', resolution: '1k', count: 3, medias: [{ role: 'image', value: ID }] })
   })
-  it('레퍼런스→영상이 없는 모델은 첫 레퍼런스를 시작 프레임으로', () => {
-    const k = MODEL_BY_KEY['kling-3-pro']
-    const ep = pickEndpoint(k, { refs: [U] })
-    expect(ep).toBe('kling-video/v3.0/pro/image-to-video')
-    expect(buildInput(k, ep, { prompt: '달리는 강아지', refs: [U] }).image_url).toBe(U)
+  it('받지 않는 값은 빼고 길이는 범위 안으로', () => {
+    const p = planRequest({ model: 'kling3_0', prompt: 'x', options: { aspect_ratio: '4:3', duration: 99, quality: 'high' } }, SNAPSHOT)
+    expect(p.params.aspect_ratio).toBeUndefined()
+    expect(p.params.duration).toBe(15)
+    expect(p.params.quality).toBeUndefined()
   })
-  it('이미지: 레퍼런스가 있고 편집 엔드포인트가 있으면 편집', () => {
-    const q = MODEL_BY_KEY['qwen-image-3']
-    expect(pickEndpoint(q, {})).toBe('alibaba/qwen-image-3/text-to-image')
-    expect(pickEndpoint(q, { refs: [U] })).toBe('alibaba/qwen-image-3/edit')
+  it('영상: 시작·끝 프레임은 start_image·end_image, 영상은 한 번에 1개', () => {
+    const p = planRequest({ model: 'kling3_0', prompt: 'x', start: ID, end: ID2, count: 4 }, SNAPSHOT)
+    expect(p.tool).toBe('generate_video')
+    expect(p.params.medias).toEqual([{ role: 'start_image', value: ID }, { role: 'end_image', value: ID2 }])
+    expect(p.params.count).toBeUndefined()
   })
-})
-
-describe('입력값 만들기', () => {
-  it('받지 않는 비율·해상도는 빼고, 길이는 범위 안으로', () => {
-    const k = MODEL_BY_KEY['kling-3-pro']
-    const input = buildInput(k, k.endpoints.text!, { prompt: 'x', options: { aspect_ratio: '4:3', duration: 99, resolution: '4k' } })
-    expect(input.aspect_ratio).toBeUndefined()
-    expect(input.duration).toBe(15)
-    expect(input.resolution).toBeUndefined()
+  it('레퍼런스를 받지 않는 영상 모델은 첫 레퍼런스를 시작 프레임으로', () => {
+    expect(planRequest({ model: 'veo3_1', prompt: 'x', refs: [ID] }, SNAPSHOT).params.medias).toEqual([{ role: 'start_image', value: ID }])
+  })
+  it('작업 종류 mode(Kling 4.0)는 넣은 이미지로 고른다', () => {
+    expect(planRequest({ model: 'kling4_0', prompt: 'x' }, SNAPSHOT).params.mode).toBe('text-to-video')
+    expect(planRequest({ model: 'kling4_0', prompt: 'x', start: ID }, SNAPSHOT).params.mode).toBe('image-to-video')
+    expect(planRequest({ model: 'kling4_0', prompt: 'x', refs: [ID] }, SNAPSHOT).params.mode).toBe('reference-to-video')
+    expect(choices(M('kling4_0'), 'mode')).toEqual([])
   })
   it('소리: generate_audio(참거짓) 또는 sound(on/off)', () => {
-    const sd = MODEL_BY_KEY['seedance-2-5']
-    expect(buildInput(sd, sd.endpoints.text!, { prompt: 'x', options: { audio: false } }).generate_audio).toBe(false)
-    const k = MODEL_BY_KEY['kling-3-pro']
-    expect(buildInput(k, k.endpoints.text!, { prompt: 'x', options: { audio: false } }).sound).toBe('off')
+    expect(planRequest({ model: 'seedance_2_0', prompt: 'x', options: { audio: false } }, SNAPSHOT).params.generate_audio).toBe(false)
+    expect(planRequest({ model: 'kling3_0', prompt: 'x', options: { audio: false } }, SNAPSHOT).params.sound).toBe('off')
   })
-  it('레퍼런스는 모델이 받는 장수까지만, 끝 프레임은 그 모델 칸 이름으로', () => {
-    const g = MODEL_BY_KEY['gpt-image-2']
-    const many = Array.from({ length: 20 }, (_, i) => `https://cdn.example.com/${i}.png`)
-    expect((buildInput(g, g.endpoints.text!, { prompt: 'x', refs: many }).image_urls as string[]).length).toBe(16)
-    const sd = MODEL_BY_KEY['seedance-2-5']
-    const input = buildInput(sd, sd.endpoints.image!, { prompt: 'x', start: U, end: U2 })
-    expect(input).toMatchObject({ image_url: U, end_image_url: U2 })
+  it('음성 TTS: 목소리를 골라야 하고 dialogue 로 보낸다', () => {
+    expect(() => planRequest({ model: 'seed_audio', prompt: '안녕하세요' }, SNAPSHOT)).toThrow('목소리')
+    expect(planRequest({ model: 'seed_audio', prompt: '안녕하세요', options: { voice: 'v1' } }, SNAPSHOT)).toMatchObject({ tool: 'generate_audio', params: { model: 'seed_audio', prompt: '안녕하세요', voice_type: 'preset', voice_id: 'v1' } })
+    const p = planRequest({ model: 'elevenlabs_v4_turbo', prompt: '안녕하세요', options: { voice: 'v1' } }, SNAPSHOT)
+    expect(p).toMatchObject({ tool: 'generate_audio', params: { model: 'elevenlabs_v4_turbo', prompt: '안녕하세요', dialogue: [{ text: '안녕하세요', voice_type: 'preset', voice_id: 'v1' }] } })
+    expect(planRequest({ model: 'text2speech_v2', prompt: '안녕', options: { voice: 'v1' } }, SNAPSHOT).params.variant).toBe('elevenlabs')
   })
-  it('프롬프트가 꼭 필요한 모델에 비어 있으면 알린다', () => {
-    const g = MODEL_BY_KEY['gpt-image-2']
-    expect(() => buildInput(g, g.endpoints.text!, { prompt: '  ' })).toThrow('적어')
+  it('음악: 프롬프트·길이·보컬 없음', () => {
+    const p = planRequest({ model: 'elevenlabs_music_v2_5', prompt: '밝은 피아노', options: { duration: 45, instrumental: true } }, SNAPSHOT)
+    expect(p.params).toMatchObject({ prompt: '밝은 피아노', duration: 45, force_instrumental: true })
   })
-  it('Soul 은 한 번에 1장(batch_size)으로 보내고 개수만큼 따로 요청', () => {
-    const plan = planRequest({ model: 'soul-2', prompt: '사진', count: 3 })
-    expect(plan.input.batch_size).toBe(1)
-    expect(plan.count).toBe(3)
-  })
-  it('영상은 한 번에 1개, 개수는 1~4 로', () => {
-    expect(planRequest({ model: 'seedance-2-5', prompt: 'x', count: 4 }).count).toBe(1)
-    expect(planRequest({ model: 'z-image', prompt: 'x', count: 9 }).count).toBe(4)
-    expect(() => planRequest({ model: 'nope', prompt: 'x' })).toThrow('모델')
-  })
-  it('https 가 아닌 주소는 레퍼런스로 받지 않는다', () => {
-    const plan = planRequest({ model: 'gpt-image-2', prompt: 'x', refs: ['http://a/b.png', 'javascript:alert(1)', U] })
-    expect(plan.input.image_urls).toEqual([U])
+  it('잘못된 값은 거른다', () => {
+    expect(() => planRequest({ model: 'nope', prompt: 'x' }, SNAPSHOT)).toThrow('모델')
+    expect(() => planRequest({ model: 'gpt_image_2', prompt: '  ' }, SNAPSHOT)).toThrow('적어')
+    expect(planRequest({ model: 'gpt_image_2', prompt: 'x', refs: ['https://evil/x.png', ID] }, SNAPSHOT).params.medias).toEqual([{ role: 'image', value: ID }])
+    expect(planRequest({ model: 'z_image', prompt: 'x', count: 9 }, SNAPSHOT).count).toBe(4)
   })
 })
 
 describe('결과·보관', () => {
-  it('완료 응답에서 이미지·영상 주소를 꺼낸다', () => {
-    expect(outputUrls({ status: 'completed', images: [{ url: U }, { url: U2 }] })).toEqual([
-      { url: U, type: 'image' },
-      { url: U2, type: 'image' },
-    ])
-    expect(outputUrls({ video: { url: 'https://cdn/v.mp4' } })).toEqual([{ url: 'https://cdn/v.mp4', type: 'video' }])
+  it('생성 결과에서 작업 번호, 상태 결과에서 원본 주소(미리보기 제외)', () => {
+    expect(jobIds({ structuredContent: { results: [{ id: ID2, status: 'pending' }] } })).toEqual([ID2])
+    const r = jobResult({ structuredContent: { generation: { status: 'completed', results: { rawUrl: 'https://cdn/x.png', minUrl: 'https://cdn/x_min.webp' } } } })
+    expect(r).toEqual({ status: 'completed', urls: ['https://cdn/x.png'], error: null })
+    expect(jobResult({ structuredContent: { generation: { status: 'in_progress' } } }).status).toBe('in_progress')
   })
-  it('확장자: 응답 형식 → 주소 → 종류 순', () => {
+  it('도구 오류를 한국어로', () => {
+    expect(toolError({ isError: true, structuredContent: { error: 'Not enough credits' } })).toContain('크레딧')
+    expect(toolError({ content: [] })).toBeNull()
+  })
+  it('확장자', () => {
     expect(extFor('image/jpeg', 'https://x/a', 'image')).toBe('jpg')
-    expect(extFor(null, 'https://x/a.webp?sig=1', 'image')).toBe('webp')
-    expect(extFor('application/octet-stream', 'https://x/a', 'video')).toBe('mp4')
+    expect(extFor(null, 'https://x/a.mp4?sig=1', 'video')).toBe('mp4')
+    expect(extFor('application/octet-stream', 'https://x/a', 'audio')).toBe('mp3')
   })
   it('7일이 지나면 만료', () => {
     const now = Date.parse('2026-11-11T00:00:00Z')
@@ -99,18 +105,18 @@ describe('결과·보관', () => {
     expect(isExpired({ createdAt: '2026-11-03T23:00:00Z' }, now)).toBe(true)
     expect(daysLeft('2026-11-12T12:00:00Z', now)).toBe(2)
   })
-  it('계정별 사용량: 용량 큰 순', () => {
-    const u = usageByOwner([
-      { owner: 'a', ownerName: '가', status: 'done', usd: 0.1, createdAt: '2026-11-10T00:00:00Z', items: [{ type: 'image', size: 100 }] },
-      { owner: 'b', ownerName: '나', status: 'done', usd: 0.5, createdAt: '2026-11-10T00:00:00Z', items: [{ type: 'video', size: 5000 }] },
-      { owner: 'a', ownerName: '가', status: 'failed', createdAt: '2026-11-11T00:00:00Z', items: [] },
-    ])
+  it('계정별 사용량: 용량·크레딧(30일 기록)', () => {
+    const at = new Date().toISOString()
+    const u = usageByOwner(
+      [
+        { owner: 'a', ownerName: '가', status: 'done', credits: 2, createdAt: at, items: [{ type: 'image', size: 100 }] },
+        { owner: 'b', ownerName: '나', status: 'done', credits: 22.5, createdAt: at, items: [{ type: 'video', size: 5000 }] },
+        { owner: 'a', ownerName: '가', status: 'failed', createdAt: at, items: [] },
+      ],
+      [{ owner: 'a', name: '가', credits: 2, at }, { owner: 'a', name: '가', credits: 5, at: '2020-01-01T00:00:00Z' }],
+    )
     expect(u.map((x) => x.owner)).toEqual(['b', 'a'])
-    expect(u[1]).toMatchObject({ jobs: 2, images: 1, failed: 1, bytes: 100, usd: 0.1 })
-  })
-  it('힉스필드 오류를 한국어로', () => {
-    expect(hfError(403, '')).toContain('잔액')
-    expect(hfError(401, '')).toContain('키')
+    expect(u[1]).toMatchObject({ jobs: 2, images: 1, failed: 1, bytes: 100, credits: 2, credits30: 2 })
   })
 })
 
@@ -121,19 +127,15 @@ describe('화면 계산', () => {
     expect(ratioLabel('1:1')).toBe('정사각 1:1')
     expect(ratioLabel('auto')).toBe('자동')
   })
-  it('길이 단계와 선택지', () => {
-    expect(durationSteps(4, 30)).toEqual([4, 5, 6, 8, 10, 12, 15, 20, 25, 30])
-    expect(choices(MODEL_BY_KEY['ltx-pro'], 'duration')).toEqual([6, 8, 10])
-  })
-  it('모델이 바뀌면 옵션을 그 모델 값으로', () => {
-    const k = MODEL_BY_KEY['kling-3-pro']
-    expect(fitOptions(k, { aspect_ratio: '4:3', duration: 7 })).toMatchObject({ aspect_ratio: '16:9', duration: 6 })
+  it('길이 단계', () => {
+    expect(durationSteps(4, 15)).toEqual([4, 5, 6, 8, 10, 12, 15])
+    expect(choices(M('veo3_1'), 'duration')).toEqual([4, 6, 8])
   })
   it('레퍼런스·프레임 칸', () => {
-    expect(maxRefs(MODEL_BY_KEY['gpt-image-2'])).toBe(16)
-    expect(maxRefs(MODEL_BY_KEY['recraft'])).toBe(0)
-    expect(hasStartFrame(MODEL_BY_KEY['seedance-2-5'])).toBe(true)
-    expect(hasEndFrame(MODEL_BY_KEY['seedance-2-5'])).toBe(true)
-    expect(hasEndFrame(MODEL_BY_KEY['kling-2-6'])).toBe(false)
+    expect(maxRefs(M('gpt_image_2'))).toBeGreaterThan(0)
+    expect(maxRefs(M('elevenlabs_music_v2_5'))).toBe(0)
+    expect(hasStartFrame(M('kling3_0'))).toBe(true)
+    expect(hasEndFrame(M('kling3_0'))).toBe(true)
+    expect(hasEndFrame(M('veo3_1'))).toBe(false)
   })
 })
