@@ -512,7 +512,7 @@ export default function CarrotTool() {
       )}
 
       {/* 가운데: 결과 피드 */}
-      <div className="flex min-h-[46vh] flex-col gap-6 pb-6">
+      <div className="mx-auto flex min-h-[46vh] w-full max-w-[820px] flex-col gap-6 pb-6">
         {!jobs.length && !chat.length && (
           <div className="grid flex-1 place-items-center py-16">
             <h2 className="text-center text-2xl font-bold sm:text-3xl">무엇을 만들어 볼까요?</h2>
@@ -883,13 +883,13 @@ const variantLabel = (v: string) => VARIANT[v] ?? v.replace(/^veo-3-1-/, 'Veo 3.
 const MEDIA_MAX = { w: 460, h: 460 }
 const MEDIA_MAX_MANY = { w: 340, h: 380 }
 /** 비율에 맞춰 가로·세로 상한 안에 들어가는 미리보기 상자 */
-function mediaBox(ratio: string | undefined, single: boolean): { aspectRatio?: string; width?: string; maxWidth?: number; maxHeight?: number } {
+function mediaBox(ratio: string | undefined, single: boolean): { px: number; aspectRatio?: string; width?: string; maxWidth?: number; maxHeight?: number } {
   const lim = single ? MEDIA_MAX : MEDIA_MAX_MANY
   const m = /^(\d+):(\d+)$/.exec(ratio ?? '')
-  if (!m) return { maxWidth: Math.min(lim.w, 1000), maxHeight: Math.min(lim.h, 1000) }
+  if (!m) return { px: Math.min(lim.w, 1000), maxWidth: Math.min(lim.w, 1000), maxHeight: Math.min(lim.h, 1000) }
   const r = Number(m[1]) / Number(m[2])
   const w = Math.round(Math.min(lim.w, lim.h * r, 1000, 1000 * r))
-  return { aspectRatio: ratioCss(ratio), width: `min(100%, ${w}px)` }
+  return { px: w, aspectRatio: ratioCss(ratio), width: `min(100%, ${w}px)` }
 }
 
 /** 남은 크레딧·다음 갱신까지 남은 기간 */
@@ -982,8 +982,11 @@ function JobCard({ job, showOwner, onOpen, onRemove, onReprompt, onReuse }: { jo
   const left = daysLeft(job.expiresAt)
   const placeholders = job.status === 'running' ? Math.max(0, job.count - job.items.length) : 0
   const box = mediaBox(o.aspect_ratio, job.count <= 1)
+  // 결과 묶음 폭을 이미지 줄 폭에 맞춘다(말풍선이 이미지 바로 위 오른쪽에 오게). 최소 560px
+  const n = Math.max(1, job.count, job.items.length)
+  const rowW = job.kind === 'audio' ? 820 : Math.max(560, n * box.px + (n - 1) * 12)
   return (
-    <article className="flex flex-col gap-2">
+    <article className="flex flex-col gap-2" style={{ width: `min(100%, ${rowW}px)` }}>
       <div className="flex justify-end">
         <div className="max-w-[80%] rounded-2xl bg-brand-soft px-4 py-3 text-base text-brand-ink">
           {job.refs.length > 0 && (
@@ -1015,7 +1018,7 @@ function JobCard({ job, showOwner, onOpen, onRemove, onReprompt, onReuse }: { jo
       {(job.items.length > 0 || placeholders > 0) && (
         <div className={clsx(job.kind === 'audio' ? 'grid grid-cols-1 gap-3' : 'flex flex-wrap items-start gap-3')}>
           {job.items.map((it, i) => (
-            <div key={it.url} className="group relative max-w-full overflow-hidden rounded-xl border border-line bg-sunken" style={it.type === 'audio' ? undefined : box}>
+            <div key={it.url} className="group relative max-w-full overflow-hidden rounded-xl border border-line bg-sunken" style={it.type === 'audio' ? undefined : { aspectRatio: box.aspectRatio, width: box.width }}>
               {it.type === 'audio' ? (
                 <div className="flex items-center gap-3 p-3 pr-24">
                   <AudioLines className="size-5 shrink-0 text-brand" aria-hidden />
