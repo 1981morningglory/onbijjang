@@ -1,5 +1,5 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react'
-import { Barcode, Blend, Calculator, Camera, Clapperboard, ClipboardCheck, ClipboardList, Crop, Download, Eraser, FilePenLine, FileText, Files, Film, Gavel, Gift, Grid3x3, Image as ImageIcon, Images, LayoutTemplate, Megaphone, MonitorPlay, NotebookPen, Package, PenLine, QrCode, ReceiptText, Rocket, Scale, Scissors, ShoppingBag, ShoppingCart, Signature, Sparkles, Store, Tags, Trophy, type LucideIcon } from 'lucide-react'
+import { Barcode, Blend, Calculator, Camera, Carrot, Clapperboard, ClipboardCheck, ClipboardList, Crop, Download, Eraser, FilePenLine, FileText, Files, Film, Gavel, Gift, Grid3x3, Image as ImageIcon, Images, LayoutTemplate, Megaphone, MonitorPlay, NotebookPen, Package, PenLine, QrCode, ReceiptText, Rocket, Scale, Scissors, ShoppingBag, ShoppingCart, Signature, Sparkles, Store, Tags, Trophy, type LucideIcon } from 'lucide-react'
 
 export type GroupId = 'image' | 'video' | 'doc' | 'fees' | 'sns' | 'life'
 
@@ -50,6 +50,13 @@ export const TOOLS: ToolDef[] = [
     keywords: ['리사이즈', '크기', '워터마크', '자르기', '크롭', '압축', 'webp', '썸네일', '사진'],
     icon: Crop, art: 'image', local: true, accepts: ['image'],
     component: lazy(() => import('@/tools/image')),
+  },
+  {
+    id: 'carrot', group: 'image', title: '당근',
+    summary: '글과 레퍼런스 사진으로 AI 이미지·영상 만들기(힉스필드 모델), 대화로 프롬프트 다듬기, 내 라이브러리 7일 보관',
+    keywords: ['AI', '이미지생성', '영상생성', '그림', 'AI이미지', 'AI영상', '힉스필드', 'higgsfield', '캐럿', '생성기', 'GPT', '클링', 'kling', '시댄스', 'seedance', '프롬프트'],
+    icon: Carrot, art: 'carrot', local: false, wide: true, roles: ['staff', 'admin'],
+    component: lazy(() => import('@/tools/carrot')),
   },
   {
     id: 'template', group: 'image', title: '템플릿 캔버스',
