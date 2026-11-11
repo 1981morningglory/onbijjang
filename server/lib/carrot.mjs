@@ -209,6 +209,27 @@ export function extFor(contentType, url, kind) {
 }
 export const typeOfExt = (ext) => (['mp4', 'mov', 'webm'].includes(ext) ? 'video' : ['mp3', 'wav', 'ogg', 'm4a'].includes(ext) ? 'audio' : 'image')
 
+/** 거래 내역에서 가장 최근 구독 크레딧 지급(매달 갱신) 찾기 */
+export function lastSubscriptionGrant(items) {
+  const g = (Array.isArray(items) ? items : []).find((t) => t?.action === 'grant' && /subscription/i.test(String(t.display_name ?? '')))
+  return g ? { at: g.created_at, credits: Number(g.credits) || 0 } : null
+}
+/** 지난 갱신 시각 → 다음 갱신 시각(한 달 뒤 같은 날·시각, 이미 지났으면 한 달씩 더) */
+export function nextRenewal(lastIso, now = Date.now()) {
+  const last = new Date(lastIso)
+  if (Number.isNaN(last.getTime())) return null
+  for (let k = 1; k < 24; k++) {
+    const d = new Date(last)
+    const day = last.getUTCDate()
+    d.setUTCDate(1)
+    d.setUTCMonth(last.getUTCMonth() + k)
+    const lastDay = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate()
+    d.setUTCDate(Math.min(day, lastDay))
+    if (d.getTime() > now) return d.toISOString()
+  }
+  return null
+}
+
 /** 보관 기간이 지났는가 */
 export const isExpired = (job, now = Date.now()) => now - Date.parse(job.createdAt) > KEEP_DAYS * 864e5
 

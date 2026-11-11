@@ -10,6 +10,7 @@ interface McpState {
   connectedAt: string | null
   pending: boolean
   balance: { credits: number; subscription_plan_type: string } | null
+  cycle?: { lastReset: string | null; nextReset: string | null; monthly: number | null } | null
   error?: string
   modelsAt?: string | null
   models?: number
@@ -62,6 +63,13 @@ export function CarrotAdmin() {
                 <>
                   {' '}
                   · 남은 크레딧 <b>{state.balance.credits.toLocaleString('ko-KR')}</b> · 요금제 {state.balance.subscription_plan_type}
+                </>
+              )}
+              {state.cycle?.nextReset && (
+                <>
+                  {' '}
+                  · 다음 갱신 {new Date(state.cycle.nextReset).toLocaleString('ko-KR', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Seoul' })}
+                  {state.cycle.monthly ? `(${state.cycle.monthly.toLocaleString('ko-KR')}크레딧으로 다시 채움)` : ''}
                 </>
               )}
               {state.connectedAt && <> · {new Date(state.connectedAt).toLocaleString('ko-KR')} 연결</>}
