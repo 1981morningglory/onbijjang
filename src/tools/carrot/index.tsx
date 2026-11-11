@@ -1,10 +1,10 @@
 import clsx from 'clsx'
-import { ArrowUp, AudioLines, Check, ChevronDown, Clapperboard, Copy, Download, Film, ImagePlus, Image as ImageIcon, Images, Loader2, MessagesSquare, Plus, RotateCcw, Trash2, Volume2, VolumeX, Wand2, X } from 'lucide-react'
+import { ArrowUp, AudioLines, Check, ChevronDown, Clapperboard, Clock, Copy, Download, Film, Gauge, ImagePlus, Image as ImageIcon, Images, Loader2, MessagesSquare, Mic, MicOff, Plus, RotateCcw, Search, Trash2, Volume2, VolumeX, Wand2, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { api, ApiError } from '@/lib/api'
 import { canvasToBlob, fileToCanvas, fitWithin, resizeCanvas } from '@/lib/image'
 import { Button, Callout, Dialog, EmptyState, MenuItem, Popover, Select, Spinner, toast } from '@/ui'
-import { choices, dayTitle, daysLeft, fitOptions, formatBytes, hasAudio, hasEndFrame, hasStartFrame, maxRefs, modelChipLabel, PLACEHOLDER, qualityLabel, ratioCss, ratioLabel, type Job, type Kind, type Model, type Options } from './logic'
+import { choices, dayTitle, daysLeft, DEFAULT_MODEL, DEFAULT_OPTIONS, fitOptions, formatBytes, formatCredits, hasAudio, hasEndFrame, hasStartFrame, maxRefs, modelChipLabel, optionLabel, PLACEHOLDER, ratioCss, ratioLabel, type Job, type Kind, type Model, type Options } from './logic'
 
 interface Info {
   connected: boolean
@@ -24,7 +24,10 @@ interface Owner {
 interface Upload {
   key: string
   preview: string
-  url: string | null
+  /** 힉스필드 media_id(올리는 중이면 null) */
+  id: string | null
+  /** 라이브러리 결과면 그 주소(작업 기록의 미리보기로 남긴다) */
+  keep?: string
 }
 interface ChatMsg {
   role: 'user' | 'assistant'
@@ -115,7 +118,7 @@ function Slot({ label, icon: Icon, upload, onFiles, onRemove, multiple, disabled
     return (
       <div className="group relative size-[72px] shrink-0 overflow-hidden rounded-lg border border-line bg-sunken">
         <img src={upload.preview} alt={label} className="size-full object-cover" />
-        {!upload.url && (
+        {!upload.id && (
           <div className="absolute inset-0 grid place-items-center bg-ink/40">
             <Loader2 className="size-5 animate-spin text-white" aria-label="올리는 중" />
           </div>
@@ -171,7 +174,8 @@ export default function CarrotTool() {
   const [owners, setOwners] = useState<Owner[] | undefined>()
   const [ownerView, setOwnerView] = useState('')
   const [busy, setBusy] = useState(false)
-  const [usd, setUsd] = useState<number | null>(null)
+  const [credits, setCredits] = useState<number | null>(null)
+  const [voices, setVoices] = useState<Array<{ id: string; name: string; gender: string; preview: string }> | null>(null)
   const [chatMode, setChatMode] = useState(false)
   const [chat, setChat] = useState<ChatMsg[]>([])
   const [chatBusy, setChatBusy] = useState(false)
@@ -186,8 +190,8 @@ export default function CarrotTool() {
   }, [])
 
   const models = useMemo(() => (info?.models ?? []).filter((m) => m.kind === kind), [info, kind])
-  const model = useMemo(() => models.find((m) => m.key === modelBy[kind]) ?? models[0] ?? null, [models, modelBy, kind])
-  const options = useMemo(() => (model ? fitOptions(model, optionsBy[model.key] ?? {}) : {}), [model, optionsBy])
+  const model = useMemo(() => models.find((m) => m.key === modelBy[kind]) ?? models.find((m) => m.key === DEFAULT_MODEL[kind]) ?? models[0] ?? null, [models, modelBy, kind])
+  const options = useMemo(() => (model ? fitOptions(model, optionsBy[model.key] ?? {}, DEFAULT_OPTIONS[model.key]) : {}), [model, optionsBy])
   const setOption = (patch: Options) => model && setOptionsBy((o) => ({ ...o, [model.key]: { ...options, ...patch } }))
 
   useEffect(() => savePref({ kind, model: modelBy, options: optionsBy, count }), [kind, modelBy, optionsBy, count])
@@ -222,19 +226,20 @@ export default function CarrotTool() {
       prompt: over?.prompt ?? prompt,
       options: over?.options ?? options,
       count: over?.count ?? (kind === 'image' ? count : 1),
-      refs: refs.map((r) => r.url).filter(Boolean),
-      start: start?.url ?? null,
-      end: end?.url ?? null,
+      refs: refs.map((r) => r.id).filter(Boolean),
+      start: start?.id ?? null,
+      end: end?.id ?? null,
+      previews: [start, ...refs, end].map((u) => u?.keep).filter(Boolean),
     }),
     [model, prompt, options, count, kind, refs, start, end],
   )
   const estimateKey = JSON.stringify({ ...reqBody(), prompt: prompt ? 'x' : '' })
   useEffect(() => {
-    setUsd(null)
-    if (!info?.connected || !model || kind === 'audio') return
+    setCredits(null)
+    if (!info?.connected || !model || (model.tts && !options.voice)) return
     const t = setTimeout(() => {
-      api<{ usd: number | null }>('/carrot/estimate', { method: 'POST', body: { ...reqBody(), prompt: prompt || 'preview' } })
-        .then((r) => setUsd(r.usd))
+      api<{ credits: number | null }>('/carrot/estimate', { method: 'POST', body: { ...reqBody(), prompt: prompt || 'preview' } })
+        .then((r) => setCredits(r.credits))
         .catch(() => {})
     }, 700)
     return () => clearTimeout(t)
@@ -242,14 +247,26 @@ export default function CarrotTool() {
   }, [estimateKey, info?.connected])
 
   // ── 이미지 올리기 ──
+  // ── 목소리(음성 TTS) ──
+  const loadVoices = () => {
+    if (voices) return
+    api<{ voices: NonNullable<typeof voices> }>('/carrot/voices')
+      .then((r) => setVoices(r.voices))
+      .catch((err) => toast.error(message(err)))
+  }
+  useEffect(() => {
+    if (info?.connected && kind === 'audio' && model?.tts) loadVoices()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [info?.connected, kind, model?.key])
+
   const upload = async (file: File, put: (u: Upload | null) => void) => {
     const key = Math.random().toString(36).slice(2)
     const preview = URL.createObjectURL(file)
-    put({ key, preview, url: null })
+    put({ key, preview, id: null })
     try {
       const data = await toDataUrl(file)
-      const r = await api<{ url: string }>('/carrot/upload', { method: 'POST', body: { data } })
-      put({ key, preview, url: r.url })
+      const r = await api<{ id: string }>('/carrot/upload', { method: 'POST', body: { data } })
+      put({ key, preview, id: r.id })
     } catch (err) {
       put(null)
       toast.error(message(err))
@@ -274,14 +291,14 @@ export default function CarrotTool() {
   const reuse = async (job: Job, index: number, as: 'ref' | 'start') => {
     const it = job.items[index]
     const key = Math.random().toString(36).slice(2)
-    const temp: Upload = { key, preview: it.url, url: null }
+    const temp: Upload = { key, preview: it.url, id: null, keep: it.url }
     if (as === 'start') {
       setKind('video')
       setStart(temp)
     } else setRefs((l) => [...l, temp])
     try {
-      const r = await api<{ url: string }>('/carrot/upload', { method: 'POST', body: { job: job.id, index } })
-      const done = { ...temp, url: r.url }
+      const r = await api<{ id: string }>('/carrot/upload', { method: 'POST', body: { job: job.id, index } })
+      const done = { ...temp, id: r.id }
       if (as === 'start') setStart(done)
       else setRefs((l) => l.map((x) => (x.key === key ? done : x)))
       toast.success(as === 'start' ? '영상 시작 프레임으로 넣었습니다.' : '레퍼런스로 넣었습니다.')
@@ -293,7 +310,7 @@ export default function CarrotTool() {
     textRef.current?.focus()
   }
 
-  const uploading = refs.some((r) => !r.url) || (start && !start.url) || (end && !end.url)
+  const uploading = refs.some((r) => !r.id) || (start && !start.id) || (end && !end.id)
 
   // ── 생성 ──
   const generate = async (over?: Partial<{ model: string; prompt: string; options: Options; count: number }>) => {
@@ -380,7 +397,9 @@ export default function CarrotTool() {
   const resolutions = model ? choices(model, 'resolution').map(String) : []
   const qualities = model ? choices(model, 'quality').map(String) : []
   const durations = model ? choices(model, 'duration').map(Number) : []
-  const canGenerate = Boolean(model) && kind !== 'audio' && info.connected && !busy && !uploading
+  const modes = model ? choices(model, 'mode').map(String) : []
+  const variants = model ? choices(model, 'variant').map(String) : []
+  const canGenerate = Boolean(model) && info.connected && !busy && !uploading && !(model?.tts && !options.voice)
   const groups = jobs.reduce<Array<{ title: string; jobs: Job[] }>>((acc, j) => {
     const t = dayTitle(j.createdAt)
     if (acc.at(-1)?.title === t) acc.at(-1)!.jobs.push(j)
@@ -407,8 +426,8 @@ export default function CarrotTool() {
         )}
       </div>
       {!info.connected && (
-        <Callout tone="warn" title="힉스필드 API 키가 아직 연결되지 않았습니다" className="mb-4">
-          관리자 화면 → ‘당근 연결’에서 힉스필드 콘솔의 키 ID 와 비밀값을 넣으면 바로 만들 수 있습니다.
+        <Callout tone="warn" title="힉스필드 계정이 아직 연결되지 않았습니다" className="mb-4">
+          관리자 화면 → ‘당근 연결’에서 회사 힉스필드 계정으로 한 번 로그인하면 바로 만들 수 있습니다(구독 크레딧 사용, 추가 결제 없음).
         </Callout>
       )}
 
@@ -499,12 +518,8 @@ export default function CarrotTool() {
           </Chip>
         </div>
         <div className="rounded-2xl border border-line bg-surface p-3 shadow-3 sm:p-4">
-          {kind === 'audio' ? (
-            <Callout tone="info" title="오디오는 아직 만들 수 없습니다">
-              힉스필드 API 에 음악·음성(TTS) 모델이 아직 없습니다. 소리가 필요하면 영상 탭에서 ‘소리 켬’을 지원하는 모델(Seedance·Kling·Wan 등)을 고르세요.
-            </Callout>
-          ) : (
             <>
+              {kind !== 'audio' && (
               <div className="flex gap-2 overflow-x-auto pb-1">
                 {refs.map((r, i) => (
                   <Slot key={r.key} label={`레퍼런스 ${i + 1}`} icon={Plus} upload={r} onFiles={() => {}} onRemove={() => setRefs((l) => l.filter((x) => x.key !== r.key))} />
@@ -518,6 +533,7 @@ export default function CarrotTool() {
                   </>
                 )}
               </div>
+              )}
               <textarea
                 ref={textRef}
                 value={prompt}
@@ -538,14 +554,14 @@ export default function CarrotTool() {
                 {model && (
                   <Popover
                     trigger={(p) => <ChipTrigger p={p} icon={Clapperboard} label={modelChipLabel(model, options)} />}
-                    className="w-80"
+                    className="w-[340px]"
                   >
                     {(close) => (
                       <div className="flex flex-col">
-                        <PickList
-                          title={kind === 'image' ? '이미지 모델' : '영상 모델'}
+                        <ModelPicker
+                          title={kind === 'image' ? '이미지 모델' : kind === 'video' ? '영상 모델' : '오디오 모델'}
                           value={model.key}
-                          items={models.map((m) => ({ value: m.key, label: m.label, hint: m.note }))}
+                          models={models}
                           onPick={(k) => {
                             setModelBy((s) => ({ ...s, [kind]: k }))
                             close()
@@ -553,7 +569,7 @@ export default function CarrotTool() {
                         />
                         {qualities.length > 0 && (
                           <div className="mt-1 border-t border-line pt-1">
-                            <PickList title="품질" value={options.quality} items={qualities.map((q) => ({ value: q, label: qualityLabel(q) }))} onPick={(q) => setOption({ quality: q })} />
+                            <PickList title="품질" value={options.quality} items={qualities.map((q) => ({ value: q, label: optionLabel(q) }))} onPick={(q) => setOption({ quality: q })} />
                           </div>
                         )}
                       </div>
@@ -620,13 +636,114 @@ export default function CarrotTool() {
                     )}
                   </Popover>
                 )}
+                {kind === 'video' && modes.length > 1 && (
+                  <Popover trigger={(p) => <ChipTrigger p={p} icon={Gauge} label={optionLabel(options.mode ?? modes[0])} />} className="w-40">
+                    {(close) => (
+                      <PickList
+                        title="모드"
+                        value={options.mode}
+                        items={modes.map((m) => ({ value: m, label: optionLabel(m) }))}
+                        onPick={(m) => {
+                          setOption({ mode: m })
+                          close()
+                        }}
+                      />
+                    )}
+                  </Popover>
+                )}
+                {kind !== 'image' && variants.length > 1 && (
+                  <Popover trigger={(p) => <ChipTrigger p={p} label={variantLabel(options.variant ?? variants[0])} />} className="w-48">
+                    {(close) => (
+                      <PickList
+                        title="버전"
+                        value={options.variant}
+                        items={variants.map((v) => ({ value: v, label: variantLabel(v) }))}
+                        onPick={(v) => {
+                          setOption({ variant: v })
+                          close()
+                        }}
+                      />
+                    )}
+                  </Popover>
+                )}
+                {kind === 'audio' && model?.tts && (
+                  <Popover
+                    trigger={(p) => (
+                      <ChipTrigger
+                        p={{
+                          ...p,
+                          onClick: () => {
+                            loadVoices()
+                            p.onClick()
+                          },
+                        }}
+                        icon={Mic}
+                        label={voices?.find((v) => v.id === options.voice)?.name ?? '목소리 고르기'}
+                      />
+                    )}
+                    className="w-64"
+                  >
+                    {(close) =>
+                      !voices ? (
+                        <div className="flex items-center gap-2 p-3 text-sm text-muted">
+                          <Spinner /> 목소리 불러오는 중
+                        </div>
+                      ) : (
+                        <div className="flex flex-col">
+                          <p className="px-2.5 pb-1 pt-1.5 text-xs font-semibold text-muted">목소리 (미리 듣기: ▶)</p>
+                          {voices.map((v) => (
+                            <div key={v.id} className="flex items-center gap-1 rounded-sm hover:bg-sunken">
+                              <button
+                                type="button"
+                                className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left text-sm text-ink-2"
+                                onClick={() => {
+                                  setOption({ voice: v.id })
+                                  close()
+                                }}
+                              >
+                                <Check className={clsx('size-4 shrink-0 text-brand', options.voice !== v.id && 'invisible')} aria-hidden />
+                                <span className="font-medium">{v.name}</span>
+                                <span className="text-xs text-muted">{v.gender === 'male' ? '남성' : v.gender === 'female' ? '여성' : ''}</span>
+                              </button>
+                              {v.preview && (
+                                <button type="button" className="px-2 text-xs text-brand-ink hover:underline" aria-label={`${v.name} 미리 듣기`} onClick={() => new Audio(v.preview).play().catch(() => {})}>
+                                  ▶
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )
+                    }
+                  </Popover>
+                )}
+                {kind === 'audio' && model && !model.tts && durations.length > 0 && (
+                  <Popover trigger={(p) => <ChipTrigger p={p} icon={Clock} label={`${options.duration ?? 30}초`} />} className="w-36">
+                    {(close) => (
+                      <PickList
+                        title="길이"
+                        value={options.duration}
+                        items={durations.map((d) => ({ value: d, label: `${d}초` }))}
+                        onPick={(d) => {
+                          setOption({ duration: d })
+                          close()
+                        }}
+                      />
+                    )}
+                  </Popover>
+                )}
+                {kind === 'audio' && model?.params.force_instrumental && (
+                  <Chip icon={options.instrumental ? MicOff : Mic} active={options.instrumental} onClick={() => setOption({ instrumental: !options.instrumental })} aria-pressed={Boolean(options.instrumental)}>
+                    {options.instrumental ? '보컬 없음' : '보컬 있음'}
+                  </Chip>
+                )}
                 {kind === 'video' && model && hasAudio(model) && (
                   <Chip icon={options.audio ? Volume2 : VolumeX} active={options.audio} onClick={() => setOption({ audio: !options.audio })} aria-pressed={Boolean(options.audio)}>
                     {options.audio ? '소리 켬' : '소리 끔'}
                   </Chip>
                 )}
                 <div className="ml-auto flex items-center gap-3">
-                  {usd != null && !chatMode && <span className="text-xs text-muted" title="힉스필드가 알려 준 예상 비용(API 잔액에서 빠짐)">예상 ${usd.toFixed(usd < 0.1 ? 3 : 2)}</span>}
+                  {credits != null && !chatMode && <span className="text-xs text-muted" title="힉스필드가 알려 준 예상 크레딧(회사 구독 크레딧에서 빠짐)">예상 {formatCredits(credits)}</span>}
                   {chatMode ? (
                     <Button variant="primary" icon={ArrowUp} loading={chatBusy} disabled={!prompt.trim()} onClick={sendChat}>
                       보내기
@@ -639,12 +756,32 @@ export default function CarrotTool() {
                 </div>
               </div>
             </>
-          )}
         </div>
       </div>
 
       </div>
       <Lightbox view={view} onClose={() => setView(null)} onMove={(index) => view && setView({ ...view, index })} />
+    </div>
+  )
+}
+
+const VARIANT: Record<string, string> = { elevenlabs: 'ElevenLabs', minimax: 'MiniMax', seed_speech: 'Seed Speech', vibe_voice: 'Vibe Voice', cozy_voice: 'Cozy Voice' }
+const variantLabel = (v: string) => VARIANT[v] ?? v.replace(/^veo-3-1-/, 'Veo 3.1 ').replace('preview', '최고 품질').replace('fast', '빠름')
+
+/** 모델 고르기(검색 칸 + 목록) */
+function ModelPicker({ title, value, models, onPick }: { title: string; value: string; models: Model[]; onPick: (key: string) => void }) {
+  const [q, setQ] = useState('')
+  const list = q.trim() ? models.filter((m) => `${m.label} ${m.key} ${m.provider} ${m.note}`.toLowerCase().includes(q.trim().toLowerCase())) : models
+  return (
+    <div className="flex flex-col">
+      <div className="flex items-center gap-2 border-b border-line px-2.5 pb-2 pt-1">
+        <Search className="size-4 text-muted" aria-hidden />
+        <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={`${title} 찾기 (${models.length}개)`} aria-label={`${title} 찾기`} className="w-full bg-transparent text-sm outline-none placeholder:text-muted" />
+      </div>
+      <div className="max-h-[46dvh] overflow-auto">
+        <PickList title={title} value={value} items={list.map((m) => ({ value: m.key, label: m.label, hint: [m.provider, m.note].filter(Boolean).join(' · ') }))} onPick={onPick} />
+        {!list.length && <p className="px-3 py-4 text-sm text-muted">맞는 모델이 없습니다.</p>}
+      </div>
     </div>
   )
 }
@@ -669,16 +806,16 @@ function ChipTrigger({ p, label, icon, ratio }: { p: { onClick: () => void; 'ari
 
 function JobCard({ job, showOwner, onOpen, onRemove, onReprompt, onReuse }: { job: Job; showOwner: boolean; onOpen: (i: number) => void; onRemove: () => void; onReprompt: () => void; onReuse: (i: number, as: 'ref' | 'start') => void }) {
   const o = job.options ?? {}
-  const meta = [job.modelLabel, o.quality && qualityLabel(o.quality), o.aspect_ratio && ratioLabel(o.aspect_ratio), job.kind === 'video' && o.duration ? `${o.duration}초` : null, o.resolution?.toUpperCase()].filter(Boolean).join(' · ')
+  const meta = [job.modelLabel, o.quality && optionLabel(o.quality), o.aspect_ratio && ratioLabel(o.aspect_ratio), job.kind !== 'image' && o.duration ? `${o.duration}초` : null, o.resolution?.toUpperCase(), o.mode && job.kind === 'video' ? optionLabel(o.mode) : null].filter(Boolean).join(' · ')
   const left = daysLeft(job.expiresAt)
   const placeholders = job.status === 'running' ? Math.max(0, job.count - job.items.length) : 0
   return (
     <article className="flex flex-col gap-2">
       <div className="flex justify-end">
         <div className="max-w-[80%] rounded-2xl bg-brand-soft px-4 py-2.5 text-sm text-brand-ink">
-          {(job.refs.length > 0 || job.start || job.end) && (
+          {job.refs.length > 0 && (
             <div className="mb-1.5 flex gap-1.5">
-              {[...(job.start ? [job.start] : []), ...job.refs, ...(job.end ? [job.end] : [])].slice(0, 6).map((u) => (
+              {job.refs.slice(0, 6).map((u) => (
                 <img key={u} src={u} alt="" className="size-10 rounded-md border border-line object-cover" onError={(e) => ((e.target as HTMLImageElement).style.display = 'none')} />
               ))}
             </div>
@@ -690,7 +827,7 @@ function JobCard({ job, showOwner, onOpen, onRemove, onReprompt, onReuse }: { jo
         {showOwner && <span className="rounded-full bg-sunken px-2 py-0.5 font-semibold text-ink-2">{job.ownerName}</span>}
         <span>{meta}</span>
         <span>· {new Date(job.createdAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
-        {job.usd != null && <span>· 약 ${job.usd}</span>}
+        {job.credits != null && <span>· {formatCredits(job.credits)}</span>}
         <span className={clsx(left <= 1 && 'text-warn')}>· {left ? `${left}일 뒤 자동 삭제` : '오늘 자동 삭제'}</span>
         <span className="ml-auto flex gap-1">
           <button type="button" onClick={onReprompt} className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 hover:bg-sunken hover:text-ink" title="이 설정으로 다시 쓰기">
@@ -703,17 +840,22 @@ function JobCard({ job, showOwner, onOpen, onRemove, onReprompt, onReuse }: { jo
       </div>
       {job.error && <p className="text-xs text-warn">{job.error}</p>}
       {(job.items.length > 0 || placeholders > 0) && (
-        <div className={clsx('grid gap-2', job.kind === 'video' ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-2 sm:grid-cols-4')}>
+        <div className={clsx('grid gap-2', job.kind === 'audio' ? 'grid-cols-1' : job.kind === 'video' ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-2 sm:grid-cols-4')}>
           {job.items.map((it, i) => (
             <div key={it.url} className="group relative overflow-hidden rounded-xl border border-line bg-sunken">
-              {it.type === 'video' ? (
+              {it.type === 'audio' ? (
+                <div className="flex items-center gap-3 p-3 pr-24">
+                  <AudioLines className="size-5 shrink-0 text-brand" aria-hidden />
+                  <audio src={it.url} controls preload="metadata" className="h-10 w-full" />
+                </div>
+              ) : it.type === 'video' ? (
                 <video src={it.url} controls preload="metadata" playsInline className="block w-full" style={{ aspectRatio: ratioCss(o.aspect_ratio) }} />
               ) : (
                 <button type="button" onClick={() => onOpen(i)} className="block w-full" aria-label="크게 보기">
                   <img src={it.url} alt={job.prompt.slice(0, 60)} loading="lazy" className="block w-full object-cover" style={/^\d+:\d+$/.test(o.aspect_ratio ?? '') ? { aspectRatio: ratioCss(o.aspect_ratio) } : undefined} />
                 </button>
               )}
-              <div className="absolute right-1.5 top-1.5 flex gap-1 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
+              <div className={clsx('absolute right-1.5 flex gap-1 transition-opacity', it.type === 'audio' ? 'top-1/2 -translate-y-1/2' : 'top-1.5 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100')}>
                 <a href={`${it.url}?download=1`} className="grid size-8 place-items-center rounded-full bg-ink/70 text-white hover:bg-ink" title={`내려받기 (${formatBytes(it.size)})`} aria-label="내려받기">
                   <Download className="size-4" aria-hidden />
                 </a>
@@ -754,10 +896,10 @@ function JobCard({ job, showOwner, onOpen, onRemove, onReprompt, onReuse }: { jo
             </div>
           ))}
           {Array.from({ length: placeholders }, (_, i) => (
-            <div key={`p${i}`} className="skeleton grid place-items-center rounded-xl text-xs font-semibold text-muted" style={{ aspectRatio: ratioCss(o.aspect_ratio) }}>
+            <div key={`p${i}`} className="skeleton grid place-items-center rounded-xl text-xs font-semibold text-muted" style={{ aspectRatio: job.kind === 'audio' ? '8 / 1' : ratioCss(o.aspect_ratio) }}>
               <span className="flex items-center gap-1.5 rounded-full bg-surface/80 px-2.5 py-1">
                 <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                {job.kind === 'video' ? '영상 만드는 중(몇 분 걸려요)' : '만드는 중'}
+                {job.kind === 'video' ? '영상 만드는 중(몇 분 걸려요)' : job.kind === 'audio' ? '오디오 만드는 중' : '만드는 중'}
               </span>
             </div>
           ))}
@@ -765,7 +907,7 @@ function JobCard({ job, showOwner, onOpen, onRemove, onReprompt, onReuse }: { jo
       )}
       {job.status !== 'running' && !job.items.length && (
         <EmptyState title={job.status === 'nsfw' ? '내용 검수에 걸려 만들지 못했습니다' : '만들지 못했습니다'} className="py-6">
-          실패한 요청은 비용이 빠지지 않습니다. 프롬프트를 바꿔 다시 해 보세요.
+          실패하거나 검수에 걸린 요청은 크레딧이 빠지지 않습니다. 프롬프트를 바꿔 다시 해 보세요.
         </EmptyState>
       )}
     </article>
