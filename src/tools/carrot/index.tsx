@@ -879,6 +879,19 @@ export default function CarrotTool() {
 const VARIANT: Record<string, string> = { elevenlabs: 'ElevenLabs', minimax: 'MiniMax', seed_speech: 'Seed Speech', vibe_voice: 'Vibe Voice', cozy_voice: 'Cozy Voice' }
 const variantLabel = (v: string) => VARIANT[v] ?? v.replace(/^veo-3-1-/, 'Veo 3.1 ').replace('preview', '최고 품질').replace('fast', '빠름')
 
+/** 라이브러리 미리보기 크기(픽셀). 한 장일 때 / 여러 장일 때. 어떤 경우에도 1000을 넘지 않는다 */
+const MEDIA_MAX = { w: 460, h: 460 }
+const MEDIA_MAX_MANY = { w: 340, h: 380 }
+/** 비율에 맞춰 가로·세로 상한 안에 들어가는 미리보기 상자 */
+function mediaBox(ratio: string | undefined, single: boolean): { aspectRatio?: string; width?: string; maxWidth?: number; maxHeight?: number } {
+  const lim = single ? MEDIA_MAX : MEDIA_MAX_MANY
+  const m = /^(\d+):(\d+)$/.exec(ratio ?? '')
+  if (!m) return { maxWidth: Math.min(lim.w, 1000), maxHeight: Math.min(lim.h, 1000) }
+  const r = Number(m[1]) / Number(m[2])
+  const w = Math.round(Math.min(lim.w, lim.h * r, 1000, 1000 * r))
+  return { aspectRatio: ratioCss(ratio), width: `min(100%, ${w}px)` }
+}
+
 /** 남은 크레딧·다음 갱신까지 남은 기간 */
 function CreditBar({ account, onRefresh }: { account: Account | null; onRefresh: () => void }) {
   const [now, setNow] = useState(Date.now())
@@ -968,6 +981,7 @@ function JobCard({ job, showOwner, onOpen, onRemove, onReprompt, onReuse }: { jo
   const meta = [job.modelLabel, o.quality && optionLabel(o.quality), o.aspect_ratio && ratioLabel(o.aspect_ratio), job.kind !== 'image' && o.duration ? `${o.duration}초` : null, o.resolution?.toUpperCase(), o.mode && job.kind === 'video' ? optionLabel(o.mode) : null].filter(Boolean).join(' · ')
   const left = daysLeft(job.expiresAt)
   const placeholders = job.status === 'running' ? Math.max(0, job.count - job.items.length) : 0
+  const box = mediaBox(o.aspect_ratio, job.count <= 1)
   return (
     <article className="flex flex-col gap-2">
       <div className="flex justify-end">
@@ -999,19 +1013,19 @@ function JobCard({ job, showOwner, onOpen, onRemove, onReprompt, onReuse }: { jo
       </div>
       {job.error && <p className="text-[14px] text-warn">{job.error}</p>}
       {(job.items.length > 0 || placeholders > 0) && (
-        <div className={clsx('grid gap-3', job.kind === 'audio' ? 'grid-cols-1' : job.count <= 1 ? 'max-w-[760px] grid-cols-1' : 'grid-cols-1 sm:grid-cols-2')}>
+        <div className={clsx(job.kind === 'audio' ? 'grid grid-cols-1 gap-3' : 'flex flex-wrap items-start gap-3')}>
           {job.items.map((it, i) => (
-            <div key={it.url} className="group relative overflow-hidden rounded-xl border border-line bg-sunken">
+            <div key={it.url} className="group relative max-w-full overflow-hidden rounded-xl border border-line bg-sunken" style={it.type === 'audio' ? undefined : box}>
               {it.type === 'audio' ? (
                 <div className="flex items-center gap-3 p-3 pr-24">
                   <AudioLines className="size-5 shrink-0 text-brand" aria-hidden />
                   <audio src={it.url} controls preload="metadata" className="h-10 w-full" />
                 </div>
               ) : it.type === 'video' ? (
-                <video src={it.url} controls preload="metadata" playsInline className="block w-full" style={{ aspectRatio: ratioCss(o.aspect_ratio) }} />
+                <video src={it.url} controls preload="metadata" playsInline className="block h-full w-full bg-ink object-contain" style={box.aspectRatio ? undefined : { maxHeight: MEDIA_MAX.h }} />
               ) : (
                 <button type="button" onClick={() => onOpen(i)} className="block w-full" aria-label="크게 보기">
-                  <img src={it.url} alt={job.prompt.slice(0, 60)} loading="lazy" className="block w-full object-cover" style={/^\d+:\d+$/.test(o.aspect_ratio ?? '') ? { aspectRatio: ratioCss(o.aspect_ratio) } : undefined} />
+                  <img src={it.url} alt={job.prompt.slice(0, 60)} loading="lazy" className={clsx('block', box.aspectRatio ? 'h-full w-full object-cover' : 'h-auto w-auto object-contain')} style={box.aspectRatio ? undefined : { maxWidth: box.maxWidth, maxHeight: box.maxHeight }} />
                 </button>
               )}
               <div className={clsx('absolute right-1.5 flex gap-1 transition-opacity', it.type === 'audio' ? 'top-1/2 -translate-y-1/2' : 'top-1.5 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100')}>
@@ -1055,7 +1069,7 @@ function JobCard({ job, showOwner, onOpen, onRemove, onReprompt, onReuse }: { jo
             </div>
           ))}
           {Array.from({ length: placeholders }, (_, i) => (
-            <div key={`p${i}`} className="skeleton grid place-items-center rounded-xl text-xs font-semibold text-muted" style={{ aspectRatio: job.kind === 'audio' ? '8 / 1' : ratioCss(o.aspect_ratio) }}>
+            <div key={`p${i}`} className="skeleton grid max-w-full place-items-center rounded-xl text-xs font-semibold text-muted" style={job.kind === 'audio' ? { aspectRatio: '8 / 1' } : { aspectRatio: box.aspectRatio ?? '1 / 1', width: box.width ?? `min(100%, ${MEDIA_MAX.w}px)` }}>
               <span className="flex items-center gap-1.5 rounded-full bg-surface/80 px-2.5 py-1">
                 <Loader2 className="size-3.5 animate-spin" aria-hidden />
                 {job.kind === 'video' ? '영상 만드는 중(몇 분 걸려요)' : job.kind === 'audio' ? '오디오 만드는 중' : '만드는 중'}
@@ -1111,7 +1125,7 @@ function Lightbox({ view, onClose, onMove }: { view: { job: Job; index: number }
         )
       }
     >
-      {it && <img src={it.url} alt="" className="mx-auto max-h-[70dvh] w-auto object-contain" />}
+      {it && <img src={it.url} alt="" className="mx-auto max-h-[min(70dvh,1000px)] max-w-[min(100%,1000px)] w-auto object-contain" />}
     </Dialog>
   )
 }
