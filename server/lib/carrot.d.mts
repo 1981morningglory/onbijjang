@@ -16,3 +16,5 @@ export function extFor(contentType: string | null, url: string, kind: string): s
 export function typeOfExt(ext: string): string
 export function isExpired(job: { createdAt: string }, now?: number): boolean
 export function usageByOwner(jobs: unknown[], ledger?: unknown[]): Array<{ owner: string; name: string; jobs: number; images: number; videos: number; audios: number; failed: number; bytes: number; credits: number; credits30: number }>
+export function lastSubscriptionGrant(items: unknown): { at: string; credits: number } | null
+export function nextRenewal(lastIso: string, now?: number): string | null

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SNAPSHOT, extFor, isExpired, jobIds, jobResult, normalizeModel, planRequest, toolError, usageByOwner } from '../../../server/lib/carrot.mjs'
+import { SNAPSHOT, extFor, isExpired, jobIds, jobResult, lastSubscriptionGrant, nextRenewal, normalizeModel, planRequest, toolError, usageByOwner } from '../../../server/lib/carrot.mjs'
 import { DEFAULT_MODEL, DEFAULT_OPTIONS, choices, daysLeft, durationSteps, fitOptions, hasEndFrame, hasStartFrame, maxRefs, modelChipLabel, ratioLabel } from './logic'
 
 const M = (key: string) => {
@@ -137,5 +137,23 @@ describe('화면 계산', () => {
     expect(hasStartFrame(M('kling3_0'))).toBe(true)
     expect(hasEndFrame(M('kling3_0'))).toBe(true)
     expect(hasEndFrame(M('veo3_1'))).toBe(false)
+  })
+})
+
+describe('남은 크레딧 기간', () => {
+  it('거래 내역에서 가장 최근 구독 크레딧 지급을 찾는다', () => {
+    const items = [
+      { display_name: 'Kling v3.0', credits: -20, action: 'spend', created_at: '2026-11-11T02:27:16Z' },
+      { display_name: 'Nano Banana 2.1', credits: 1.5, action: 'refund', created_at: '2026-10-15T05:50:05Z' },
+      { display_name: 'Subscription Credits', credits: 3000, action: 'grant', created_at: '2026-10-13T08:00:20Z' },
+      { display_name: 'Subscription Credits Reset', credits: -2855, action: 'deduct', created_at: '2026-10-13T08:00:20Z' },
+    ]
+    expect(lastSubscriptionGrant(items)).toEqual({ at: '2026-10-13T08:00:20Z', credits: 3000 })
+    expect(lastSubscriptionGrant([])).toBeNull()
+  })
+  it('다음 갱신: 한 달 뒤 같은 날·시각, 지났으면 다음 달, 짧은 달은 말일', () => {
+    expect(nextRenewal('2026-10-13T08:00:20Z', Date.parse('2026-11-11T03:00:00Z'))).toBe('2026-11-13T08:00:20.000Z')
+    expect(nextRenewal('2026-10-13T08:00:20Z', Date.parse('2026-11-14T00:00:00Z'))).toBe('2026-12-13T08:00:20.000Z')
+    expect(nextRenewal('2026-01-31T00:00:00Z', Date.parse('2026-02-10T00:00:00Z'))).toBe('2026-02-28T00:00:00.000Z')
   })
 })

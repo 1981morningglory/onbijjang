@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { ArrowUp, AudioLines, Check, ChevronDown, Clapperboard, Clock, Copy, Download, Film, Gauge, ImagePlus, Image as ImageIcon, Images, Loader2, MessagesSquare, Mic, MicOff, Plus, RotateCcw, Search, Trash2, Volume2, VolumeX, Wand2, X } from 'lucide-react'
+import { ArrowUp, AudioLines, Check, ChevronDown, Clapperboard, Clock, CalendarClock, Coins, Copy, Download, Film, Gauge, ImagePlus, Image as ImageIcon, Images, Loader2, MessagesSquare, Mic, MicOff, Plus, RefreshCw, RotateCcw, Search, Trash2, Volume2, VolumeX, Wand2, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { api, ApiError } from '@/lib/api'
 import { canvasToBlob, fileToCanvas, fitWithin, resizeCanvas } from '@/lib/image'
@@ -28,6 +28,14 @@ interface Upload {
   id: string | null
   /** 라이브러리 결과면 그 주소(작업 기록의 미리보기로 남긴다) */
   keep?: string
+}
+interface Account {
+  credits: number
+  plan: string
+  monthly?: number
+  lastReset?: string
+  nextReset?: string | null
+  at: string
 }
 interface Proposal {
   title?: string
@@ -184,6 +192,7 @@ export default function CarrotTool() {
   const [ownerView, setOwnerView] = useState('')
   const [busy, setBusy] = useState(false)
   const [credits, setCredits] = useState<number | null>(null)
+  const [account, setAccount] = useState<Account | null>(null)
   const [voices, setVoices] = useState<Array<{ id: string; name: string; gender: string; preview: string }> | null>(null)
   const [chatMode, setChatMode] = useState(false)
   const [chat, setChat] = useState<ChatMsg[]>([])
@@ -213,6 +222,28 @@ export default function CarrotTool() {
     return r.running
   }, [ownerView])
   const running = jobs.some((j) => j.status === 'running')
+  // ── 남은 크레딧·갱신일: 1분마다, 창으로 돌아올 때, 생성·완료 때 새로 ──
+  const loadAccount = useCallback((fresh = false) => {
+    api<{ account: Account | null }>(`/carrot/account${fresh ? '?fresh=1' : ''}`)
+      .then((r) => r.account && setAccount(r.account))
+      .catch(() => {})
+  }, [])
+  useEffect(() => {
+    if (!info?.connected) return
+    loadAccount()
+    const t = setInterval(() => loadAccount(), 60_000)
+    const onFocus = () => loadAccount()
+    window.addEventListener('focus', onFocus)
+    return () => {
+      clearInterval(t)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [info?.connected, loadAccount])
+  const doneCount = jobs.filter((j) => j.status !== 'running').length
+  useEffect(() => {
+    if (info?.connected && doneCount) loadAccount(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doneCount])
   useEffect(() => {
     if (!info) return
     loadJobs().catch(() => {})
@@ -359,6 +390,7 @@ export default function CarrotTool() {
     try {
       const r = await api<{ job: Job }>('/carrot/generate', { method: 'POST', body })
       setJobs((list) => (ownerView && ownerView !== 'all' && ownerView !== info?.me.owner ? list : [...list, r.job]))
+      setTimeout(() => loadAccount(true), 2500)
       if (!over) setPrompt('')
     } catch (err) {
       toast.error(message(err))
@@ -456,6 +488,7 @@ export default function CarrotTool() {
 
   return (
     <div className="relative mx-auto flex w-full max-w-[1100px] flex-col">
+      {info.connected && <CreditBar account={account} onRefresh={() => loadAccount(true)} />}
       {/* 위: 안내·라이브러리 보기 */}
       <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-muted">
         <Images className="size-4" aria-hidden />
@@ -496,7 +529,7 @@ export default function CarrotTool() {
         {chatMode &&
           chat.map((m, i) => (
             <div key={i} className={clsx('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
-              <div className={clsx('max-w-[78%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed', m.role === 'user' ? 'bg-brand text-white' : 'border border-line bg-surface text-ink-2')}>
+              <div className={clsx('max-w-[78%] rounded-2xl px-4 py-3 text-base leading-relaxed', m.role === 'user' ? 'bg-brand text-white' : 'border border-line bg-surface text-ink-2')}>
                 <p className="whitespace-pre-wrap">{m.text}</p>
                 {m.proposals && m.proposals.length > 1 && (
                   <div className="mt-2.5 flex flex-wrap items-center gap-2">
@@ -508,14 +541,14 @@ export default function CarrotTool() {
                 )}
                 {m.proposals?.map((pr, n) => (
                   <div key={n} className="mt-2.5 rounded-lg border border-line bg-paper p-3 text-ink">
-                    <p className="text-xs font-semibold text-muted">
+                    <p className="text-[14px] font-semibold text-muted">
                       생성안{m.proposals!.length > 1 ? ` ${n + 1}` : ''}
                       {pr.title ? ` · ${pr.title}` : ''} · {info.models.find((x) => x.key === pr.model)?.label}
                       {pr.aspect_ratio ? ` · ${ratioLabel(pr.aspect_ratio)}` : ''}
                       {pr.duration && pr.kind === 'video' ? ` · ${pr.duration}초` : ''}
                       {pr.kind === 'image' ? ` · ${pr.count}개` : ''}
                     </p>
-                    <p className="mt-1 whitespace-pre-wrap font-mono text-xs leading-relaxed">{pr.prompt}</p>
+                    <p className="mt-1 whitespace-pre-wrap font-mono text-[14px] leading-relaxed">{pr.prompt}</p>
                     <div className="mt-2 flex flex-wrap gap-2">
                       <Button size="sm" variant="secondary" icon={Wand2} disabled={!info.connected || busy || runningAll} onClick={() => runProposal(pr)}>
                         이대로 생성
@@ -626,7 +659,7 @@ export default function CarrotTool() {
                 rows={2}
                 placeholder={chatMode ? '어떤 걸 만들고 싶은지 편하게 말해 주세요. 함께 프롬프트를 다듬어 드립니다' : kind === 'audio' ? PLACEHOLDER[kind] : `${PLACEHOLDER[kind]} (이미지는 끌어다 놓거나 Ctrl+V 로 붙여 넣기)`}
                 aria-label="프롬프트"
-                className="mt-2 block w-full resize-none border-0 bg-transparent px-1 py-1 text-[15px] leading-relaxed text-ink outline-none placeholder:text-muted focus:outline-none"
+                className="mt-2 block w-full resize-none border-0 bg-transparent px-1 py-1 text-[17px] leading-relaxed text-ink outline-none placeholder:text-muted focus:outline-none"
               />
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 {model && (
@@ -846,6 +879,54 @@ export default function CarrotTool() {
 const VARIANT: Record<string, string> = { elevenlabs: 'ElevenLabs', minimax: 'MiniMax', seed_speech: 'Seed Speech', vibe_voice: 'Vibe Voice', cozy_voice: 'Cozy Voice' }
 const variantLabel = (v: string) => VARIANT[v] ?? v.replace(/^veo-3-1-/, 'Veo 3.1 ').replace('preview', '최고 품질').replace('fast', '빠름')
 
+/** 남은 크레딧·다음 갱신까지 남은 기간 */
+function CreditBar({ account, onRefresh }: { account: Account | null; onRefresh: () => void }) {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(t)
+  }, [])
+  if (!account) return <div className="skeleton mb-3 h-[52px] rounded-xl" aria-label="크레딧 불러오는 중" />
+  const left = account.nextReset ? Date.parse(account.nextReset) - now : null
+  const days = left != null ? Math.floor(left / 864e5) : null
+  const hours = left != null ? Math.floor((left % 864e5) / 36e5) : null
+  const pct = account.monthly ? Math.max(0, Math.min(100, (account.credits / account.monthly) * 100)) : null
+  const low = account.monthly ? account.credits < account.monthly * 0.1 : account.credits < 100
+  const resetText = account.nextReset ? new Date(account.nextReset).toLocaleString('ko-KR', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Seoul' }) : null
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-line bg-surface px-4 py-2.5">
+      <div className="flex min-w-[220px] flex-1 items-center gap-3">
+        <Coins className={clsx('size-5 shrink-0', low ? 'text-warn' : 'text-brand')} aria-hidden />
+        <div className="min-w-0 flex-1">
+          <p className="text-[15px] text-ink-2">
+            남은 크레딧 <b className={clsx('text-lg tabular-nums', low ? 'text-warn' : 'text-ink')}>{account.credits.toLocaleString('ko-KR', { maximumFractionDigits: 1 })}</b>
+            {account.monthly ? <span className="text-muted"> / {account.monthly.toLocaleString('ko-KR')}</span> : null}
+            {account.plan && <span className="ml-1.5 rounded-full bg-sunken px-2 py-0.5 text-xs font-semibold uppercase text-muted">{account.plan}</span>}
+          </p>
+          {pct != null && (
+            <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-sunken" role="meter" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100} aria-label="이번 달 남은 크레딧 비율">
+              <div className={clsx('h-full rounded-full', low ? 'bg-warn' : 'bg-brand')} style={{ width: `${pct}%` }} />
+            </div>
+          )}
+        </div>
+      </div>
+      {resetText && days != null && hours != null && (
+        <div className="flex items-center gap-2 text-[15px] text-ink-2">
+          <CalendarClock className="size-5 shrink-0 text-muted" aria-hidden />
+          <span>
+            갱신까지 <b className="text-ink">{days > 0 ? `${days}일 ${hours}시간` : `${Math.max(0, hours)}시간`}</b>
+            <span className="text-muted"> · {resetText}</span>
+          </span>
+        </div>
+      )}
+      <button type="button" onClick={onRefresh} className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-sm text-muted hover:bg-sunken hover:text-ink" title={`마지막 확인 ${new Date(account.at).toLocaleTimeString('ko-KR')}`}>
+        <RefreshCw className="size-4" aria-hidden /> 새로 보기
+      </button>
+      {resetText && <p className="w-full text-xs text-muted">갱신 때 쓰지 않은 구독 크레딧은 사라지고 {account.monthly ? `${account.monthly.toLocaleString('ko-KR')}크레딧으로` : ''} 다시 채워집니다(힉스필드 거래 내역 기준으로 계산한 날짜).</p>}
+    </div>
+  )
+}
+
 /** 모델 고르기(검색 칸 + 목록) */
 function ModelPicker({ title, value, models, onPick }: { title: string; value: string; models: Model[]; onPick: (key: string) => void }) {
   const [q, setQ] = useState('')
@@ -890,18 +971,18 @@ function JobCard({ job, showOwner, onOpen, onRemove, onReprompt, onReuse }: { jo
   return (
     <article className="flex flex-col gap-2">
       <div className="flex justify-end">
-        <div className="max-w-[80%] rounded-2xl bg-brand-soft px-4 py-2.5 text-sm text-brand-ink">
+        <div className="max-w-[80%] rounded-2xl bg-brand-soft px-4 py-3 text-base text-brand-ink">
           {job.refs.length > 0 && (
             <div className="mb-1.5 flex gap-1.5">
               {job.refs.slice(0, 6).map((u) => (
-                <img key={u} src={u} alt="" className="size-10 rounded-md border border-line object-cover" onError={(e) => ((e.target as HTMLImageElement).style.display = 'none')} />
+                <img key={u} src={u} alt="" className="size-14 rounded-md border border-line object-cover" onError={(e) => ((e.target as HTMLImageElement).style.display = 'none')} />
               ))}
             </div>
           )}
           <p className="whitespace-pre-wrap leading-relaxed">{job.prompt || '(프롬프트 없음)'}</p>
         </div>
       </div>
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[14px] text-muted">
         {showOwner && <span className="rounded-full bg-sunken px-2 py-0.5 font-semibold text-ink-2">{job.ownerName}</span>}
         <span>{meta}</span>
         <span>· {new Date(job.createdAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
@@ -909,16 +990,16 @@ function JobCard({ job, showOwner, onOpen, onRemove, onReprompt, onReuse }: { jo
         <span className={clsx(left <= 1 && 'text-warn')}>· {left ? `${left}일 뒤 자동 삭제` : '오늘 자동 삭제'}</span>
         <span className="ml-auto flex gap-1">
           <button type="button" onClick={onReprompt} className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 hover:bg-sunken hover:text-ink" title="이 설정으로 다시 쓰기">
-            <RotateCcw className="size-3.5" aria-hidden /> 다시 쓰기
+            <RotateCcw className="size-4" aria-hidden /> 다시 쓰기
           </button>
           <button type="button" onClick={onRemove} className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 hover:bg-danger-soft hover:text-danger" title="지우기">
-            <Trash2 className="size-3.5" aria-hidden /> 지우기
+            <Trash2 className="size-4" aria-hidden /> 지우기
           </button>
         </span>
       </div>
-      {job.error && <p className="text-xs text-warn">{job.error}</p>}
+      {job.error && <p className="text-[14px] text-warn">{job.error}</p>}
       {(job.items.length > 0 || placeholders > 0) && (
-        <div className={clsx('grid gap-2', job.kind === 'audio' ? 'grid-cols-1' : job.kind === 'video' ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-2 sm:grid-cols-4')}>
+        <div className={clsx('grid gap-3', job.kind === 'audio' ? 'grid-cols-1' : job.count <= 1 ? 'max-w-[760px] grid-cols-1' : 'grid-cols-1 sm:grid-cols-2')}>
           {job.items.map((it, i) => (
             <div key={it.url} className="group relative overflow-hidden rounded-xl border border-line bg-sunken">
               {it.type === 'audio' ? (

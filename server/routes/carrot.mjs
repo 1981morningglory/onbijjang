@@ -11,7 +11,7 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { AI_MODEL, makeClient } from '../lib/ai.mjs'
-import { KEEP_DAYS, SNAPSHOT, TERMINAL, extFor, isExpired, jobIds, jobResult, koreanToolError, normalizeModels, planRequest, toolError, typeOfExt, usageByOwner } from '../lib/carrot.mjs'
+import { KEEP_DAYS, SNAPSHOT, TERMINAL, extFor, isExpired, jobIds, jobResult, koreanToolError, lastSubscriptionGrant, nextRenewal, normalizeModels, planRequest, toolError, typeOfExt, usageByOwner } from '../lib/carrot.mjs'
 import { createHfMcp } from '../lib/hfmcp.mjs'
 
 const UPLOAD_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
@@ -486,6 +486,46 @@ ${modelLines()}`
     }
   })
 
+  // ── 남은 크레딧·갱신일(화면 위쪽에 실시간 표시) ──
+  let balanceCache = { at: 0, data: null }
+  let cycleCache = { at: 0, data: null }
+  async function account({ fresh = false } = {}) {
+    if (!(await hf.connected())) return null
+    if (fresh || Date.now() - balanceCache.at > 20_000) {
+      const b = (await hf.callTool('balance', {}, { timeout: 15000 }))?.structuredContent ?? null
+      balanceCache = { at: Date.now(), data: b }
+    }
+    // 갱신일: 거래 내역의 가장 최근 ‘Subscription Credits’ 지급(6시간마다 다시 찾는다)
+    if (Date.now() - cycleCache.at > 6 * 3600e3 || (cycleCache.data?.nextReset && Date.parse(cycleCache.data.nextReset) < Date.now())) {
+      let grant = null
+      let cursor
+      for (let page = 0; page < 20 && !grant; page++) {
+        const r = await hf.callTool('transactions', { size: 100, ...(cursor !== undefined ? { cursor } : {}) }, { timeout: 20000 })
+        let d = r?.structuredContent
+        if (!d?.items) {
+          try {
+            d = JSON.parse(r?.content?.[0]?.text ?? '{}')
+          } catch {
+            d = {}
+          }
+        }
+        grant = lastSubscriptionGrant(d.items)
+        cursor = d.next_cursor
+        if (cursor === null || cursor === undefined) break
+      }
+      cycleCache = { at: Date.now(), data: grant ? { lastReset: grant.at, monthly: grant.credits, nextReset: nextRenewal(grant.at) } : null }
+    }
+    const b = balanceCache.data
+    return { credits: Number(b?.credits ?? 0), plan: b?.subscription_plan_type ?? '', ...(cycleCache.data ?? {}), at: new Date(balanceCache.at).toISOString() }
+  }
+  app.get('/api/carrot/account', requireStaff, async (req, res) => {
+    try {
+      res.json({ account: await account({ fresh: req.query.fresh === '1' }) })
+    } catch (err) {
+      res.json({ account: null, error: err.message })
+    }
+  })
+
   // ── 관리자: 힉스필드 계정 연결과 사용량 ──
   async function adminState() {
     const st = await hf.status()
@@ -497,7 +537,14 @@ ${modelLines()}`
         if (err.kind === 'auth') return { ...(await hf.status()), balance: null, error: err.message }
       }
     }
-    return { ...st, balance, modelsAt, models: models.length }
+    let cycle = null
+    try {
+      const a = await account()
+      if (a) cycle = { lastReset: a.lastReset ?? null, nextReset: a.nextReset ?? null, monthly: a.monthly ?? null }
+    } catch {
+      // 갱신일은 없어도 된다
+    }
+    return { ...st, balance, cycle, modelsAt, models: models.length }
   }
   app.get('/api/admin/carrot', requireAdmin, async (_req, res) => res.json(await adminState()))
   app.post('/api/admin/carrot/login', requireAdmin, async (_req, res) => {
