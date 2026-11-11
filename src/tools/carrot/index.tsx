@@ -29,10 +29,19 @@ interface Upload {
   /** 라이브러리 결과면 그 주소(작업 기록의 미리보기로 남긴다) */
   keep?: string
 }
+interface Proposal {
+  title?: string
+  model: string
+  kind: 'image' | 'video'
+  prompt: string
+  aspect_ratio?: string
+  duration?: number
+  count: number
+}
 interface ChatMsg {
   role: 'user' | 'assistant'
   text: string
-  proposal?: { model: string; kind: 'image' | 'video'; prompt: string; aspect_ratio?: string; duration?: number; count: number } | null
+  proposals?: Proposal[]
 }
 
 const PREF = 'onbijjang.carrot'
@@ -312,6 +321,35 @@ export default function CarrotTool() {
 
   const uploading = refs.some((r) => !r.id) || (start && !start.id) || (end && !end.id)
 
+  // ── 끌어다 놓기·Ctrl+V 붙여 넣기: 레퍼런스로(레퍼런스를 안 받는 영상 모델이면 시작 프레임으로) ──
+  const [dragOver, setDragOver] = useState(false)
+  const takeFiles = (files: File[]) => {
+    const images = files.filter((f) => /^image\/(jpeg|png|webp|gif)$/.test(f.type))
+    if (!images.length) return false
+    if (!info?.connected) {
+      toast.error('힉스필드 계정이 연결되어야 이미지를 넣을 수 있습니다.')
+      return true
+    }
+    if (kind === 'audio') {
+      toast.error('오디오 탭에서는 이미지를 넣지 않습니다.')
+      return true
+    }
+    if (limit > 0) addRefs(images)
+    else if (model && hasStartFrame(model)) upload(images[0], setStart)
+    else toast.error('이 모델은 이미지를 받지 않습니다.')
+    return true
+  }
+  const takeRef = useRef(takeFiles)
+  takeRef.current = takeFiles
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const files = [...(e.clipboardData?.files ?? [])]
+      if (files.length && takeRef.current(files)) e.preventDefault()
+    }
+    window.addEventListener('paste', onPaste)
+    return () => window.removeEventListener('paste', onPaste)
+  }, [])
+
   // ── 생성 ──
   const generate = async (over?: Partial<{ model: string; prompt: string; options: Options; count: number }>) => {
     if (!model) return
@@ -338,25 +376,34 @@ export default function CarrotTool() {
     setPrompt('')
     setChatBusy(true)
     try {
-      const r = await api<{ reply: string; proposal: ChatMsg['proposal'] }>('/carrot/chat', {
+      const r = await api<{ reply: string; proposals: Proposal[] }>('/carrot/chat', {
         method: 'POST',
-        body: { messages: next.map((m) => ({ role: m.role, text: m.proposal ? `${m.text}\n(생성안: ${m.proposal.prompt})` : m.text })), context: { kind, model: model?.key, refs: refs.length, start: Boolean(start), end: Boolean(end) } },
+        body: { messages: next.map((m) => ({ role: m.role, text: m.proposals?.length ? `${m.text}\n${m.proposals.map((x, n) => `(생성안 ${n + 1}: ${x.prompt})`).join('\n')}` : m.text })), context: { kind, model: model?.key, refs: refs.length, start: Boolean(start), end: Boolean(end) } },
       })
-      setChat((c) => [...c, { role: 'assistant', text: r.reply, proposal: r.proposal }])
+      setChat((c) => [...c, { role: 'assistant', text: r.reply, proposals: r.proposals ?? [] }])
     } catch (err) {
       setChat((c) => [...c, { role: 'assistant', text: message(err) }])
     } finally {
       setChatBusy(false)
     }
   }
-  const runProposal = (p: NonNullable<ChatMsg['proposal']>) => {
+  const runProposal = (p: Proposal) => {
     const m = info?.models.find((x) => x.key === p.model)
-    if (!m) return
+    if (!m) return Promise.resolve()
     setKind(m.kind)
     setModelBy((s) => ({ ...s, [m.kind]: m.key }))
     const opts = fitOptions(m, { ...(optionsBy[m.key] ?? {}), ...(p.aspect_ratio ? { aspect_ratio: p.aspect_ratio } : {}), ...(p.duration ? { duration: p.duration } : {}) })
     setOptionsBy((o) => ({ ...o, [m.key]: opts }))
-    generate({ model: m.key, prompt: p.prompt, options: opts, count: m.kind === 'image' ? p.count : 1 })
+    return generate({ model: m.key, prompt: p.prompt, options: opts, count: m.kind === 'image' ? p.count : 1 })
+  }
+  const [runningAll, setRunningAll] = useState(false)
+  const runAll = async (list: Proposal[]) => {
+    setRunningAll(true)
+    try {
+      for (const p of list) await runProposal(p)
+    } finally {
+      setRunningAll(false)
+    }
   }
 
   const remove = async (job: Job) => {
@@ -451,32 +498,42 @@ export default function CarrotTool() {
             <div key={i} className={clsx('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
               <div className={clsx('max-w-[78%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed', m.role === 'user' ? 'bg-brand text-white' : 'border border-line bg-surface text-ink-2')}>
                 <p className="whitespace-pre-wrap">{m.text}</p>
-                {m.proposal && (
-                  <div className="mt-2.5 rounded-lg border border-line bg-paper p-3 text-ink">
+                {m.proposals && m.proposals.length > 1 && (
+                  <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                    <Button size="sm" variant="primary" icon={Wand2} loading={runningAll} disabled={!info.connected || busy || runningAll} onClick={() => runAll(m.proposals!)}>
+                      {m.proposals.length}개 모두 생성
+                    </Button>
+                    <span className="text-xs text-muted">하나씩 보고 고르려면 아래 각 생성안의 ‘이대로 생성’을 누르세요.</span>
+                  </div>
+                )}
+                {m.proposals?.map((pr, n) => (
+                  <div key={n} className="mt-2.5 rounded-lg border border-line bg-paper p-3 text-ink">
                     <p className="text-xs font-semibold text-muted">
-                      생성안 · {info.models.find((x) => x.key === m.proposal!.model)?.label}
-                      {m.proposal.aspect_ratio ? ` · ${ratioLabel(m.proposal.aspect_ratio)}` : ''}
-                      {m.proposal.duration && m.proposal.kind === 'video' ? ` · ${m.proposal.duration}초` : ''}
-                      {m.proposal.kind === 'image' ? ` · ${m.proposal.count}개` : ''}
+                      생성안{m.proposals!.length > 1 ? ` ${n + 1}` : ''}
+                      {pr.title ? ` · ${pr.title}` : ''} · {info.models.find((x) => x.key === pr.model)?.label}
+                      {pr.aspect_ratio ? ` · ${ratioLabel(pr.aspect_ratio)}` : ''}
+                      {pr.duration && pr.kind === 'video' ? ` · ${pr.duration}초` : ''}
+                      {pr.kind === 'image' ? ` · ${pr.count}개` : ''}
                     </p>
-                    <p className="mt-1 whitespace-pre-wrap font-mono text-xs leading-relaxed">{m.proposal.prompt}</p>
+                    <p className="mt-1 whitespace-pre-wrap font-mono text-xs leading-relaxed">{pr.prompt}</p>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      <Button size="sm" variant="primary" icon={Wand2} disabled={!info.connected || busy} onClick={() => runProposal(m.proposal!)}>
+                      <Button size="sm" variant="secondary" icon={Wand2} disabled={!info.connected || busy || runningAll} onClick={() => runProposal(pr)}>
                         이대로 생성
                       </Button>
                       <Button
                         size="sm"
+                        variant="ghost"
                         icon={Copy}
                         onClick={() => {
                           setChatMode(false)
-                          setPrompt(m.proposal!.prompt)
+                          setPrompt(pr.prompt)
                         }}
                       >
                         입력창에 넣기
                       </Button>
                     </div>
                   </div>
-                )}
+                ))}
               </div>
             </div>
           ))}
@@ -517,7 +574,28 @@ export default function CarrotTool() {
             대화로 생성
           </Chip>
         </div>
-        <div className="rounded-2xl border border-line bg-surface p-3 shadow-3 sm:p-4">
+        <div
+          className={clsx('relative rounded-2xl border bg-surface p-3 shadow-3 transition-colors sm:p-4', dragOver ? 'border-brand ring-2 ring-brand/30' : 'border-line')}
+          onDragOver={(e) => {
+            if (!e.dataTransfer.types.includes('Files')) return
+            e.preventDefault()
+            setDragOver(true)
+          }}
+          onDragLeave={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false)
+          }}
+          onDrop={(e) => {
+            if (!e.dataTransfer.files.length) return
+            e.preventDefault()
+            setDragOver(false)
+            if (!takeFiles([...e.dataTransfer.files])) toast.error('JPG·PNG·WEBP·GIF 이미지만 넣을 수 있습니다.')
+          }}
+        >
+          {dragOver && (
+            <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center rounded-2xl bg-brand-soft/85 text-sm font-semibold text-brand-ink">
+              {kind === 'audio' ? '오디오 탭에서는 이미지를 넣지 않습니다' : limit > 0 ? '여기에 놓으면 레퍼런스로 넣습니다' : '여기에 놓으면 시작 프레임으로 넣습니다'}
+            </div>
+          )}
             <>
               {kind !== 'audio' && (
               <div className="flex gap-2 overflow-x-auto pb-1">
@@ -546,7 +624,7 @@ export default function CarrotTool() {
                   }
                 }}
                 rows={2}
-                placeholder={chatMode ? '어떤 걸 만들고 싶은지 편하게 말해 주세요. 함께 프롬프트를 다듬어 드립니다' : PLACEHOLDER[kind]}
+                placeholder={chatMode ? '어떤 걸 만들고 싶은지 편하게 말해 주세요. 함께 프롬프트를 다듬어 드립니다' : kind === 'audio' ? PLACEHOLDER[kind] : `${PLACEHOLDER[kind]} (이미지는 끌어다 놓거나 Ctrl+V 로 붙여 넣기)`}
                 aria-label="프롬프트"
                 className="mt-2 block w-full resize-none border-0 bg-transparent px-1 py-1 text-[15px] leading-relaxed text-ink outline-none placeholder:text-muted focus:outline-none"
               />
