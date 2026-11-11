@@ -385,7 +385,8 @@ export default async function carrotRoutes(app, ctx) {
   })
 
   // ── 대화로 생성(Claude) ──
-  const aiKey = async () => process.env.ANTHROPIC_API_KEY || (await readJson(path.join(DATA_DIR, 'sns', 'ai.json'), null))?.apiKey || ''
+  /** 쓸 수 있는 Claude 키들: Railway 변수 → 관리자 화면 SNS 연결에서 넣은 키(앞 것이 거절되면 다음 것) */
+  const aiKeys = async () => [...new Set([process.env.ANTHROPIC_API_KEY, (await readJson(path.join(DATA_DIR, 'sns', 'ai.json'), null))?.apiKey].filter((k) => typeof k === 'string' && k.trim()))]
   const kindName = { image: '이미지', video: '영상', audio: '오디오' }
   const modelLines = () =>
     models
@@ -402,6 +403,8 @@ export default async function carrotRoutes(app, ctx) {
 - 생성안의 prompt 는 모델이 잘 알아듣도록 장면·피사체·구도·조명·스타일·카메라 움직임(영상)을 구체적으로, 영어로 씁니다. 화면에 들어갈 글자가 있으면 그 글자는 원래 언어 그대로 따옴표로 넣습니다.
 - 모델은 아래 목록의 key 만 씁니다. 사용자가 고른 모델이 있으면 그대로 두고, 맞지 않을 때만 바꾸고 이유를 말합니다.
 - 비율·길이는 그 모델이 받는 값만 씁니다. 개수(count)는 이미지 1~4, 영상 1.
+- 사용자가 여러 가지 버전(예: "5가지로")을 원하면 proposals 에 서로 다른 생성안을 그 수만큼(최대 5개) 넣습니다. 보통은 1개.
+- 사용자가 링크를 보내도 당신은 그 내용을 볼 수 없습니다. 링크 속 내용이 필요하면 어떤 장면·분위기인지 글로 설명해 달라고 하거나, 레퍼런스 이미지로 올려 달라고 합니다.
 - reply 는 사용자에게 보일 한국어 답(2~4문장). 생성은 사용자가 '이대로 생성'을 눌러야 시작되고, 회사 힉스필드 구독 크레딧이 쓰입니다.
 - 불법·성인·실존 인물 사칭·타인 저작물 복제 요청은 정중히 거절합니다.
 
@@ -410,12 +413,24 @@ ${modelLines()}`
   const CHAT_SCHEMA = {
     type: 'object',
     additionalProperties: false,
-    properties: { reply: { type: 'string' }, ready: { type: 'boolean' }, model: { type: 'string' }, prompt: { type: 'string' }, aspect_ratio: { type: 'string' }, duration: { type: 'integer' }, count: { type: 'integer' } },
-    required: ['reply', 'ready', 'model', 'prompt', 'aspect_ratio', 'duration', 'count'],
+    properties: {
+      reply: { type: 'string' },
+      ready: { type: 'boolean' },
+      proposals: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: { title: { type: 'string' }, model: { type: 'string' }, prompt: { type: 'string' }, aspect_ratio: { type: 'string' }, duration: { type: 'integer' }, count: { type: 'integer' } },
+          required: ['title', 'model', 'prompt', 'aspect_ratio', 'duration', 'count'],
+        },
+      },
+    },
+    required: ['reply', 'ready', 'proposals'],
   }
   app.post('/api/carrot/chat', requireStaff, async (req, res) => {
-    const key = await aiKey()
-    if (!key) return res.status(503).json({ error: 'Claude 키가 없어 대화로 생성을 쓸 수 없습니다. 관리자 화면 SNS 연결에서 AI 키를 넣어 주세요.' })
+    const keys = await aiKeys()
+    if (!keys.length) return res.status(503).json({ error: 'Claude 키가 없어 대화로 생성을 쓸 수 없습니다. 관리자 화면 SNS 연결에서 AI 키를 넣어 주세요.' })
     const history = (Array.isArray(req.body?.messages) ? req.body.messages : [])
       .slice(-20)
       .map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.text ?? '').slice(0, 4000) }))
@@ -426,21 +441,48 @@ ${modelLines()}`
     const current = models.find((m) => m.key === c.model)
     const ctxText = `[지금 화면] 탭: ${kindName[c.kind] ?? '이미지'} · 고른 모델: ${current?.key ?? '없음'} · 레퍼런스 ${Number(c.refs) || 0}장${c.start ? ' · 시작 프레임 있음' : ''}${c.end ? ' · 끝 프레임 있음' : ''}`
     history[history.length - 1] = { role: 'user', content: `${ctxText}\n\n${history[history.length - 1].content}` }
+    let msg = null
+    let lastErr = null
+    for (const key of keys) {
+      try {
+        msg = await makeClient(key).messages.create({
+          model: AI_MODEL,
+          max_tokens: 8000,
+          system: [{ type: 'text', text: system(), cache_control: { type: 'ephemeral' } }],
+          output_config: { effort: 'low', format: { type: 'json_schema', schema: CHAT_SCHEMA } },
+          messages: history,
+        })
+        break
+      } catch (err) {
+        lastErr = err
+        // 키가 거절되면 다음 키로, 다른 오류는 바로 알린다
+        if (err?.status !== 401 && err?.status !== 403) break
+      }
+    }
+    if (!msg) {
+      const st = lastErr?.status
+      const why =
+        st === 401 || st === 403
+          ? 'Claude AI 키가 맞지 않거나 만료됐습니다. 관리자 화면 → ‘SNS 연결’의 AI 키(또는 Railway 변수 ANTHROPIC_API_KEY)를 새 키로 바꿔 주세요. 힉스필드 생성(생성하기 버튼)은 이 키와 상관없이 쓸 수 있습니다.'
+          : st === 429 || st === 529
+            ? 'Claude 가 잠시 바쁩니다. 조금 뒤 다시 보내 주세요.'
+            : `대화 응답을 받지 못했습니다: ${String(lastErr?.message ?? '').slice(0, 160)}`
+      return res.status(st === 401 || st === 403 ? 503 : 502).json({ error: why })
+    }
     try {
-      const msg = await makeClient(key).messages.create({
-        model: AI_MODEL,
-        max_tokens: 4000,
-        system: [{ type: 'text', text: system(), cache_control: { type: 'ephemeral' } }],
-        output_config: { effort: 'low', format: { type: 'json_schema', schema: CHAT_SCHEMA } },
-        messages: history,
-      })
-      if (msg.stop_reason === 'refusal') return res.json({ reply: '이 요청은 도와드리기 어렵습니다. 다른 내용으로 말씀해 주세요.', proposal: null })
+      if (msg.stop_reason === 'refusal') return res.json({ reply: '이 요청은 도와드리기 어렵습니다. 다른 내용으로 말씀해 주세요.', proposals: [] })
       const out = JSON.parse(msg.content.find((b) => b.type === 'text')?.text ?? '{}')
-      const model = models.find((m) => m.key === out.model && m.kind !== 'audio') ?? (current?.kind !== 'audio' ? current : null)
-      const proposal = out.ready && model && out.prompt ? { model: model.key, kind: model.kind, prompt: String(out.prompt).slice(0, 4000), aspect_ratio: out.aspect_ratio || undefined, duration: out.duration || undefined, count: model.kind === 'video' ? 1 : Math.max(1, Math.min(4, out.count || 1)) } : null
-      res.json({ reply: String(out.reply ?? '').slice(0, 2000), proposal })
+      const proposals = (out.ready && Array.isArray(out.proposals) ? out.proposals : [])
+        .slice(0, 5)
+        .map((p) => {
+          const model = models.find((m) => m.key === p.model && m.kind !== 'audio') ?? (current?.kind !== 'audio' ? current : null)
+          if (!model || !p.prompt) return null
+          return { title: String(p.title ?? '').slice(0, 60), model: model.key, kind: model.kind, prompt: String(p.prompt).slice(0, 4000), aspect_ratio: p.aspect_ratio || undefined, duration: p.duration || undefined, count: model.kind === 'video' ? 1 : Math.max(1, Math.min(4, p.count || 1)) }
+        })
+        .filter(Boolean)
+      res.json({ reply: String(out.reply ?? '').slice(0, 2000), proposals })
     } catch (err) {
-      res.status(502).json({ error: `대화 응답을 받지 못했습니다: ${err.message}` })
+      res.status(502).json({ error: `대화 응답을 읽지 못했습니다: ${err.message}` })
     }
   })
 
