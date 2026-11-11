@@ -10,6 +10,7 @@ import { GROUPS, TOOLS, artUrl, type GroupId } from './registry'
 import { AccountsEditor, DeletedEditor, LinksEditor, NewAppsEditor, RoleChips } from './AdminAccess'
 import { useLoginDialog } from './LoginDialog'
 import { useViewerStore } from './viewer'
+import { CarrotAdmin } from './CarrotAdmin'
 
 type AuthStatus = { configured: boolean; loggedIn: boolean } | 'offline' | null
 
@@ -877,7 +878,7 @@ export function Admin() {
   const config = useSite((s) => s.config)
   const save = useSite((s) => s.save)
   const [draft, setDraft] = useState<SiteConfig>(config)
-  const [tab, setTab] = useState<'menu' | 'accounts' | 'presets' | 'company' | 'sns' | 'account'>('menu')
+  const [tab, setTab] = useState<'menu' | 'accounts' | 'presets' | 'company' | 'sns' | 'carrot' | 'account'>('menu')
   const reloadViewer = useViewerStore((s) => s.load)
   const viewerUser = useViewerStore((s) => s.user)
   const showLogin = useLoginDialog((s) => s.show)
@@ -981,6 +982,7 @@ export function Admin() {
           { value: 'presets', label: '공지·팀 프리셋' },
           { value: 'company', label: '팀·회사 자료' },
           { value: 'sns', label: 'SNS 연결' },
+          { value: 'carrot', label: '당근 연결' },
           { value: 'account', label: '관리자 비밀번호' },
         ]}
       />
@@ -994,6 +996,7 @@ export function Admin() {
           <AiConnect />
         </>
       )}
+      {tab === 'carrot' && <CarrotAdmin />}
       {tab === 'account' && <AccountEditor onLogout={logout} />}
 
       {(tab === 'menu' || tab === 'presets') && (
