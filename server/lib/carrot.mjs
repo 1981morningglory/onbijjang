@@ -216,15 +216,17 @@ export function cleanAccess(v) {
   const owners = mode === 'some' ? [...new Set((Array.isArray(v?.owners) ? v.owners : []).filter((x) => typeof x === 'string' && /^[a-z0-9]{1,40}$/.test(x)))].slice(0, 200) : []
   return { mode: mode === 'some' && !owners.length ? 'own' : mode, owners }
 }
-/** viewer 가 owner 의 라이브러리를 볼 수 있는가(전체마스터는 늘, 본인 것은 늘) */
+/** viewer 가 owner 의 라이브러리를 볼 수 있는가(기본은 모두 함께 봄. 관리자가 ‘내 것만’·‘선택한 사람’으로 좁힐 수 있다) */
 export function canView(access, viewer, owner, admin = false) {
   if (admin || viewer === owner) return true
   const a = access?.[viewer]
-  if (!a) return false
+  if (!a) return true
   return a.mode === 'all' || (a.mode === 'some' && a.owners.includes(owner))
 }
 /** 다른 사람 라이브러리를 볼 수 있는 사람인가(화면에 ‘라이브러리 보기’ 고르기를 보일지) */
-export const canBrowse = (access, viewer, admin = false) => admin || (access?.[viewer]?.mode ?? 'own') !== 'own'
+export const canBrowse = (access, viewer, admin = false) => admin || (access?.[viewer]?.mode ?? 'all') !== 'own'
+/** 프롬프트는 작성한 본인과 전체마스터만 본다 */
+export const canSeePrompt = (viewer, owner, admin = false) => admin || viewer === owner
 
 /** 거래 내역에서 가장 최근 구독 크레딧 지급(매달 갱신) 찾기 */
 export function lastSubscriptionGrant(items) {

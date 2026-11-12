@@ -11,7 +11,7 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { AI_MODEL, makeClient } from '../lib/ai.mjs'
-import { KEEP_DAYS, SNAPSHOT, TERMINAL, canBrowse, canView, cleanAccess, extFor, isExpired, jobIds, jobResult, koreanToolError, lastSubscriptionGrant, nextRenewal, normalizeModels, planRequest, toolError, typeOfExt, usageByOwner } from '../lib/carrot.mjs'
+import { KEEP_DAYS, SNAPSHOT, TERMINAL, canBrowse, canSeePrompt, canView, cleanAccess, extFor, isExpired, jobIds, jobResult, koreanToolError, lastSubscriptionGrant, nextRenewal, normalizeModels, planRequest, toolError, typeOfExt, usageByOwner } from '../lib/carrot.mjs'
 import { createHfMcp } from '../lib/hfmcp.mjs'
 
 const UPLOAD_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
@@ -111,14 +111,16 @@ export default async function carrotRoutes(app, ctx) {
   }
   const okName = (s) => /^[a-z0-9]{1,40}$/.test(s)
   const fileUrl = (owner, file) => `/api/carrot/file/${owner}/${file}`
-  const view = (j) => ({
+  /** 화면에 보낼 작업. 프롬프트는 작성자 본인(또는 전체마스터)에게만 */
+  const view = (j, viewer = j.owner, admin = false) => ({
     id: j.id,
     owner: j.owner,
     ownerName: j.ownerName,
     kind: j.kind,
     model: j.model,
     modelLabel: models.find((m) => m.key === j.model)?.label ?? j.modelLabel ?? j.model,
-    prompt: j.prompt,
+    prompt: canSeePrompt(viewer, j.owner, admin) ? j.prompt : null,
+    promptHidden: !canSeePrompt(viewer, j.owner, admin),
     options: j.options,
     count: j.count,
     refs: j.refPreviews ?? [],
@@ -368,7 +370,7 @@ export default async function carrotRoutes(app, ctx) {
     const list = jobs.filter((j) => (!browse || !want ? j.owner === who.owner : want === 'all' ? see(j.owner) : j.owner === want && see(j.owner)))
     // 고를 수 있는 사람 목록: 볼 수 있는 사람만
     const owners = browse ? usageByOwner(jobs.filter((j) => see(j.owner))).map((u) => ({ owner: u.owner, name: u.name, username: u.username, jobs: u.jobs })) : undefined
-    res.json({ jobs: list.map(view), owners, running: list.some((j) => j.status === 'running') })
+    res.json({ jobs: list.map((j) => view(j, who.owner, admin)), owners, running: list.some((j) => j.status === 'running') })
   })
 
   app.get('/api/carrot/file/:owner/:file', requireStaff, (req, res) => {
@@ -583,7 +585,8 @@ ${modelLines()}`
     const next = cleanAccess(req.body)
     next.owners = next.owners.filter((o) => o !== id)
     if (next.mode === 'some' && !next.owners.length) next.mode = 'own'
-    if (next.mode === 'own') delete access[id]
+    // 기본(모두 함께 봄)이면 따로 적어 두지 않는다
+    if (next.mode === 'all') delete access[id]
     else access[id] = next
     await writeJson(ACCESS_FILE, access)
     res.json({ access })
