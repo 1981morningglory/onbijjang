@@ -1,9 +1,9 @@
 import clsx from 'clsx'
-import { ArrowUp, AudioLines, Check, ChevronDown, Clapperboard, Clock, CalendarClock, Coins, Copy, Download, Film, Gauge, ImagePlus, Image as ImageIcon, Images, Loader2, Lock, MessagesSquare, Mic, MicOff, Plus, RefreshCw, RotateCcw, Search, Trash2, Volume2, VolumeX, Wand2, X } from 'lucide-react'
+import { ArrowUp, AudioLines, Check, ChevronDown, Clapperboard, Clock, CalendarClock, Coins, Copy, Download, Film, Gauge, ImagePlus, Image as ImageIcon, History, Images, Loader2, MessagesSquare, SquarePen, Wand, Mic, MicOff, Plus, RefreshCw, RotateCcw, Search, Trash2, Volume2, VolumeX, Wand2, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { api, ApiError } from '@/lib/api'
 import { canvasToBlob, fileToCanvas, fitWithin, resizeCanvas } from '@/lib/image'
-import { Button, Callout, Dialog, EmptyState, MenuItem, Popover, Select, Spinner, toast } from '@/ui'
+import { Button, Callout, Dialog, EmptyState, MenuItem, Popover, Select, Spinner, Tabs, toast } from '@/ui'
 import { choices, dayTitle, daysLeft, DEFAULT_MODEL, DEFAULT_OPTIONS, fitOptions, formatBytes, formatCredits, hasAudio, hasEndFrame, hasStartFrame, maxRefs, modelChipLabel, optionLabel, PLACEHOLDER, ratioCss, ratioLabel, type Job, type Kind, type Model, type Options } from './logic'
 
 interface Info {
@@ -55,6 +55,19 @@ interface ChatMsg {
 }
 
 const PREF = 'onbijjang.carrot'
+const SESSION_KEY = 'onbijjang.carrot.session'
+/** 작업 묶음: ‘새로운 작업’을 누를 때마다 새로. 예전 작업(묶음 없음)은 하나로 본다 */
+const sessionOf = (j: Job) => j.session ?? 'legacy'
+const newSessionId = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4)
+const readSession = () => {
+  try {
+    return localStorage.getItem(SESSION_KEY) ?? ''
+  } catch {
+    return ''
+  }
+}
+type View = 'make' | 'library'
+const readView = (): View => (new URLSearchParams(location.search).get('view') === 'library' ? 'library' : 'make')
 const loadPref = (): { kind?: Kind; model?: Record<string, string>; options?: Record<string, Options>; count?: number } => {
   try {
     return JSON.parse(localStorage.getItem(PREF) ?? '{}')
@@ -191,7 +204,26 @@ export default function CarrotTool() {
   const [end, setEnd] = useState<Upload | null>(null)
   const [jobs, setJobs] = useState<Job[]>([])
   const [owners, setOwners] = useState<Owner[] | undefined>()
-  const [ownerView, setOwnerView] = useState('')
+  const [tab, setTabState] = useState<View>(readView)
+  const [libOwner, setLibOwner] = useState('all')
+  const [libJobs, setLibJobs] = useState<Job[] | null>(null)
+  const [session, setSessionState] = useState<string>(readSession)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const setSession = (id: string) => {
+    setSessionState(id)
+    try {
+      localStorage.setItem(SESSION_KEY, id)
+    } catch {
+      // 저장 못 해도 화면은 그대로
+    }
+  }
+  const setTab = (v: View) => {
+    setTabState(v)
+    const u = new URL(location.href)
+    if (v === 'library') u.searchParams.set('view', 'library')
+    else u.searchParams.delete('view')
+    history.replaceState(history.state, '', u)
+  }
   const [busy, setBusy] = useState(false)
   const [credits, setCredits] = useState<number | null>(null)
   const [account, setAccount] = useState<Account | null>(null)
@@ -218,11 +250,28 @@ export default function CarrotTool() {
 
   // ── 라이브러리 불러오기(만드는 중이면 4초마다) ──
   const loadJobs = useCallback(async () => {
-    const r = await api<{ jobs: Job[]; owners?: Owner[]; running: boolean }>(`/carrot/jobs${ownerView ? `?owner=${encodeURIComponent(ownerView)}` : ''}`)
+    const r = await api<{ jobs: Job[]; running: boolean }>('/carrot/jobs')
     setJobs(r.jobs)
-    setOwners(r.owners)
     return r.running
-  }, [ownerView])
+  }, [])
+  // 라이브러리 탭: 모두의 결과(기본 전체 보기), 30초마다 새로
+  const loadLibrary = useCallback(async () => {
+    const r = await api<{ jobs: Job[]; owners?: Owner[] }>(`/carrot/jobs?owner=${encodeURIComponent(libOwner)}`)
+    setLibJobs(r.jobs)
+    setOwners(r.owners)
+  }, [libOwner])
+  useEffect(() => {
+    if (!info || tab !== 'library') return
+    loadLibrary().catch(() => {})
+    const t = setInterval(() => loadLibrary().catch(() => {}), 30_000)
+    return () => clearInterval(t)
+  }, [info, tab, loadLibrary])
+  // 처음 열 때: 지난번 작업 묶음을 이어서(없으면 가장 최근 작업의 묶음)
+  useEffect(() => {
+    if (!session && jobs.length) setSession(sessionOf(jobs[jobs.length - 1]))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobs.length, session])
+  const feedJobs = useMemo(() => jobs.filter((j) => sessionOf(j) === session), [jobs, session])
   const running = jobs.some((j) => j.status === 'running')
   // ── 남은 크레딧·갱신일: 1분마다, 창으로 돌아올 때, 생성·완료 때 새로 ──
   const loadAccount = useCallback((fresh = false) => {
@@ -256,7 +305,7 @@ export default function CarrotTool() {
     return () => clearInterval(t)
   }, [running, loadJobs])
   // 새 결과·대화가 생기면 맨 아래로
-  const lastKey = `${jobs.length}:${jobs.at(-1)?.status}:${chat.length}`
+  const lastKey = `${feedJobs.length}:${feedJobs.at(-1)?.status}:${chat.length}:${session}`
   useEffect(() => {
     feedEnd.current?.scrollIntoView({ block: 'end', behavior: 'smooth' })
   }, [lastKey])
@@ -390,8 +439,13 @@ export default function CarrotTool() {
     if (!String(body.prompt).trim() && !body.start && !body.refs.length) return toast.error('만들고 싶은 내용을 적어 주세요.')
     setBusy(true)
     try {
-      const r = await api<{ job: Job }>('/carrot/generate', { method: 'POST', body })
-      setJobs((list) => (ownerView && ownerView !== 'all' && ownerView !== info?.me.owner ? list : [...list, r.job]))
+      let s = session
+      if (!s) {
+        s = newSessionId()
+        setSession(s)
+      }
+      const r = await api<{ job: Job }>('/carrot/generate', { method: 'POST', body: { ...body, session: s } })
+      setJobs((list) => [...list, r.job])
       setTimeout(() => loadAccount(true), 2500)
       if (!over) setPrompt('')
     } catch (err) {
@@ -440,6 +494,28 @@ export default function CarrotTool() {
     }
   }
 
+  /** 새로운 작업: 빈 화면에서 새로 시작(지난 작업은 오른쪽 ‘내 작업 기록’에 남는다) */
+  const newWork = () => {
+    setSession(newSessionId())
+    setChat([])
+    setChatMode(false)
+    setPrompt('')
+    setRefs([])
+    setStart(null)
+    setEnd(null)
+    setTab('make')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+    textRef.current?.focus()
+  }
+  /** 내 작업 기록에서 고른 작업의 화면으로 */
+  const openWork = (j: Job) => {
+    setSession(sessionOf(j))
+    setChat([])
+    setTab('make')
+    setHistoryOpen(false)
+    setTimeout(() => document.getElementById(`job-${j.id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 250)
+  }
+
   const remove = async (job: Job) => {
     if (!confirm('이 결과를 지울까요? 되돌릴 수 없습니다.')) return
     try {
@@ -481,7 +557,7 @@ export default function CarrotTool() {
   const modes = model ? choices(model, 'mode').map(String) : []
   const variants = model ? choices(model, 'variant').map(String) : []
   const canGenerate = Boolean(model) && info.connected && !busy && !uploading && !(model?.tts && !options.voice)
-  const groups = jobs.reduce<Array<{ title: string; jobs: Job[] }>>((acc, j) => {
+  const groups = feedJobs.reduce<Array<{ title: string; jobs: Job[] }>>((acc, j) => {
     const t = dayTitle(j.createdAt)
     if (acc.at(-1)?.title === t) acc.at(-1)!.jobs.push(j)
     else acc.push({ title: t, jobs: [j] })
@@ -489,23 +565,30 @@ export default function CarrotTool() {
   }, [])
 
   return (
-    <div className="relative mx-auto flex w-full max-w-[1100px] flex-col">
+    <div className="relative mx-auto flex w-full max-w-[1180px] flex-col">
       {info.connected && <CreditBar account={account} onRefresh={() => loadAccount(true)} />}
-      {/* 위: 안내·라이브러리 보기 */}
-      <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-muted">
-        <Images className="size-4" aria-hidden />
-        <span>
-          {ownerView === 'all' ? '전체 라이브러리' : ownerView ? `${owners?.find((o) => o.owner === ownerView)?.name ?? ''}님의 라이브러리` : '내 라이브러리'} · 만든 결과는 {info.keepDays}일 동안 보관한 뒤 자동으로 지웁니다
-        </span>
-        {(info.isAdmin || info.canBrowse) && owners && (
-          <Select
-            aria-label="라이브러리 보기"
-            className="ml-auto w-auto! min-w-44"
-            value={ownerView}
-            onValue={setOwnerView}
-            options={[{ value: '', label: '내 라이브러리' }, { value: 'all', label: info.isAdmin ? '전체 사용자' : '볼 수 있는 전체' }, ...owners.filter((o) => o.owner !== info.me.owner).map((o) => ({ value: o.owner, label: `${o.name}${o.username ? ` (${o.username})` : ''} · ${o.jobs}건` }))]}
-          />
-        )}
+      {/* 위: 생성 / 라이브러리 탭, 새로운 작업 */}
+      <div className="mb-4 flex flex-wrap items-end gap-2">
+        <Tabs
+          label="당근 화면"
+          value={tab}
+          onValue={setTab}
+          className="min-w-0 flex-1"
+          tabs={[
+            { value: 'make', label: '생성', icon: Wand },
+            { value: 'library', label: '라이브러리', icon: Images },
+          ]}
+        />
+        <div className="flex items-center gap-2 pb-1.5">
+          {tab === 'make' && (
+            <Button size="sm" variant="ghost" icon={History} className="lg:hidden" onClick={() => setHistoryOpen(true)}>
+              내 작업 기록
+            </Button>
+          )}
+          <Button size="sm" variant="primary" icon={SquarePen} onClick={newWork}>
+            새로운 작업
+          </Button>
+        </div>
       </div>
       {!info.connected && (
         <Callout tone="warn" title="힉스필드 계정이 아직 연결되지 않았습니다" className="mb-4">
@@ -513,9 +596,24 @@ export default function CarrotTool() {
         </Callout>
       )}
 
-      {/* 가운데: 결과 피드 */}
+      {tab === 'library' ? (
+        <LibraryGallery
+          jobs={libJobs}
+          owners={owners}
+          owner={libOwner}
+          onOwner={setLibOwner}
+          canBrowse={Boolean(info.isAdmin || info.canBrowse)}
+          isAdmin={info.isAdmin}
+          meOwner={info.me.owner}
+          keepDays={info.keepDays}
+          onOpen={(job, index) => setView({ job, index })}
+        />
+      ) : (
+      <div className="flex items-start gap-6">
+      <div className="flex min-w-0 flex-1 flex-col">
+      {/* 가운데: 결과 피드(지금 작업 묶음) */}
       <div className="mx-auto flex min-h-[46vh] w-full max-w-[820px] flex-col gap-6 pb-6">
-        {!jobs.length && !chat.length && (
+        {!feedJobs.length && !chat.length && (
           <div className="grid flex-1 place-items-center py-16">
             <h2 className="text-center text-2xl font-bold sm:text-3xl">무엇을 만들어 볼까요?</h2>
           </div>
@@ -524,7 +622,7 @@ export default function CarrotTool() {
           <section key={g.title} className="flex flex-col gap-5">
             <h3 className="sticky top-0 z-[1] self-center rounded-full bg-paper/90 px-3 py-0.5 text-xs font-semibold text-muted backdrop-blur-sm">{g.title}</h3>
             {g.jobs.map((j) => (
-              <JobCard key={j.id} job={j} showOwner={Boolean(ownerView) && ownerView !== info.me.owner} onOpen={(index) => setView({ job: j, index })} onRemove={() => remove(j)} onReprompt={() => reprompt(j)} onReuse={(i, as) => reuse(j, i, as)} canDelete={j.owner === info.me.owner || info.isAdmin} />
+              <JobCard key={j.id} job={j} showOwner={false} onOpen={(index) => setView({ job: j, index })} onRemove={() => remove(j)} onReprompt={() => reprompt(j)} onReuse={(i, as) => reuse(j, i, as)} canDelete={j.owner === info.me.owner || info.isAdmin} />
             ))}
           </section>
         ))}
@@ -873,6 +971,15 @@ export default function CarrotTool() {
       </div>
 
       </div>
+      </div>
+      <aside className="sticky top-4 hidden w-[280px] shrink-0 lg:block" aria-label="내 작업 기록">
+        <HistoryPanel jobs={jobs} session={session} onOpen={openWork} />
+      </aside>
+      </div>
+      )}
+      <Dialog open={historyOpen} onClose={() => setHistoryOpen(false)} title="내 작업 기록">
+        <HistoryPanel jobs={jobs} session={session} onOpen={openWork} bare />
+      </Dialog>
       <Lightbox view={view} onClose={() => setView(null)} onMove={(index) => view && setView({ ...view, index })} />
     </div>
   )
@@ -880,6 +987,131 @@ export default function CarrotTool() {
 
 const VARIANT: Record<string, string> = { elevenlabs: 'ElevenLabs', minimax: 'MiniMax', seed_speech: 'Seed Speech', vibe_voice: 'Vibe Voice', cozy_voice: 'Cozy Voice' }
 const variantLabel = (v: string) => VARIANT[v] ?? v.replace(/^veo-3-1-/, 'Veo 3.1 ').replace('preview', '최고 품질').replace('fast', '빠름')
+
+/** 오른쪽 ‘내 작업 기록’: 내가 만든 최근 10개(이미지·영상과 프롬프트). 누르면 그 작업 화면으로 */
+function HistoryPanel({ jobs, session, onOpen, bare }: { jobs: Job[]; session: string; onOpen: (j: Job) => void; bare?: boolean }) {
+  const recent = [...jobs].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 10)
+  return (
+    <div className={clsx('flex flex-col', !bare && 'max-h-[calc(100dvh-2rem)] overflow-hidden rounded-xl border border-line bg-surface')}>
+      {!bare && (
+        <div className="flex items-center gap-2 border-b border-line px-4 py-3">
+          <History className="size-4 text-brand" aria-hidden />
+          <h3 className="text-[15px]">내 작업 기록</h3>
+          <span className="ml-auto text-xs text-muted">최근 {recent.length}개</span>
+        </div>
+      )}
+      {!recent.length ? (
+        <p className="px-4 py-8 text-center text-sm text-muted">아직 만든 작업이 없습니다.</p>
+      ) : (
+        <ul className={clsx('flex flex-col overflow-auto', !bare && 'p-2')}>
+          {recent.map((j) => {
+            const it = j.items.find((x) => x.type !== 'audio')
+            const active = sessionOf(j) === session
+            return (
+              <li key={j.id}>
+                <button
+                  type="button"
+                  onClick={() => onOpen(j)}
+                  className={clsx('flex w-full gap-3 rounded-lg p-2 text-left transition-colors hover:bg-sunken', active && 'bg-brand-soft/60 hover:bg-brand-soft')}
+                >
+                  <span className="relative size-14 shrink-0 overflow-hidden rounded-md bg-sunken">
+                    {it?.type === 'video' ? (
+                      <video src={it.url} muted playsInline preload="metadata" className="size-full object-cover" />
+                    ) : it ? (
+                      <img src={it.url} alt="" loading="lazy" className="size-full object-cover" />
+                    ) : (
+                      <span className="grid size-full place-items-center text-muted">
+                        {j.status === 'running' ? <Loader2 className="size-4 animate-spin" aria-label="만드는 중" /> : j.kind === 'audio' ? <AudioLines className="size-4" aria-hidden /> : <ImageIcon className="size-4" aria-hidden />}
+                      </span>
+                    )}
+                    {it?.type === 'video' && <Film className="absolute bottom-1 right-1 size-3.5 text-white drop-shadow" aria-hidden />}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="line-clamp-2 text-sm leading-snug text-ink">{j.prompt || '(프롬프트 없음)'}</span>
+                    <span className="mt-0.5 block truncate text-xs text-muted">
+                      {j.modelLabel} · {new Date(j.createdAt).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </span>
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+/** 라이브러리 탭: 모두의 결과를 정사각형으로 꽉 채워 자른 갤러리(프롬프트 없음). 기본 전체 보기 */
+function LibraryGallery({ jobs, owners, owner, onOwner, canBrowse, isAdmin, meOwner, keepDays, onOpen }: { jobs: Job[] | null; owners?: Owner[]; owner: string; onOwner: (o: string) => void; canBrowse: boolean; isAdmin: boolean; meOwner: string; keepDays: number; onOpen: (job: Job, index: number) => void }) {
+  const tiles = (jobs ?? [])
+    .flatMap((j) => j.items.map((it, index) => ({ j, it, index })))
+    .filter((t) => t.it.type !== 'audio')
+    .sort((a, b) => b.j.createdAt.localeCompare(a.j.createdAt) || a.index - b.index)
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2 text-sm text-muted">
+        <Images className="size-4" aria-hidden />
+        <span>
+          {owner === 'all' ? '전체 라이브러리' : owner === meOwner ? '내 라이브러리' : `${owners?.find((o) => o.owner === owner)?.name ?? ''}님의 라이브러리`} · {tiles.length}개 · 만든 결과는 {keepDays}일 동안 보관한 뒤 자동으로 지웁니다
+        </span>
+        {canBrowse && (
+          <Select
+            aria-label="라이브러리 보기"
+            className="ml-auto w-auto! min-w-44"
+            value={owner}
+            onValue={onOwner}
+            options={[{ value: 'all', label: isAdmin ? '전체 보기' : '볼 수 있는 전체' }, { value: meOwner, label: '내 것만' }, ...(owners ?? []).filter((o) => o.owner !== meOwner).map((o) => ({ value: o.owner, label: `${o.name} · ${o.jobs}건` }))]}
+          />
+        )}
+      </div>
+      {!jobs ? (
+        <div className="flex items-center gap-2 text-muted">
+          <Spinner /> 불러오는 중
+        </div>
+      ) : !tiles.length ? (
+        <EmptyState icon={Images} title="아직 만든 결과가 없습니다" className="py-16">
+          ‘생성’ 탭에서 이미지나 영상을 만들면 여기에 모입니다.
+        </EmptyState>
+      ) : (
+        <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))' }}>
+          {tiles.map(({ j, it, index }) => (
+            <button
+              key={it.url}
+              type="button"
+              onClick={() => onOpen(j, index)}
+              className="group relative aspect-square overflow-hidden rounded-lg bg-sunken focus-visible:outline-2"
+              aria-label={`${j.ownerName}님의 ${it.type === 'video' ? '영상' : '이미지'} 크게 보기`}
+            >
+              {it.type === 'video' ? (
+                <video
+                  src={it.url}
+                  muted
+                  loop
+                  playsInline
+                  preload="metadata"
+                  className="absolute inset-0 size-full object-cover"
+                  onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
+                  onMouseLeave={(e) => e.currentTarget.pause()}
+                />
+              ) : (
+                <img src={it.url} alt="" loading="lazy" className="absolute inset-0 size-full object-cover transition-transform duration-300 group-hover:scale-105" />
+              )}
+              {it.type === 'video' && (
+                <span className="absolute right-1.5 top-1.5 grid size-6 place-items-center rounded-full bg-ink/60 text-white">
+                  <Film className="size-3.5" aria-hidden />
+                </span>
+              )}
+              <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-ink/70 to-transparent px-2 pb-1.5 pt-5 text-left text-xs font-semibold text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                {j.ownerName}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 /** 라이브러리 미리보기 크기(픽셀). 한 장일 때 / 여러 장일 때. 어떤 경우에도 1000을 넘지 않는다 */
 const MEDIA_MAX = { w: 460, h: 460 }
@@ -988,7 +1220,7 @@ function JobCard({ job, showOwner, onOpen, onRemove, onReprompt, onReuse, canDel
   const n = Math.max(1, job.count, job.items.length)
   const rowW = job.kind === 'audio' ? 820 : Math.max(560, n * box.px + (n - 1) * 12)
   return (
-    <article className="flex flex-col gap-2" style={{ width: `min(100%, ${rowW}px)` }}>
+    <article id={`job-${job.id}`} className="flex scroll-mt-24 flex-col gap-2" style={{ width: `min(100%, ${rowW}px)` }}>
       <div className="flex justify-end">
         <div className="max-w-[80%] rounded-2xl bg-brand-soft px-4 py-3 text-base text-brand-ink">
           {job.refs.length > 0 && (
@@ -998,13 +1230,7 @@ function JobCard({ job, showOwner, onOpen, onRemove, onReprompt, onReuse, canDel
               ))}
             </div>
           )}
-          {job.promptHidden ? (
-            <p className="flex items-center gap-1.5 text-muted">
-              <Lock className="size-4 shrink-0" aria-hidden /> 프롬프트는 작성자만 볼 수 있습니다
-            </p>
-          ) : (
-            <p className="whitespace-pre-wrap leading-relaxed">{job.prompt || '(프롬프트 없음)'}</p>
-          )}
+          {!job.promptHidden && <p className="whitespace-pre-wrap leading-relaxed">{job.prompt || '(프롬프트 없음)'}</p>}
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[14px] text-muted">
@@ -1123,8 +1349,8 @@ function Lightbox({ view, onClose, onMove }: { view: { job: Job; index: number }
       footer={
         it && (
           <>
-            <p className="mr-auto line-clamp-2 max-w-[70%] text-xs text-muted">{view?.job.promptHidden ? `${view.job.ownerName}님의 결과 · 프롬프트는 작성자만 볼 수 있습니다` : view?.job.prompt}</p>
-            {!view?.job.promptHidden && (
+            <p className="mr-auto line-clamp-2 max-w-[70%] text-xs text-muted">{view?.job.prompt ? view.job.prompt : `${view?.job.ownerName}님의 결과`}</p>
+            {view?.job.prompt && (
             <Button
               size="sm"
               icon={Copy}
@@ -1142,7 +1368,11 @@ function Lightbox({ view, onClose, onMove }: { view: { job: Job; index: number }
         )
       }
     >
-      {it && <img src={it.url} alt="" className="mx-auto max-h-[min(70dvh,1000px)] max-w-[min(100%,1000px)] w-auto object-contain" />}
+      {it?.type === 'video' ? (
+        <video src={it.url} controls autoPlay playsInline className="mx-auto max-h-[min(70dvh,1000px)] max-w-[min(100%,1000px)] bg-ink" />
+      ) : (
+        it && <img src={it.url} alt="" className="mx-auto max-h-[min(70dvh,1000px)] max-w-[min(100%,1000px)] w-auto object-contain" />
+      )}
     </Dialog>
   )
 }
