@@ -1,7 +1,7 @@
-import { Link2, LogIn, RefreshCw, Trash2 } from 'lucide-react'
+import { Link2, LogIn, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
-import { Button, Callout, Panel, Spinner, TextInput, toast } from '@/ui'
+import { Button, Callout, Checkbox, Panel, Select, Spinner, TextInput, toast } from '@/ui'
 import { formatBytes, formatCredits } from '@/tools/carrot/logic'
 
 interface McpState {
@@ -209,7 +209,129 @@ export function CarrotAdmin() {
           </>
         )}
       </Panel>
+
+      <LibraryAccess />
     </div>
+  )
+}
+
+type Mode = 'own' | 'all' | 'some'
+interface AccessRow {
+  mode: Mode
+  owners: string[]
+}
+interface UserRow {
+  id: string
+  username: string
+  name: string
+  role: string
+  disabled: boolean
+}
+const ROLE_NAME: Record<string, string> = { admin: '전체마스터', staff: '스탭' }
+
+/** 라이브러리 접근 권한: 계정마다 볼 수 있는 라이브러리(내 것만 / 전체 / 선택한 사람). 지우기는 본인 것만(전체마스터는 전체) */
+function LibraryAccess() {
+  const [users, setUsers] = useState<UserRow[] | null>(null)
+  const [access, setAccess] = useState<Record<string, AccessRow>>({})
+  const [saving, setSaving] = useState<string | null>(null)
+  useEffect(() => {
+    Promise.all([api<{ users: UserRow[] }>('/admin/users'), api<{ access: Record<string, AccessRow> }>('/admin/carrot/access')])
+      .then(([u, a]) => {
+        setUsers(u.users.filter((x) => (x.role === 'admin' || x.role === 'staff') && !x.disabled))
+        setAccess(a.access)
+      })
+      .catch((err) => toast.error(err instanceof Error ? err.message : '불러오지 못했습니다.'))
+  }, [])
+  const save = (id: string, next: AccessRow) => {
+    setSaving(id)
+    api<{ access: Record<string, AccessRow> }>('/admin/carrot/access', { method: 'PUT', body: { userId: id, ...next } })
+      .then((r) => {
+        setAccess(r.access)
+        toast.success('라이브러리 접근 권한을 저장했습니다.')
+      })
+      .catch((err) => toast.error(err instanceof Error ? err.message : '저장하지 못했습니다.'))
+      .finally(() => setSaving(null))
+  }
+  return (
+    <Panel className="flex flex-col gap-4 p-5">
+      <div>
+        <h3 className="flex items-center gap-2 text-base">
+          <ShieldCheck className="size-4 text-brand" aria-hidden /> 라이브러리 접근 권한
+        </h3>
+        <p className="text-sm text-muted">
+          당근을 쓰는 계정(스탭 이상)마다 볼 수 있는 라이브러리를 정합니다. 기본은 ‘내 것만’이고, 전체마스터는 늘 전체를 봅니다. 다른 사람 결과는 보기·내려받기·레퍼런스로 쓰기만 되고, 지우기는 본인(또는 전체마스터)만 할 수 있습니다.
+        </p>
+      </div>
+      {!users ? (
+        <div className="flex items-center gap-2 text-muted">
+          <Spinner /> 불러오는 중
+        </div>
+      ) : !users.length ? (
+        <p className="text-sm text-muted">스탭 이상 계정이 없습니다. ‘계정·권한’에서 먼저 계정을 만들어 주세요.</p>
+      ) : (
+        <ul className="flex flex-col divide-y divide-line">
+          {users.map((u) => {
+            const a = access[u.id] ?? { mode: 'own' as Mode, owners: [] }
+            const others = users.filter((x) => x.id !== u.id)
+            return (
+              <li key={u.id} className="flex flex-col gap-2 py-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="min-w-40 flex-1">
+                    <span className="font-medium text-ink">{u.name || u.username}</span>
+                    <span className="ml-1.5 text-xs text-muted">
+                      {u.username} · {ROLE_NAME[u.role] ?? u.role}
+                    </span>
+                  </div>
+                  {u.role === 'admin' ? (
+                    <span className="text-sm text-muted">늘 전체 라이브러리</span>
+                  ) : (
+                    <Select
+                      aria-label={`${u.name || u.username} 라이브러리 보기 범위`}
+                      className="w-auto! min-w-52"
+                      value={a.mode}
+                      disabled={saving === u.id}
+                      onValue={(mode) => {
+                        if (mode === 'some') setAccess((m) => ({ ...m, [u.id]: { mode, owners: a.owners } }))
+                        else save(u.id, { mode, owners: [] })
+                      }}
+                      options={[
+                        { value: 'own', label: '내 것만 (기본)' },
+                        { value: 'all', label: '전체 라이브러리' },
+                        { value: 'some', label: '선택한 사람 것' },
+                      ]}
+                    />
+                  )}
+                </div>
+                {u.role !== 'admin' && a.mode === 'some' && (
+                  <div className="flex flex-col gap-2 rounded-lg bg-paper px-3 py-2.5">
+                    <p className="text-xs text-muted">내 것과 함께 볼 수 있는 사람을 고르세요. 고르면 바로 저장됩니다.</p>
+                    <div className="flex flex-wrap gap-x-4 gap-y-2">
+                      {others.map((o) => (
+                        <Checkbox
+                          key={o.id}
+                          checked={a.owners.includes(o.id)}
+                          label={o.name || o.username}
+                          onChange={(on) => {
+                            const owners = on ? [...a.owners, o.id] : a.owners.filter((x) => x !== o.id)
+                            // 누르는 즉시 표시를 바꾸고 뒤에서 저장
+                            setAccess((m) => ({ ...m, [u.id]: { mode: 'some', owners } }))
+                            if (owners.length) save(u.id, { mode: 'some', owners })
+                            else {
+                              setAccess((m) => ({ ...m, [u.id]: { mode: 'some', owners: [] } }))
+                              save(u.id, { mode: 'own', owners: [] })
+                            }
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </Panel>
   )
 }
 

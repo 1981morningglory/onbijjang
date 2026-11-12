@@ -209,6 +209,23 @@ export function extFor(contentType, url, kind) {
 }
 export const typeOfExt = (ext) => (['mp4', 'mov', 'webm'].includes(ext) ? 'video' : ['mp3', 'wav', 'ogg', 'm4a'].includes(ext) ? 'audio' : 'image')
 
+// ── 라이브러리 접근 권한 ──────────────────────────────────
+/** 접근 설정 하나 정리: { mode: 'own' | 'all' | 'some', owners: [계정 ID] } */
+export function cleanAccess(v) {
+  const mode = ['own', 'all', 'some'].includes(v?.mode) ? v.mode : 'own'
+  const owners = mode === 'some' ? [...new Set((Array.isArray(v?.owners) ? v.owners : []).filter((x) => typeof x === 'string' && /^[a-z0-9]{1,40}$/.test(x)))].slice(0, 200) : []
+  return { mode: mode === 'some' && !owners.length ? 'own' : mode, owners }
+}
+/** viewer 가 owner 의 라이브러리를 볼 수 있는가(전체마스터는 늘, 본인 것은 늘) */
+export function canView(access, viewer, owner, admin = false) {
+  if (admin || viewer === owner) return true
+  const a = access?.[viewer]
+  if (!a) return false
+  return a.mode === 'all' || (a.mode === 'some' && a.owners.includes(owner))
+}
+/** 다른 사람 라이브러리를 볼 수 있는 사람인가(화면에 ‘라이브러리 보기’ 고르기를 보일지) */
+export const canBrowse = (access, viewer, admin = false) => admin || (access?.[viewer]?.mode ?? 'own') !== 'own'
+
 /** 거래 내역에서 가장 최근 구독 크레딧 지급(매달 갱신) 찾기 */
 export function lastSubscriptionGrant(items) {
   const g = (Array.isArray(items) ? items : []).find((t) => t?.action === 'grant' && /subscription/i.test(String(t.display_name ?? '')))
