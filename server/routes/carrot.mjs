@@ -124,6 +124,7 @@ export default async function carrotRoutes(app, ctx) {
     options: j.options,
     count: j.count,
     refs: j.refPreviews ?? [],
+    session: j.session ?? null,
     status: j.status,
     error: j.error ?? null,
     credits: j.credits ?? null,
@@ -337,6 +338,8 @@ export default async function carrotRoutes(app, ctx) {
         prompt: String(req.body.prompt ?? '').trim().slice(0, 4000),
         options: req.body.options ?? {},
         count: ids.length,
+        // 작업 묶음(‘새로운 작업’마다 새로): 화면이 만든 짧은 ID
+        session: typeof req.body.session === 'string' && /^[a-z0-9]{6,24}$/.test(req.body.session) ? req.body.session : null,
         refPreviews: (Array.isArray(req.body.previews) ? req.body.previews : []).filter((u) => typeof u === 'string' && /^(https:\/\/|\/api\/carrot\/file\/)/.test(u)).slice(0, 6),
         status: 'running',
         requests: ids.map((id) => ({ id, status: 'pending' })),

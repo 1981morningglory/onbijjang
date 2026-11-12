@@ -51,6 +51,8 @@ export interface Job {
   /** 다른 사람 결과면 null(프롬프트는 작성자만 본다) */
   prompt: string | null
   promptHidden?: boolean
+  /** 작업 묶음(‘새로운 작업’ 단위). 예전 작업은 null */
+  session?: string | null
   options: Options
   count: number
   refs: string[]
