@@ -21,3 +21,4 @@ export function nextRenewal(lastIso: string, now?: number): string | null
 export function cleanAccess(v: unknown): { mode: 'own' | 'all' | 'some'; owners: string[] }
 export function canView(access: Record<string, { mode: string; owners: string[] }>, viewer: string, owner: string, admin?: boolean): boolean
 export function canBrowse(access: Record<string, { mode: string; owners: string[] }>, viewer: string, admin?: boolean): boolean
+export function canSeePrompt(viewer: string, owner: string, admin?: boolean): boolean

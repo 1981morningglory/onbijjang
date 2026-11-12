@@ -259,7 +259,7 @@ function LibraryAccess() {
           <ShieldCheck className="size-4 text-brand" aria-hidden /> 라이브러리 접근 권한
         </h3>
         <p className="text-sm text-muted">
-          당근을 쓰는 계정(스탭 이상)마다 볼 수 있는 라이브러리를 정합니다. 기본은 ‘내 것만’이고, 전체마스터는 늘 전체를 봅니다. 다른 사람 결과는 보기·내려받기·레퍼런스로 쓰기만 되고, 지우기는 본인(또는 전체마스터)만 할 수 있습니다.
+          기본은 모두가 전체 라이브러리를 함께 봅니다. 필요하면 계정마다 ‘내 것만’이나 ‘선택한 사람 것’으로 좁힐 수 있습니다. 다른 사람 결과는 보기·내려받기·레퍼런스로 쓰기만 되고, 프롬프트는 작성한 본인(과 전체마스터)만 보며, 지우기도 본인(또는 전체마스터)만 할 수 있습니다.
         </p>
       </div>
       {!users ? (
@@ -271,7 +271,7 @@ function LibraryAccess() {
       ) : (
         <ul className="flex flex-col divide-y divide-line">
           {users.map((u) => {
-            const a = access[u.id] ?? { mode: 'own' as Mode, owners: [] }
+            const a = access[u.id] ?? { mode: 'all' as Mode, owners: [] }
             const others = users.filter((x) => x.id !== u.id)
             return (
               <li key={u.id} className="flex flex-col gap-2 py-3">
@@ -295,8 +295,8 @@ function LibraryAccess() {
                         else save(u.id, { mode, owners: [] })
                       }}
                       options={[
-                        { value: 'own', label: '내 것만 (기본)' },
-                        { value: 'all', label: '전체 라이브러리' },
+                        { value: 'all', label: '전체 라이브러리 (기본)' },
+                        { value: 'own', label: '내 것만' },
                         { value: 'some', label: '선택한 사람 것' },
                       ]}
                     />

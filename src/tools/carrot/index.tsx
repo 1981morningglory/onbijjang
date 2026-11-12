@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { ArrowUp, AudioLines, Check, ChevronDown, Clapperboard, Clock, CalendarClock, Coins, Copy, Download, Film, Gauge, ImagePlus, Image as ImageIcon, Images, Loader2, MessagesSquare, Mic, MicOff, Plus, RefreshCw, RotateCcw, Search, Trash2, Volume2, VolumeX, Wand2, X } from 'lucide-react'
+import { ArrowUp, AudioLines, Check, ChevronDown, Clapperboard, Clock, CalendarClock, Coins, Copy, Download, Film, Gauge, ImagePlus, Image as ImageIcon, Images, Loader2, Lock, MessagesSquare, Mic, MicOff, Plus, RefreshCw, RotateCcw, Search, Trash2, Volume2, VolumeX, Wand2, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { api, ApiError } from '@/lib/api'
 import { canvasToBlob, fileToCanvas, fitWithin, resizeCanvas } from '@/lib/image'
@@ -453,7 +453,7 @@ export default function CarrotTool() {
     setKind(job.kind)
     setModelBy((s) => ({ ...s, [job.kind]: job.model }))
     setOptionsBy((o) => ({ ...o, [job.model]: { ...(o[job.model] ?? {}), ...job.options } }))
-    setPrompt(job.prompt)
+    if (job.prompt) setPrompt(job.prompt)
     setChatMode(false)
     textRef.current?.focus()
   }
@@ -524,7 +524,7 @@ export default function CarrotTool() {
           <section key={g.title} className="flex flex-col gap-5">
             <h3 className="sticky top-0 z-[1] self-center rounded-full bg-paper/90 px-3 py-0.5 text-xs font-semibold text-muted backdrop-blur-sm">{g.title}</h3>
             {g.jobs.map((j) => (
-              <JobCard key={j.id} job={j} showOwner={Boolean(ownerView) && ownerView !== info.me.owner} onOpen={(index) => setView({ job: j, index })} onRemove={() => remove(j)} onReprompt={() => reprompt(j)} onReuse={(i, as) => reuse(j, i, as)} />
+              <JobCard key={j.id} job={j} showOwner={Boolean(ownerView) && ownerView !== info.me.owner} onOpen={(index) => setView({ job: j, index })} onRemove={() => remove(j)} onReprompt={() => reprompt(j)} onReuse={(i, as) => reuse(j, i, as)} canDelete={j.owner === info.me.owner || info.isAdmin} />
             ))}
           </section>
         ))}
@@ -978,7 +978,7 @@ function ChipTrigger({ p, label, icon, ratio }: { p: { onClick: () => void; 'ari
   )
 }
 
-function JobCard({ job, showOwner, onOpen, onRemove, onReprompt, onReuse }: { job: Job; showOwner: boolean; onOpen: (i: number) => void; onRemove: () => void; onReprompt: () => void; onReuse: (i: number, as: 'ref' | 'start') => void }) {
+function JobCard({ job, showOwner, onOpen, onRemove, onReprompt, onReuse, canDelete }: { job: Job; showOwner: boolean; onOpen: (i: number) => void; onRemove: () => void; onReprompt: () => void; onReuse: (i: number, as: 'ref' | 'start') => void; canDelete: boolean }) {
   const o = job.options ?? {}
   const meta = [job.modelLabel, o.quality && optionLabel(o.quality), o.aspect_ratio && ratioLabel(o.aspect_ratio), job.kind !== 'image' && o.duration ? `${o.duration}초` : null, o.resolution?.toUpperCase(), o.mode && job.kind === 'video' ? optionLabel(o.mode) : null].filter(Boolean).join(' · ')
   const left = daysLeft(job.expiresAt)
@@ -998,7 +998,13 @@ function JobCard({ job, showOwner, onOpen, onRemove, onReprompt, onReuse }: { jo
               ))}
             </div>
           )}
-          <p className="whitespace-pre-wrap leading-relaxed">{job.prompt || '(프롬프트 없음)'}</p>
+          {job.promptHidden ? (
+            <p className="flex items-center gap-1.5 text-muted">
+              <Lock className="size-4 shrink-0" aria-hidden /> 프롬프트는 작성자만 볼 수 있습니다
+            </p>
+          ) : (
+            <p className="whitespace-pre-wrap leading-relaxed">{job.prompt || '(프롬프트 없음)'}</p>
+          )}
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[14px] text-muted">
@@ -1008,12 +1014,16 @@ function JobCard({ job, showOwner, onOpen, onRemove, onReprompt, onReuse }: { jo
         {job.credits != null && <span>· {formatCredits(job.credits)}</span>}
         <span className={clsx(left <= 1 && 'text-warn')}>· {left ? `${left}일 뒤 자동 삭제` : '오늘 자동 삭제'}</span>
         <span className="ml-auto flex gap-1">
-          <button type="button" onClick={onReprompt} className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 hover:bg-sunken hover:text-ink" title="이 설정으로 다시 쓰기">
-            <RotateCcw className="size-4" aria-hidden /> 다시 쓰기
-          </button>
-          <button type="button" onClick={onRemove} className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 hover:bg-danger-soft hover:text-danger" title="지우기">
-            <Trash2 className="size-4" aria-hidden /> 지우기
-          </button>
+          {!job.promptHidden && (
+            <button type="button" onClick={onReprompt} className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 hover:bg-sunken hover:text-ink" title="이 설정으로 다시 쓰기">
+              <RotateCcw className="size-4" aria-hidden /> 다시 쓰기
+            </button>
+          )}
+          {canDelete && (
+            <button type="button" onClick={onRemove} className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 hover:bg-danger-soft hover:text-danger" title="지우기">
+              <Trash2 className="size-4" aria-hidden /> 지우기
+            </button>
+          )}
         </span>
       </div>
       {job.error && <p className="text-[14px] text-warn">{job.error}</p>}
@@ -1030,7 +1040,7 @@ function JobCard({ job, showOwner, onOpen, onRemove, onReprompt, onReuse }: { jo
                 <video src={it.url} controls preload="metadata" playsInline className="block h-full w-full bg-ink object-contain" style={box.aspectRatio ? undefined : { maxHeight: MEDIA_MAX.h }} />
               ) : (
                 <button type="button" onClick={() => onOpen(i)} className="block w-full" aria-label="크게 보기">
-                  <img src={it.url} alt={job.prompt.slice(0, 60)} loading="lazy" className={clsx('block', box.aspectRatio ? 'h-full w-full object-cover' : 'h-auto w-auto object-contain')} style={box.aspectRatio ? undefined : { maxWidth: box.maxWidth, maxHeight: box.maxHeight }} />
+                  <img src={it.url} alt={job.prompt ? job.prompt.slice(0, 60) : `${job.ownerName}님의 결과`} loading="lazy" className={clsx('block', box.aspectRatio ? 'h-full w-full object-cover' : 'h-auto w-auto object-contain')} style={box.aspectRatio ? undefined : { maxWidth: box.maxWidth, maxHeight: box.maxHeight }} />
                 </button>
               )}
               <div className={clsx('absolute right-1.5 flex gap-1 transition-opacity', it.type === 'audio' ? 'top-1/2 -translate-y-1/2' : 'top-1.5 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100')}>
@@ -1113,7 +1123,8 @@ function Lightbox({ view, onClose, onMove }: { view: { job: Job; index: number }
       footer={
         it && (
           <>
-            <p className="mr-auto line-clamp-2 max-w-[70%] text-xs text-muted">{view?.job.prompt}</p>
+            <p className="mr-auto line-clamp-2 max-w-[70%] text-xs text-muted">{view?.job.promptHidden ? `${view.job.ownerName}님의 결과 · 프롬프트는 작성자만 볼 수 있습니다` : view?.job.prompt}</p>
+            {!view?.job.promptHidden && (
             <Button
               size="sm"
               icon={Copy}
@@ -1123,6 +1134,7 @@ function Lightbox({ view, onClose, onMove }: { view: { job: Job; index: number }
             >
               프롬프트 복사
             </Button>
+            )}
             <a href={`${it.url}?download=1`} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-brand px-3 text-sm font-semibold text-white hover:bg-brand-strong">
               <Download className="size-4" aria-hidden /> 내려받기 ({formatBytes(it.size)})
             </a>

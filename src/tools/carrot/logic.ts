@@ -48,7 +48,9 @@ export interface Job {
   kind: Kind
   model: string
   modelLabel: string
-  prompt: string
+  /** 다른 사람 결과면 null(프롬프트는 작성자만 본다) */
+  prompt: string | null
+  promptHidden?: boolean
   options: Options
   count: number
   refs: string[]
