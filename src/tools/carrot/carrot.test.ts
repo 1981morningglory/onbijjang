@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SNAPSHOT, extFor, isExpired, jobIds, jobResult, lastSubscriptionGrant, nextRenewal, normalizeModel, planRequest, toolError, usageByOwner } from '../../../server/lib/carrot.mjs'
+import { SNAPSHOT, canBrowse, canView, cleanAccess, extFor, isExpired, jobIds, jobResult, lastSubscriptionGrant, nextRenewal, normalizeModel, planRequest, toolError, usageByOwner } from '../../../server/lib/carrot.mjs'
 import { DEFAULT_MODEL, DEFAULT_OPTIONS, choices, daysLeft, durationSteps, fitOptions, hasEndFrame, hasStartFrame, maxRefs, modelChipLabel, ratioLabel } from './logic'
 
 const M = (key: string) => {
@@ -155,5 +155,27 @@ describe('남은 크레딧 기간', () => {
     expect(nextRenewal('2026-10-13T08:00:20Z', Date.parse('2026-11-11T03:00:00Z'))).toBe('2026-11-13T08:00:20.000Z')
     expect(nextRenewal('2026-10-13T08:00:20Z', Date.parse('2026-11-14T00:00:00Z'))).toBe('2026-12-13T08:00:20.000Z')
     expect(nextRenewal('2026-01-31T00:00:00Z', Date.parse('2026-02-10T00:00:00Z'))).toBe('2026-02-28T00:00:00.000Z')
+  })
+})
+
+describe('라이브러리 접근 권한', () => {
+  const access = { a: cleanAccess({ mode: 'all' }), b: cleanAccess({ mode: 'some', owners: ['c', 'BAD!'] }) }
+  it('기본은 내 것만, 전체마스터는 늘 전체', () => {
+    expect(canView(access, 'z', 'c')).toBe(false)
+    expect(canView(access, 'z', 'z')).toBe(true)
+    expect(canView(access, 'z', 'c', true)).toBe(true)
+    expect(canBrowse(access, 'z')).toBe(false)
+    expect(canBrowse(access, 'z', true)).toBe(true)
+  })
+  it('전체 / 선택한 사람', () => {
+    expect(canView(access, 'a', 'c')).toBe(true)
+    expect(canView(access, 'b', 'c')).toBe(true)
+    expect(canView(access, 'b', 'a')).toBe(false)
+    expect(access.b.owners).toEqual(['c'])
+    expect(canBrowse(access, 'b')).toBe(true)
+  })
+  it('선택한 사람이 없으면 내 것만으로', () => {
+    expect(cleanAccess({ mode: 'some', owners: [] })).toEqual({ mode: 'own', owners: [] })
+    expect(cleanAccess({ mode: '이상한값' })).toEqual({ mode: 'own', owners: [] })
   })
 })

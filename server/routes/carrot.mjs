@@ -11,7 +11,7 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { AI_MODEL, makeClient } from '../lib/ai.mjs'
-import { KEEP_DAYS, SNAPSHOT, TERMINAL, extFor, isExpired, jobIds, jobResult, koreanToolError, lastSubscriptionGrant, nextRenewal, normalizeModels, planRequest, toolError, typeOfExt, usageByOwner } from '../lib/carrot.mjs'
+import { KEEP_DAYS, SNAPSHOT, TERMINAL, canBrowse, canView, cleanAccess, extFor, isExpired, jobIds, jobResult, koreanToolError, lastSubscriptionGrant, nextRenewal, normalizeModels, planRequest, toolError, typeOfExt, usageByOwner } from '../lib/carrot.mjs'
 import { createHfMcp } from '../lib/hfmcp.mjs'
 
 const UPLOAD_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
@@ -27,6 +27,7 @@ export default async function carrotRoutes(app, ctx) {
   const JOBS_FILE = path.join(DIR, 'jobs.json')
   const LEDGER_FILE = path.join(DIR, 'ledger.json')
   const MODELS_FILE = path.join(DIR, 'models.json')
+  const ACCESS_FILE = path.join(DIR, 'access.json')
   fs.mkdirSync(FILES, { recursive: true })
   const hf = createHfMcp(path.join(DIR, 'mcp.json'))
 
@@ -91,6 +92,10 @@ export default async function carrotRoutes(app, ctx) {
     voices = { at: Date.now(), list: list.filter((v) => v.voice_type === 'preset').map((v) => ({ id: v.voice_id, name: v.name, gender: v.gender ?? '', preview: v.preview_url ?? '' })) }
     return voices.list
   }
+
+  // ── 라이브러리 접근 권한(관리자가 계정별로 정한다) ──
+  /** 계정 ID → { mode: 'own' | 'all' | 'some', owners } */
+  let access = Object.fromEntries(Object.entries((await readJson(ACCESS_FILE, {})) ?? {}).map(([k, v]) => [k, cleanAccess(v)]))
 
   // ── 라이브러리(작업 목록)·크레딧 기록 ──
   /** @type {any[]} */
@@ -248,7 +253,7 @@ export default async function carrotRoutes(app, ctx) {
   // ── 화면용 API ──
   app.get('/api/carrot/models', requireStaff, async (req, res) => {
     const st = await hf.status()
-    res.json({ connected: st.connected, keepDays: KEEP_DAYS, isAdmin: isAdmin(req), me: me(req), models, modelsAt, chat: Boolean(process.env.ANTHROPIC_API_KEY || fs.existsSync(path.join(DATA_DIR, 'sns', 'ai.json'))) })
+    res.json({ connected: st.connected, keepDays: KEEP_DAYS, isAdmin: isAdmin(req), canBrowse: canBrowse(access, me(req).owner, isAdmin(req)), me: me(req), models, modelsAt, chat: Boolean(process.env.ANTHROPIC_API_KEY || fs.existsSync(path.join(DATA_DIR, 'sns', 'ai.json'))) })
   })
   app.get('/api/carrot/voices', requireStaff, async (_req, res) => {
     try {
@@ -265,7 +270,7 @@ export default async function carrotRoutes(app, ctx) {
         const job = jobs.find((j) => j.id === req.body.job)
         const it = job?.items?.[Number(req.body?.index) || 0]
         if (!job || !it || it.type !== 'image') return res.status(404).json({ error: '그 결과를 찾지 못했습니다.' })
-        if (job.owner !== me(req).owner && !isAdmin(req)) return res.status(403).json({ error: '내 라이브러리의 결과만 쓸 수 있습니다.' })
+        if (!canView(access, me(req).owner, job.owner, isAdmin(req))) return res.status(403).json({ error: '볼 수 있는 라이브러리의 결과만 쓸 수 있습니다.' })
         if (it.jobId) return res.json({ id: it.jobId })
       }
       let buf
@@ -358,15 +363,18 @@ export default async function carrotRoutes(app, ctx) {
     const who = me(req)
     const admin = isAdmin(req)
     const want = typeof req.query.owner === 'string' ? req.query.owner : ''
-    const list = jobs.filter((j) => (admin && want === 'all' ? true : admin && want ? j.owner === want : j.owner === who.owner))
-    const owners = admin ? usageByOwner(jobs).map((u) => ({ owner: u.owner, name: u.name, username: u.username, jobs: u.jobs })) : undefined
+    const see = (owner) => canView(access, who.owner, owner, admin)
+    const browse = canBrowse(access, who.owner, admin)
+    const list = jobs.filter((j) => (!browse || !want ? j.owner === who.owner : want === 'all' ? see(j.owner) : j.owner === want && see(j.owner)))
+    // 고를 수 있는 사람 목록: 볼 수 있는 사람만
+    const owners = browse ? usageByOwner(jobs.filter((j) => see(j.owner))).map((u) => ({ owner: u.owner, name: u.name, username: u.username, jobs: u.jobs })) : undefined
     res.json({ jobs: list.map(view), owners, running: list.some((j) => j.status === 'running') })
   })
 
   app.get('/api/carrot/file/:owner/:file', requireStaff, (req, res) => {
     const { owner, file } = req.params
     if (!okName(owner) || !/^[a-z0-9]{16}-\d{1,2}\.[a-z0-9]{2,4}$/.test(file)) return res.status(400).json({ error: '잘못된 주소입니다.' })
-    if (owner !== me(req).owner && !isAdmin(req)) return res.status(403).json({ error: '다른 사람의 결과는 볼 수 없습니다.' })
+    if (!canView(access, me(req).owner, owner, isAdmin(req))) return res.status(403).json({ error: '이 라이브러리를 볼 권한이 없습니다. 관리자에게 요청해 주세요.' })
     const full = path.join(FILES, owner, file)
     if (!fs.existsSync(full)) return res.status(404).json({ error: '파일이 없습니다(보관 기간이 지났을 수 있습니다).' })
     if (req.query.download) res.setHeader('Content-Disposition', `attachment; filename="carrot-${file}"`)
@@ -566,6 +574,19 @@ ${modelLines()}`
   app.delete('/api/admin/carrot', requireAdmin, async (_req, res) => {
     await hf.logout()
     res.json(await adminState())
+  })
+  /** 라이브러리 접근 권한: 계정별 보기 범위 */
+  app.get('/api/admin/carrot/access', requireAdmin, (_req, res) => res.json({ access }))
+  app.put('/api/admin/carrot/access', requireAdmin, async (req, res) => {
+    const id = String(req.body?.userId ?? '')
+    if (!/^[a-z0-9]{1,40}$/.test(id)) return res.status(400).json({ error: '계정을 골라 주세요.' })
+    const next = cleanAccess(req.body)
+    next.owners = next.owners.filter((o) => o !== id)
+    if (next.mode === 'some' && !next.owners.length) next.mode = 'own'
+    if (next.mode === 'own') delete access[id]
+    else access[id] = next
+    await writeJson(ACCESS_FILE, access)
+    res.json({ access })
   })
   app.get('/api/admin/carrot/usage', requireAdmin, async (_req, res) => {
     const users = usageByOwner(jobs, ledger)

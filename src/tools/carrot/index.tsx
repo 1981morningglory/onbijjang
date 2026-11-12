@@ -10,6 +10,8 @@ interface Info {
   connected: boolean
   keepDays: number
   isAdmin: boolean
+  /** 다른 사람 라이브러리를 볼 수 있는가(전체마스터 또는 관리자가 권한을 준 계정) */
+  canBrowse?: boolean
   me: { owner: string; ownerName: string }
   models: Model[]
   chat: boolean
@@ -495,13 +497,13 @@ export default function CarrotTool() {
         <span>
           {ownerView === 'all' ? '전체 라이브러리' : ownerView ? `${owners?.find((o) => o.owner === ownerView)?.name ?? ''}님의 라이브러리` : '내 라이브러리'} · 만든 결과는 {info.keepDays}일 동안 보관한 뒤 자동으로 지웁니다
         </span>
-        {info.isAdmin && owners && (
+        {(info.isAdmin || info.canBrowse) && owners && (
           <Select
             aria-label="라이브러리 보기"
             className="ml-auto w-auto! min-w-44"
             value={ownerView}
             onValue={setOwnerView}
-            options={[{ value: '', label: '내 라이브러리' }, { value: 'all', label: '전체 사용자' }, ...owners.filter((o) => o.owner !== info.me.owner).map((o) => ({ value: o.owner, label: `${o.name}${o.username ? ` (${o.username})` : ''} · ${o.jobs}건` }))]}
+            options={[{ value: '', label: '내 라이브러리' }, { value: 'all', label: info.isAdmin ? '전체 사용자' : '볼 수 있는 전체' }, ...owners.filter((o) => o.owner !== info.me.owner).map((o) => ({ value: o.owner, label: `${o.name}${o.username ? ` (${o.username})` : ''} · ${o.jobs}건` }))]}
           />
         )}
       </div>

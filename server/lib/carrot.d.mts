@@ -18,3 +18,6 @@ export function isExpired(job: { createdAt: string }, now?: number): boolean
 export function usageByOwner(jobs: unknown[], ledger?: unknown[]): Array<{ owner: string; name: string; jobs: number; images: number; videos: number; audios: number; failed: number; bytes: number; credits: number; credits30: number }>
 export function lastSubscriptionGrant(items: unknown): { at: string; credits: number } | null
 export function nextRenewal(lastIso: string, now?: number): string | null
+export function cleanAccess(v: unknown): { mode: 'own' | 'all' | 'some'; owners: string[] }
+export function canView(access: Record<string, { mode: string; owners: string[] }>, viewer: string, owner: string, admin?: boolean): boolean
+export function canBrowse(access: Record<string, { mode: string; owners: string[] }>, viewer: string, admin?: boolean): boolean
