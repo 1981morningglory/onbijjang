@@ -108,11 +108,21 @@ interface Status {
   installing: boolean
   error: string | null
   login?: Login
+  /** 유튜브 로그인 연결(로봇 확인에 막힐 때) */
+  ytLogin?: Login
 }
 const ymd = (iso: string | null) => (iso ? new Date(Date.parse(iso) + 9 * 3600_000).toISOString().slice(0, 10) : '')
 
-/** 인스타그램 로그인 연결: 스토리·비공개 계정 영상은 로그인한 브라우저의 쿠키로 받는다 */
-function LoginPanel({ login, onChange, highlight }: { login: Login; onChange: (l: Login) => void; highlight: boolean }) {
+type Site = 'instagram' | 'youtube'
+const SITE_TEXT: Record<Site, { name: string; title: string; idle: string; saved: string; unplug: string }> = {
+  instagram: { name: '인스타그램', title: '인스타그램 로그인 연결', idle: '스토리·비공개 계정 영상은 로그인 연결이 있어야 받을 수 있습니다.', saved: '인스타그램 로그인을 연결했습니다. 스토리 링크를 다시 불러와 보세요.', unplug: '인스타그램 로그인 연결을 끊을까요?\n스토리·비공개 영상은 다시 받을 수 없게 됩니다.' },
+  youtube: { name: '유튜브', title: '유튜브 로그인 연결', idle: '유튜브가 이 서버의 요청을 로봇 확인으로 막을 때, 로그인 연결이 있으면 받을 수 있습니다.', saved: '유튜브 로그인을 연결했습니다. 유튜브 링크를 다시 불러와 보세요.', unplug: '유튜브 로그인 연결을 끊을까요?\n로봇 확인에 막히는 유튜브 영상은 다시 받을 수 없게 됩니다.' },
+}
+
+/** 로그인 연결(사이트별): 인스타그램 스토리·비공개 영상, 유튜브 로봇 확인은 로그인한 브라우저의 쿠키로 받는다 */
+function LoginPanel({ site = 'instagram', login, onChange, highlight }: { site?: Site; login: Login; onChange: (l: Login) => void; highlight: boolean }) {
+  const T = SITE_TEXT[site]
+  const path = `/media/login${site === 'youtube' ? '?site=youtube' : ''}`
   const [open, setOpen] = useState(false)
   const [assign, setAssign] = useState(false)
   const [text, setText] = useState('')
@@ -121,11 +131,11 @@ function LoginPanel({ login, onChange, highlight }: { login: Login; onChange: (l
   const save = async (raw = text) => {
     setBusy(true)
     try {
-      const r = await api<{ login: Login }>('/media/login', { method: 'PUT', body: { text: raw } })
+      const r = await api<{ login: Login }>(path, { method: 'PUT', body: { text: raw } })
       onChange(r.login)
       setText('')
       setOpen(false)
-      toast.success('인스타그램 로그인을 연결했습니다. 스토리 링크를 다시 불러와 보세요.')
+      toast.success(T.saved)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : '연결하지 못했습니다.')
     } finally {
@@ -133,9 +143,9 @@ function LoginPanel({ login, onChange, highlight }: { login: Login; onChange: (l
     }
   }
   const unplug = async () => {
-    if (!confirm('인스타그램 로그인 연결을 끊을까요?\n스토리·비공개 영상은 다시 받을 수 없게 됩니다.')) return
+    if (!confirm(T.unplug)) return
     try {
-      onChange((await api<{ login: Login }>('/media/login', { method: 'DELETE' })).login)
+      onChange((await api<{ login: Login }>(path, { method: 'DELETE' })).login)
       toast.success('연결을 끊었습니다.')
     } catch (e) {
       toast.error(e instanceof Error ? e.message : '끊지 못했습니다.')
@@ -146,16 +156,16 @@ function LoginPanel({ login, onChange, highlight }: { login: Login; onChange: (l
     <Panel className={clsx('flex flex-col gap-3 p-4 sm:p-5', highlight && 'ring-2 ring-warn/50')}>
       <div className="flex flex-wrap items-center gap-2">
         <KeyRound className="size-4 text-muted" aria-hidden />
-        <h3 className="text-sm font-bold text-ink">인스타그램 로그인 연결</h3>
+        <h3 className="text-sm font-bold text-ink">{T.title}</h3>
         {login.connected ? <Badge tone={expired ? 'warn' : 'brand'}>{expired ? '만료됨' : '연결됨'}</Badge> : <Badge>연결 안 됨</Badge>}
         <span className="text-xs text-muted">
           {login.connected
             ? `${login.by ? `${login.by} · ` : ''}${ymd(login.updatedAt)} 연결${login.expires ? ` · ${ymd(login.expires)} 만료 예정` : ''}`
-            : '스토리·비공개 계정 영상은 로그인 연결이 있어야 받을 수 있습니다.'}
+            : T.idle}
         </span>
         {login.canManage && (
           <div className="ml-auto flex gap-1.5">
-            {login.canAssign && (
+            {login.canAssign && site === 'instagram' && (
               <Button size="sm" variant="ghost" onClick={() => setAssign((v) => !v)}>
                 연결 담당자
               </Button>
@@ -173,7 +183,47 @@ function LoginPanel({ login, onChange, highlight }: { login: Login; onChange: (l
       </div>
       {!login.canManage && !login.connected && <p className="text-xs text-muted">연결은 지정된 담당자만 할 수 있습니다. 전체마스터에게 연결을 요청하세요.</p>}
       {assign && login.canAssign && <Managers />}
-      {open && login.canManage && (
+      {open && login.canManage && site === 'youtube' && (
+        <div className="flex flex-col gap-3 rounded-md border border-line bg-surface p-3 text-sm">
+          <ol className="list-decimal space-y-1 pl-5 text-ink-2">
+            <li>
+              크롬에서 <b>시크릿 창</b>(Ctrl+Shift+N)을 열고 <b>youtube.com 에 로그인</b>합니다. 영상 받기용으로 자주 쓰면 구글이 계정을 제한할 수 있으니 <b>회사 부계정</b>을 권합니다.
+            </li>
+            <li>
+              크롬 확장 프로그램 <b>Get cookies.txt LOCALLY</b>를 설치하고, 확장 관리에서 <b>시크릿 모드에서 허용</b>을 켭니다. 시크릿 창의 youtube.com 에서 확장 아이콘 → <b>Export</b> → 받은 파일을 아래 [cookies.txt 올리기]로 올립니다.
+            </li>
+            <li>
+              올린 뒤에는 그 <b>시크릿 창을 바로 닫으세요</b>. 그 창에서 유튜브를 계속 쓰면 로그인 정보가 바뀌어 연결이 빨리 끊깁니다. 막히기 시작하면 같은 방법으로 새로 연결하면 됩니다.
+            </li>
+          </ol>
+          <Callout tone="warn">
+            이 파일은 구글 계정 비밀번호와 같습니다. 메신저·채팅·이메일로 보내지 말고 이 칸에만 올리세요. 온비짱 서버에만 저장되고 유튜브 영상을 받을 때만 쓰이며, 화면에는 다시 보이지 않습니다.
+          </Callout>
+          <Textarea aria-label="유튜브 로그인 정보(cookies.txt 내용)" value={text} onChange={(e) => setText(e.target.value)} placeholder="cookies.txt 내용을 붙여넣어도 됩니다" spellCheck={false} autoComplete="off" className="min-h-16! font-mono text-xs" />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" icon={FileUp} disabled={busy} onClick={() => fileRef.current?.click()}>
+              cookies.txt 올리기
+            </Button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".txt,text/plain"
+              hidden
+              onChange={async (e) => {
+                const f = e.target.files?.[0]
+                e.target.value = ''
+                if (!f) return
+                if (f.size > 1_000_000) return toast.error('파일이 너무 큽니다. youtube.com 에서 내보낸 cookies.txt 를 올려 주세요.')
+                await save(await f.text())
+              }}
+            />
+            <Button size="sm" variant="primary" className="ml-auto" loading={busy} disabled={!text.trim()} onClick={() => void save()}>
+              붙여넣은 내용으로 연결
+            </Button>
+          </div>
+        </div>
+      )}
+      {open && login.canManage && site === 'instagram' && (
         <div className="flex flex-col gap-3 rounded-md border border-line bg-surface p-3 text-sm">
           <ol className="list-decimal space-y-1 pl-5 text-ink-2">
             <li>
@@ -599,8 +649,11 @@ export default function SaverTool() {
         )}
       </Panel>
 
-      {status?.login && (status.login.canManage || status.login.connected || /로그인/.test(infoErr)) && (
-        <LoginPanel login={status.login} highlight={/로그인/.test(infoErr)} onChange={(login) => setStatus((s) => (s ? { ...s, login } : s))} />
+      {status?.ytLogin && (status.ytLogin.canManage || status.ytLogin.connected || /유튜브/.test(infoErr)) && (
+        <LoginPanel site="youtube" login={status.ytLogin} highlight={/유튜브/.test(infoErr)} onChange={(ytLogin) => setStatus((s) => (s ? { ...s, ytLogin } : s))} />
+      )}
+      {status?.login && (status.login.canManage || status.login.connected || /인스타그램|로그인해야/.test(infoErr)) && (
+        <LoginPanel login={status.login} highlight={/인스타그램|로그인해야/.test(infoErr)} onChange={(login) => setStatus((s) => (s ? { ...s, login } : s))} />
       )}
 
       {info ? (
