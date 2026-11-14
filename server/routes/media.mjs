@@ -7,10 +7,12 @@
 //   GET    /api/media/jobs/:id         → 진행 상태
 //   DELETE /api/media/jobs/:id         → 취소
 //   GET    /api/media/jobs/:id/file    → 결과 파일
-//   PUT    /api/media/login            → 인스타그램 로그인 연결(쿠키) 저장 — 전체마스터·연결 담당자만
+//   PUT    /api/media/login[?site=youtube] → 인스타그램(기본)·유튜브 로그인 연결(쿠키) 저장 — 전체마스터·연결 담당자만
 //   DELETE /api/media/login            → 로그인 연결 끊기 — 전체마스터·연결 담당자만
 //   GET/PUT /api/media/login/managers  → 연결 담당자(계정 id 목록) — 전체마스터만. 담당자 이름은 다른 팀원 화면에 보이지 않는다
 //
+// 유튜브는 클라우드 서버에서 오는 요청을 ‘로봇 확인’으로 막을 때가 많아, 유튜브에 로그인한 브라우저의 쿠키를 따로 연결할 수 있다.
+// 쿠키는 사이트별로 따로 두고, 받는 주소의 사이트에 맞는 것만 넘긴다(인스타그램 쿠키를 유튜브에 보내지 않는다).
 // 로그인 연결: 스토리·비공개 계정처럼 로그인해야 보이는 영상은 인스타그램에 로그인한 브라우저의 쿠키(sessionid)를
 // 서버에 두고 yt-dlp --cookies 로 넘긴다. 쿠키는 데이터 폴더 media/cookies.txt(권한 600)에만 두고 화면으로 돌려주지 않으며,
 // 실행할 때마다 작업 폴더에 사본을 만들어 쓰고 바로 지운다(yt-dlp 가 끝날 때 쿠키 파일을 다시 써서 원본이 깨지지 않게).
@@ -173,7 +175,10 @@ export function checkUrl(raw, allowLocal = false) {
 /** yt-dlp 오류를 사용자 말로. loggedIn: 로그인 연결(쿠키)을 넘겼는지 */
 export function friendlyError(stderr, loggedIn = false) {
   const t = String(stderr ?? '')
-  if (/Sign in to confirm|not a bot|confirm you.re not/i.test(t)) return '유튜브가 이 서버에서의 요청을 막았습니다(로봇 확인). 잠시 뒤 다시 해 보거나 다른 영상으로 시도하세요.'
+  if (/Sign in to confirm|not a bot|confirm you.re not/i.test(t))
+    return loggedIn
+      ? '유튜브가 로봇 확인으로 막았습니다. 유튜브 로그인 연결이 만료됐을 수 있으니 연결 담당자가 아래 [유튜브 로그인 연결]을 새로 해 주세요.'
+      : '유튜브가 이 서버에서의 요청을 로봇 확인으로 막았습니다. 연결 담당자가 아래 [유튜브 로그인 연결]을 해 두면 받을 수 있습니다.'
   if (/checkpoint|challenge_required|suspicious/i.test(t)) return '인스타그램이 연결한 계정에 보안 확인을 요구했습니다. 그 계정으로 인스타그램 앱·웹에 들어가 확인을 마친 뒤, 로그인 연결을 새로 해 주세요.'
   if (/login required|log in to access|unreachable|rate-limit|requires authentication|Requested content is not available|use --cookies/i.test(t))
     return loggedIn
@@ -192,15 +197,31 @@ export function friendlyError(stderr, loggedIn = false) {
 // ── 로그인 연결(쿠키) ───────────────────────────────────
 /** 쿠키를 둘 사이트(영상 사이트 로그인용만 — 다른 사이트 쿠키는 버린다) */
 const COOKIE_SITES = /(^|\.)(instagram\.com|facebook\.com|threads\.net|threads\.com|x\.com|twitter\.com|tiktok\.com)$/i
+const YOUTUBE_COOKIE_SITES = /(^|\.)(youtube\.com|google\.com)$/i
+/** 유튜브 로그인으로 보는 쿠키(하나라도 있어야 한다) */
+const YOUTUBE_KEYS = ['__Secure-3PSID', '__Secure-1PSID', 'SID', 'LOGIN_INFO']
+/** 받는 주소 → 쓸 로그인 연결(youtube·instagram) 또는 null */
+export function cookieSiteOf(url) {
+  let host = ''
+  try {
+    host = new URL(url).hostname.toLowerCase()
+  } catch {
+    return null
+  }
+  if (/(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com)$/.test(host)) return 'youtube'
+  if (COOKIE_SITES.test(host)) return 'instagram'
+  return null
+}
 /**
  * 붙여넣거나 올린 로그인 정보 → yt-dlp 쿠키 파일(Netscape 형식).
  * 받는 모양: ① 브라우저 확장으로 내보낸 cookies.txt ② 개발자 도구에서 복사한 'sessionid=…; csrftoken=…' ③ sessionid 값만
  * → { text, count, expires } 또는 { error }
  */
-export function parseCookieInput(input, now = Date.now()) {
+export function parseCookieInput(input, now = Date.now(), site = 'instagram') {
+  const yt = site === 'youtube'
   const t = String(input ?? '').trim()
   if (!t) return { error: '로그인 정보를 붙여넣거나 cookies.txt 파일을 올려 주세요.' }
-  if (t.length > 500_000) return { error: '파일이 너무 큽니다. 인스타그램 쿠키만 내보내 주세요.' }
+  if (t.length > 500_000) return { error: `파일이 너무 큽니다. ${yt ? '유튜브(youtube.com)' : '인스타그램'} 쿠키만 내보내 주세요.` }
   const later = Math.floor(now / 1000) + 365 * 86400
   const lines = t.split(/\r?\n/)
   let list = []
@@ -219,10 +240,20 @@ export function parseCookieInput(input, now = Date.now()) {
     for (const pair of pairs) {
       const i = pair.indexOf('=')
       if (i < 1) continue
-      list.push({ domain: '.instagram.com', path: '/', secure: true, exp: later, name: pair.slice(0, i).trim(), value: pair.slice(i + 1).trim().replace(/^"|"$/g, ''), httpOnly: false })
+      list.push({ domain: yt ? '.youtube.com' : '.instagram.com', path: '/', secure: true, exp: later, name: pair.slice(0, i).trim(), value: pair.slice(i + 1).trim().replace(/^"|"$/g, ''), httpOnly: false })
     }
   }
-  list = list.filter((c) => COOKIE_SITES.test(c.domain.replace(/^\./, '')) && /^[\w.-]{1,100}$/.test(c.name) && c.value && c.value.length < 4000 && !/[\s;]/.test(c.value))
+  const allowed = yt ? YOUTUBE_COOKIE_SITES : COOKIE_SITES
+  list = list.filter((c) => allowed.test(c.domain.replace(/^\./, '')) && /^[\w.-]{1,100}$/.test(c.name) && c.value && c.value.length < 4000 && !/[\s;]/.test(c.value))
+  if (yt) {
+    const key = list.find((c) => /(^|\.)youtube\.com$/i.test(c.domain.replace(/^\./, '')) && YOUTUBE_KEYS.includes(c.name))
+    if (!key) return { error: '유튜브 로그인 정보가 없습니다. youtube.com 에 로그인한 브라우저에서 cookies.txt 를 내보냈는지 확인하세요.' }
+    const exps = list.filter((c) => YOUTUBE_KEYS.includes(c.name) && c.exp).map((c) => c.exp)
+    const exp = exps.length ? Math.min(...exps) : 0
+    if (exp && exp * 1000 < now) return { error: '이 로그인 정보는 이미 만료됐습니다. 유튜브에 다시 로그인한 뒤 새로 내보내 주세요.' }
+    const body = list.map((c) => [`${c.httpOnly ? '#HttpOnly_' : ''}${c.domain}`, c.domain.startsWith('.') ? 'TRUE' : 'FALSE', c.path, c.secure ? 'TRUE' : 'FALSE', String(c.exp || later), c.name, c.value].join('\t'))
+    return { text: `# Netscape HTTP Cookie File\n${body.join('\n')}\n`, count: list.length, expires: exp && !pasted ? new Date(exp * 1000).toISOString() : null }
+  }
   const ig = list.find((c) => /(^|\.)instagram\.com$/i.test(c.domain.replace(/^\./, '')) && c.name === 'sessionid')
   if (!ig) return { error: '인스타그램 로그인 정보(sessionid)가 없습니다. 인스타그램에 로그인한 브라우저에서 내보냈는지 확인하세요.' }
   if (ig.exp && ig.exp * 1000 < now) return { error: '이 로그인 정보는 이미 만료됐습니다. 인스타그램에 다시 로그인한 뒤 새로 내보내 주세요.' }
@@ -244,7 +275,15 @@ export default async function mediaRoutes(app, { DATA_DIR, TRUSTED, currentUser,
   }
 
   // ── yt-dlp 준비(없으면 받고, 하루에 한 번 업데이트) ──
-  const tool = { ytdlp: process.env.YTDLP_PATH || onPath('yt-dlp') || (fs.existsSync(LOCAL_YTDLP) ? LOCAL_YTDLP : null), installing: null, error: null }
+  const tool = { ytdlp: process.env.YTDLP_PATH || onPath('yt-dlp') || (fs.existsSync(LOCAL_YTDLP) ? LOCAL_YTDLP : null), installing: null, error: null, jsRuntime: false }
+  /** 최신 yt-dlp 는 유튜브 재생 정보를 풀 때 자바스크립트 실행기가 필요하다(기본은 deno 만) → 서버의 Node 를 쓰게 한다 */
+  function checkJsRuntime() {
+    if (!tool.ytdlp) return
+    execFile(tool.ytdlp, ['--help'], { timeout: 30_000, maxBuffer: 8 * 1024 * 1024 }, (_err, stdout) => {
+      tool.jsRuntime = String(stdout ?? '').includes('--js-runtimes')
+    })
+  }
+  checkJsRuntime()
   async function ensureYtdlp() {
     if (tool.ytdlp) return tool.ytdlp
     if (process.platform !== 'linux' || process.arch !== 'x64') {
@@ -261,6 +300,7 @@ export default async function mediaRoutes(app, { DATA_DIR, TRUSTED, currentUser,
       await fsp.rename(tmp, LOCAL_YTDLP)
       tool.ytdlp = LOCAL_YTDLP
       tool.error = null
+      checkJsRuntime()
       console.log('[온비짱] yt-dlp 를 설치했습니다.')
     })()
       .catch((err) => {
@@ -275,9 +315,9 @@ export default async function mediaRoutes(app, { DATA_DIR, TRUSTED, currentUser,
   }
   // 자체 설치본은 하루에 한 번 최신으로(사이트가 자주 바뀌어 오래된 yt-dlp 는 실패한다)
   setInterval(() => {
-    if (tool.ytdlp === LOCAL_YTDLP) execFile(LOCAL_YTDLP, ['-U'], { timeout: 120_000 }, () => {})
+    if (tool.ytdlp === LOCAL_YTDLP) execFile(LOCAL_YTDLP, ['-U'], { timeout: 120_000 }, () => checkJsRuntime())
   }, 24 * 60 * 60 * 1000).unref()
-  if (tool.ytdlp === LOCAL_YTDLP) execFile(LOCAL_YTDLP, ['-U'], { timeout: 120_000 }, () => {})
+  if (tool.ytdlp === LOCAL_YTDLP) execFile(LOCAL_YTDLP, ['-U'], { timeout: 120_000 }, () => checkJsRuntime())
 
   const run = (bin, args, { timeout = 90_000 } = {}) =>
     new Promise((resolve, reject) => {
@@ -287,24 +327,31 @@ export default async function mediaRoutes(app, { DATA_DIR, TRUSTED, currentUser,
       })
     })
   /** cookies: 로그인 연결 사본 경로(있을 때만) */
-  const baseArgs = (cookies) => ['--no-playlist', '--no-warnings', '--ignore-config', ...(FFMPEG ? ['--ffmpeg-location', path.dirname(FFMPEG)] : []), ...(cookies ? ['--cookies', cookies] : [])]
+  const baseArgs = (cookies) => ['--no-playlist', '--no-warnings', '--ignore-config', ...(tool.jsRuntime ? ['--js-runtimes', `node:${process.execPath}`] : []), ...(FFMPEG ? ['--ffmpeg-location', path.dirname(FFMPEG)] : []), ...(cookies ? ['--cookies', cookies] : [])]
 
   // ── 로그인 연결(쿠키) ──
   const LOGIN_DIR = path.join(DATA_DIR, 'media')
-  const COOKIE_FILE = path.join(LOGIN_DIR, 'cookies.txt')
-  const LOGIN_META = path.join(LOGIN_DIR, 'login.json')
-  let login = null
-  try {
-    if (fs.existsSync(COOKIE_FILE)) login = JSON.parse(await fsp.readFile(LOGIN_META, 'utf8'))
-  } catch {
-    login = fs.existsSync(COOKIE_FILE) ? { updatedAt: null, by: '', expires: null, count: 0 } : null
+  /** 사이트별 로그인 연결 파일(인스타그램은 예전 이름 그대로) */
+  const FILES = {
+    instagram: { cookies: path.join(LOGIN_DIR, 'cookies.txt'), meta: path.join(LOGIN_DIR, 'login.json') },
+    youtube: { cookies: path.join(LOGIN_DIR, 'youtube-cookies.txt'), meta: path.join(LOGIN_DIR, 'youtube-login.json') },
   }
-  /** 이번 실행에 쓸 쿠키 사본(작업 폴더 안) — 없으면 null */
-  async function cookieCopy(dir) {
-    if (!login) return null
+  const logins = { instagram: null, youtube: null }
+  for (const site of Object.keys(FILES)) {
+    try {
+      if (fs.existsSync(FILES[site].cookies)) logins[site] = JSON.parse(await fsp.readFile(FILES[site].meta, 'utf8'))
+    } catch {
+      logins[site] = fs.existsSync(FILES[site].cookies) ? { updatedAt: null, by: '', expires: null, count: 0 } : null
+    }
+  }
+  const siteParam = (req) => (req.query?.site === 'youtube' ? 'youtube' : 'instagram')
+  /** 이번 실행에 쓸 쿠키 사본(작업 폴더 안) — 받는 주소의 사이트에 연결이 있을 때만, 없으면 null */
+  async function cookieCopy(dir, url) {
+    const site = cookieSiteOf(url)
+    if (!site || !logins[site]) return null
     const p = path.join(dir, 'cookies.txt')
     try {
-      await fsp.copyFile(COOKIE_FILE, p)
+      await fsp.copyFile(FILES[site].cookies, p)
       await fsp.chmod(p, 0o600).catch(() => {})
       return p
     } catch {
@@ -320,9 +367,10 @@ export default async function mediaRoutes(app, { DATA_DIR, TRUSTED, currentUser,
   const canManage = (req) => isAdmin(req) || managers.includes(currentUser?.(req)?.id)
   const requireManager = (req, res, next) => (canManage(req) ? next() : res.status(403).json({ error: '로그인 연결은 지정된 담당자만 할 수 있습니다.' }))
   // 누가 연결했는지는 담당자·전체마스터에게만 보인다
-  const loginView = (req) => {
+  const loginView = (req, site = 'instagram') => {
     const m = canManage(req)
-    return { connected: Boolean(login), updatedAt: login?.updatedAt ?? null, by: m ? (login?.by ?? '') : '', expires: login?.expires ?? null, canManage: m, canAssign: isAdmin(req) }
+    const l = logins[site]
+    return { connected: Boolean(l), updatedAt: l?.updatedAt ?? null, by: m ? (l?.by ?? '') : '', expires: l?.expires ?? null, canManage: m, canAssign: isAdmin(req) }
   }
   app.get('/api/media/login/managers', requireAdmin, (_req, res) => res.json({ ids: managers }))
   app.put('/api/media/login/managers', requireAdmin, async (req, res) => {
@@ -336,25 +384,27 @@ export default async function mediaRoutes(app, { DATA_DIR, TRUSTED, currentUser,
 
   app.get('/api/media/status', requireStaff, (req, res) => {
     if (!tool.ytdlp && !tool.installing) ensureYtdlp().catch(() => {})
-    res.json({ ready: Boolean(tool.ytdlp && FFMPEG), installing: Boolean(tool.installing), error: tool.error, ffmpeg: Boolean(FFMPEG), login: loginView(req) })
+    res.json({ ready: Boolean(tool.ytdlp && FFMPEG), installing: Boolean(tool.installing), error: tool.error, ffmpeg: Boolean(FFMPEG), login: loginView(req), ytLogin: loginView(req, 'youtube') })
   })
   /** 로그인 연결 저장: { text } — cookies.txt 내용·Cookie 머리글·sessionid 값 */
   app.put('/api/media/login', requireManager, async (req, res) => {
-    const r = parseCookieInput(req.body?.text)
+    const site = siteParam(req)
+    const r = parseCookieInput(req.body?.text, Date.now(), site)
     if (r.error) return res.status(400).json({ error: r.error })
     await fsp.mkdir(LOGIN_DIR, { recursive: true })
-    const tmp = `${COOKIE_FILE}.${process.pid}.tmp`
+    const tmp = `${FILES[site].cookies}.${process.pid}.tmp`
     await fsp.writeFile(tmp, r.text, { encoding: 'utf8', mode: 0o600 })
-    await fsp.rename(tmp, COOKIE_FILE)
-    login = { updatedAt: new Date().toISOString(), by: currentUser?.(req)?.name ?? '전체마스터', expires: r.expires, count: r.count }
-    await fsp.writeFile(LOGIN_META, JSON.stringify(login), 'utf8')
-    res.json({ login: loginView(req) })
+    await fsp.rename(tmp, FILES[site].cookies)
+    logins[site] = { updatedAt: new Date().toISOString(), by: currentUser?.(req)?.name ?? '전체마스터', expires: r.expires, count: r.count }
+    await fsp.writeFile(FILES[site].meta, JSON.stringify(logins[site]), 'utf8')
+    res.json({ login: loginView(req, site) })
   })
   app.delete('/api/media/login', requireManager, async (req, res) => {
-    await fsp.rm(COOKIE_FILE, { force: true })
-    await fsp.rm(LOGIN_META, { force: true })
-    login = null
-    res.json({ login: loginView(req) })
+    const site = siteParam(req)
+    await fsp.rm(FILES[site].cookies, { force: true })
+    await fsp.rm(FILES[site].meta, { force: true })
+    logins[site] = null
+    res.json({ login: loginView(req, site) })
   })
 
   // ── 영상 정보 ──
@@ -365,9 +415,10 @@ export default async function mediaRoutes(app, { DATA_DIR, TRUSTED, currentUser,
     let cookies = null
     try {
       const bin = await ensureYtdlp()
-      if (login) {
+      const site = cookieSiteOf(chk.url)
+      if (site && logins[site]) {
         tmp = await fsp.mkdtemp(path.join(os.tmpdir(), TEMP_PREFIX))
-        cookies = await cookieCopy(tmp)
+        cookies = await cookieCopy(tmp, chk.url)
       }
       const out = await run(bin, [...baseArgs(cookies), '-J', '--skip-download', chk.url]).finally(() => tmp && fsp.rm(tmp, { recursive: true, force: true }).catch(() => {}))
       const j = JSON.parse(out)
@@ -550,7 +601,7 @@ export default async function mediaRoutes(app, { DATA_DIR, TRUSTED, currentUser,
   async function runJob(j) {
     const o = j.opts
     j.dir = await fsp.mkdtemp(path.join(os.tmpdir(), TEMP_PREFIX))
-    j.cookies = await cookieCopy(j.dir)
+    j.cookies = await cookieCopy(j.dir, o.url)
     const bin = await ensureYtdlp()
     // 화면에서 정한 파일 이름이 있으면 그대로(확장자만 붙인다), 없으면 제목 + 편집 표시
     const custom = typeof o.name === 'string' && o.name.trim() !== ''

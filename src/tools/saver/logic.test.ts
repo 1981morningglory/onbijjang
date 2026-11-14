@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 // @ts-expect-error — 서버 모듈(.mjs)의 순수 함수도 함께 확인한다
-import { checkUrl, filterSrt, friendlyError, keepRanges, parseCookieInput, srtToText } from '../../../server/routes/media.mjs'
+import { checkUrl, cookieSiteOf, filterSrt, friendlyError, keepRanges, parseCookieInput, srtToText } from '../../../server/routes/media.mjs'
 import { extractUrl, fileNameFromTitle, formatTime, keptRanges, parseTime, siteOf, youtubeId } from './logic'
 
 describe('시간 입력', () => {
@@ -119,5 +119,39 @@ describe('인스타그램 로그인 연결(쿠키)', () => {
     const e = 'ERROR: [instagram:story] 1: You need to log in to access this content. Use --cookies'
     expect(friendlyError(e)).toContain('로그인 연결')
     expect(friendlyError(e, true)).toContain('만료')
+  })
+})
+
+describe('유튜브 로그인 연결', () => {
+  const now = Date.parse('2026-11-14T00:00:00Z')
+  it('주소에 맞는 로그인 연결만 쓴다', () => {
+    expect(cookieSiteOf('https://www.youtube.com/shorts/w5l704YZSaw')).toBe('youtube')
+    expect(cookieSiteOf('https://youtu.be/abc')).toBe('youtube')
+    expect(cookieSiteOf('https://www.instagram.com/reel/x/')).toBe('instagram')
+    expect(cookieSiteOf('https://www.tiktok.com/@a/video/1')).toBe('instagram')
+    expect(cookieSiteOf('https://vimeo.com/1')).toBeNull()
+  })
+  it('youtube.com 에서 내보낸 cookies.txt 를 읽고 다른 사이트 쿠키는 버린다', () => {
+    const file = [
+      '# Netscape HTTP Cookie File',
+      '.youtube.com\tTRUE\t/\tTRUE\t1830000000\t__Secure-3PSID\tAAA',
+      '.youtube.com\tTRUE\t/\tTRUE\t1830000000\tLOGIN_INFO\tBBB',
+      '.google.com\tTRUE\t/\tTRUE\t1830000000\tSID\tCCC',
+      '.example.com\tTRUE\t/\tTRUE\t1830000000\tx\tDDD',
+    ].join('\n')
+    const r = parseCookieInput(file, now, 'youtube')
+    expect(r.error).toBeUndefined()
+    expect(r.count).toBe(3)
+    expect(r.text).not.toContain('example.com')
+    expect(r.expires).toBe(new Date(1830000000 * 1000).toISOString())
+  })
+  it('유튜브 로그인 쿠키가 없거나 만료면 알린다', () => {
+    expect(parseCookieInput('.instagram.com\tTRUE\t/\tTRUE\t1830000000\tsessionid\tS', now, 'youtube').error).toContain('유튜브')
+    expect(parseCookieInput('.youtube.com\tTRUE\t/\tTRUE\t1700000000\tSID\tS', now, 'youtube').error).toContain('만료')
+  })
+  it('로봇 확인: 연결 전에는 연결 안내, 연결 뒤에는 새로 연결 안내', () => {
+    const e = "ERROR: [youtube] x: Sign in to confirm you're not a bot. Use --cookies-from-browser or --cookies"
+    expect(friendlyError(e)).toContain('유튜브 로그인 연결')
+    expect(friendlyError(e, true)).toContain('새로')
   })
 })
