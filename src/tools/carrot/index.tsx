@@ -238,7 +238,7 @@ export default function CarrotTool() {
   useEffect(() => {
     api<Info>('/carrot/models')
       .then(setInfo)
-      .catch((err) => setLoadError(err instanceof ApiError && err.status === 401 ? '스탭 이상 계정으로 로그인해야 쓸 수 있습니다.' : message(err)))
+      .catch((err) => setLoadError(err instanceof ApiError && err.status === 401 ? (err.message || '당근을 쓸 권한이 없습니다. 관리자에게 허용을 요청해 주세요.') : message(err)))
   }, [])
 
   const models = useMemo(() => (info?.models ?? []).filter((m) => m.kind === kind), [info, kind])
