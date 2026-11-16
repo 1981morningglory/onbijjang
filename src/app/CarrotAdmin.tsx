@@ -226,8 +226,9 @@ interface UserRow {
   name: string
   role: string
   disabled: boolean
+  access?: Record<string, 'allow' | 'deny'>
 }
-const ROLE_NAME: Record<string, string> = { admin: '전체마스터', staff: '스탭' }
+const ROLE_NAME: Record<string, string> = { admin: '전체마스터', staff: '스탭', member: '직원(허용)', general: '사용자(허용)' }
 
 /** 라이브러리 접근 권한: 계정마다 볼 수 있는 라이브러리(내 것만 / 전체 / 선택한 사람). 지우기는 본인 것만(전체마스터는 전체) */
 function LibraryAccess() {
@@ -237,7 +238,8 @@ function LibraryAccess() {
   useEffect(() => {
     Promise.all([api<{ users: UserRow[] }>('/admin/users'), api<{ access: Record<string, AccessRow> }>('/admin/carrot/access')])
       .then(([u, a]) => {
-        setUsers(u.users.filter((x) => (x.role === 'admin' || x.role === 'staff') && !x.disabled))
+        // 당근을 쓰는 계정: 스탭 이상(차단 제외) + 계정별로 ‘허용’된 직원
+        setUsers(u.users.filter((x) => !x.disabled && x.access?.carrot !== 'deny' && (x.role === 'admin' || x.role === 'staff' || x.access?.carrot === 'allow')))
         setAccess(a.access)
       })
       .catch((err) => toast.error(err instanceof Error ? err.message : '불러오지 못했습니다.'))

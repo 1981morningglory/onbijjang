@@ -21,7 +21,9 @@ const MAX_WAIT_MS = 60 * 60e3
 const CONTEXT = 'Team member creating marketing images and videos in the company internal generator.'
 
 export default async function carrotRoutes(app, ctx) {
-  const { requireAdmin, requireStaff, isAdmin, currentUser, DATA_DIR } = ctx
+  const { requireAdmin, requireTool, isAdmin, currentUser, DATA_DIR } = ctx
+  // 기본은 스탭 이상. 관리자가 메뉴 설정에서 등급을 바꾸거나 계정별로 ‘허용’한 직원도 쓸 수 있다(‘차단’이면 못 쓴다)
+  const requireStaff = requireTool('carrot', ['staff', 'admin'], '당근을 쓸 권한이 없습니다. 관리자에게 이 계정의 당근 사용 허용을 요청해 주세요.')
   const DIR = path.join(DATA_DIR, 'carrot')
   const FILES = path.join(DIR, 'files')
   const JOBS_FILE = path.join(DIR, 'jobs.json')

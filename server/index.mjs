@@ -157,6 +157,31 @@ function requireStaff(req, res, next) {
   if (isStaff(req)) return next()
   res.status(401).json({ error: '스탭 이상 계정으로 로그인해야 합니다.' })
 }
+/**
+ * 앱(도구)을 쓸 수 있는가 — 화면의 메뉴 노출과 같은 규칙.
+ * 전체마스터는 늘 → 계정별 예외(허용 allow·차단 deny)가 우선 → 아니면 관리자 메뉴 설정의 등급(없으면 앱 기본 등급).
+ */
+let toolCfg = { at: 0, data: null }
+async function canUseTool(req, toolId, defaultRoles) {
+  if (isAdmin(req)) return true
+  const u = currentUser(req)
+  if (!u) return false
+  const ex = u.access?.[toolId]
+  if (ex === 'allow') return true
+  if (ex === 'deny') return false
+  if (Date.now() - toolCfg.at > 5000) toolCfg = { at: Date.now(), data: await readJson(CONFIG_FILE, null).catch(() => null) }
+  const t = toolCfg.data?.tools?.[toolId]
+  if (t && (t.enabled === false || t.deleted === true)) return false
+  const roles = Array.isArray(t?.roles) ? t.roles : defaultRoles
+  return roles.includes(u.role)
+}
+/** canUseTool 을 미들웨어로 */
+function requireTool(toolId, defaultRoles, message = '이 앱을 쓸 권한이 없습니다. 관리자에게 허용을 요청해 주세요.') {
+  return (req, res, next) =>
+    canUseTool(req, toolId, defaultRoles)
+      .then((ok) => (ok ? next() : res.status(401).json({ error: message })))
+      .catch(next)
+}
 /** 팀원이면 되는 동작. 공개 배포에서는 관리자만, 믿을 수 있는 네트워크에서는 누구나. */
 function requireMember(req, res, next) {
   const role = currentUser(req)?.role
@@ -416,7 +441,7 @@ app.use('/api/convert', (req, res, next) => (req.method === 'GET' ? next() : req
 const routesDir = path.join(__dirname, 'routes')
 if (fs.existsSync(routesDir)) {
   // 라우트끼리 나눠 쓰는 도구(예: quote.mjs 가 넣는 sessionTeam)를 담는 한 객체. 파일 이름 순서로 불러온다.
-  const ctx = { requireAdmin, isAdmin, requireStaff, isStaff, currentUser, DATA_DIR, ROOT, TRUSTED }
+  const ctx = { requireAdmin, isAdmin, requireStaff, isStaff, canUseTool, requireTool, currentUser, DATA_DIR, ROOT, TRUSTED }
   for (const file of fs.readdirSync(routesDir).filter((f) => f.endsWith('.mjs')).sort()) {
     const mod = await import(pathToFileURL(path.join(routesDir, file)).href)
     if (typeof mod.default === 'function') {
