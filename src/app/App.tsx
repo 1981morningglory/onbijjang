@@ -10,6 +10,19 @@ import { ToolPage } from './ToolPage'
 
 // 공유받은 결과만 보는 화면(메뉴 없이) — 사주·MBTI
 const SharedPage = lazy(() => import('@/tools/saju/SharedPage'))
+// 설문 응답 화면(메뉴·로그인 없이)
+const FormFill = lazy(() => import('@/tools/forms/FormFill'))
+const formFill = (
+  <Suspense
+    fallback={
+      <div className="flex min-h-dvh items-center justify-center gap-2 text-muted">
+        <Spinner /> 불러오는 중
+      </div>
+    }
+  >
+    <FormFill />
+  </Suspense>
+)
 const shared = (
   <Suspense
     fallback={
@@ -41,6 +54,8 @@ export function App() {
       <Routes>
         <Route path="s/:id" element={shared} />
         <Route path="v/:kind" element={shared} />
+        <Route path="form/:key" element={formFill} />
+        <Route path="f/:key" element={formFill} />
         <Route element={<Shell />}>
           <Route index element={<Home />} />
           <Route path="tools/:id" element={<ToolPage />} />
