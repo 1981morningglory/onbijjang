@@ -5,6 +5,7 @@ import { api, ApiError } from '@/lib/api'
 import { downloadBlob } from '@/lib/files'
 import { Badge, Button, Callout, EmptyState, IconButton, Panel, Segmented, Select, Spinner, Switch, Tabs, Textarea, TextInput, toast } from '@/ui'
 import { writeTable } from '@/tools/orders/excel'
+import { ChoiceChart, RankBars, ScaleChart, StatTiles } from './charts'
 import { exportPdf } from '@/tools/saju/share'
 import { changeType, DEFAULT_SETTINGS, FORMAT_LABEL, fileSafe, formatAt, newQuestion, qid, responseRows, summarize, TEMPLATES, TYPE_LABEL, answerText, type Form, type FormSummary, type QType, type Question, type Response } from './logic'
 
@@ -645,11 +646,22 @@ function Responses({ id, onBack, onEdit }: { id: string; onBack: () => void; onE
       ) : (
         <div ref={box} className="flex flex-col gap-3">
           {tab !== 'table' && (
-            <div data-pdf-block className="rounded-xl border border-line bg-surface px-5 py-4">
-              <h3 className="text-lg">{form.title}</h3>
-              <p className="text-sm text-muted">
-                응답 {responses.length}개 · {formatAt(new Date().toISOString())} 기준
-              </p>
+            <div data-pdf-block className="flex flex-col gap-3 rounded-xl border border-line bg-surface px-5 py-4">
+              <div>
+                <h3 className="text-lg">{form.title}</h3>
+                {form.description && <p className="mt-0.5 line-clamp-2 text-sm text-ink-2">{form.description}</p>}
+                <p className="mt-1 text-xs text-muted">{formatAt(new Date().toISOString())} 기준 · 온비짱 설문폼</p>
+              </div>
+              {tab === 'summary' && (
+                <StatTiles
+                  items={[
+                    { label: '전체 응답', value: `${responses.length}개` },
+                    { label: '질문', value: `${summary.length}개` },
+                    { label: '첫 응답', value: formatAt(responses[0].at).slice(5, 10).replace('-', '.'), note: formatAt(responses[0].at) },
+                    { label: '마지막 응답', value: formatAt(responses[responses.length - 1].at).slice(5, 10).replace('-', '.'), note: formatAt(responses[responses.length - 1].at) },
+                  ]}
+                />
+              )}
             </div>
           )}
           {tab === 'summary' &&
@@ -657,37 +669,38 @@ function Responses({ id, onBack, onEdit }: { id: string; onBack: () => void; onE
               <div key={s.q.id} data-pdf-block className="rounded-xl border border-line bg-surface px-5 py-4">
                 <p className="font-semibold text-ink">{s.q.title || '질문'}</p>
                 <p className="mb-3 text-xs text-muted">
-                  응답 {s.answered}개{s.average !== undefined ? ` · 평균 ${s.average}점` : ''}
+                  응답 {s.answered}개 / {responses.length}명({responses.length ? Math.round((s.answered / responses.length) * 100) : 0}%){s.q.type === 'checkbox' ? ' · 여러 개 선택(비율은 응답자 기준)' : ''}
                 </p>
-                {s.counts && (
-                  <div className="flex flex-col gap-1.5">
-                    {s.counts.map((c) => {
-                      const base = s.q.type === 'checkbox' ? responses.length : Math.max(1, s.answered)
-                      const pct = base ? Math.round((c.n / base) * 100) : 0
-                      return (
-                        <div key={c.label} className="grid grid-cols-[minmax(90px,200px)_1fr_auto] items-center gap-3 text-sm">
-                          <span className="truncate text-ink-2" title={c.label}>
-                            {c.label}
-                          </span>
-                          <span className="h-5 overflow-hidden rounded bg-sunken">
-                            <span className="block h-full rounded bg-brand" style={{ width: `${pct}%` }} />
-                          </span>
-                          <span className="w-20 text-right tabular-nums text-muted">
-                            {c.n}명 ({pct}%)
-                          </span>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
+                {s.counts && s.q.type === 'scale' && s.q.scale && <ScaleChart counts={s.counts} average={s.average} answered={s.answered} scale={s.q.scale} />}
+                {s.counts && s.q.type === 'checkbox' && <RankBars counts={s.counts} base={responses.length} />}
+                {s.counts && (s.q.type === 'radio' || s.q.type === 'select') && (s.answered ? <ChoiceChart counts={s.counts} answered={s.answered} /> : <p className="text-sm text-muted">아직 이 질문에 답한 사람이 없습니다.</p>)}
                 {s.texts && (
-                  <ul className={clsx('flex max-h-72 flex-col gap-1 overflow-auto', s.counts && 'mt-3 border-t border-line pt-2')}>
-                    {s.texts.slice(-100).reverse().map((t, i) => (
-                      <li key={i} className="rounded-md bg-paper px-3 py-1.5 text-sm text-ink-2">
-                        {t}
-                      </li>
-                    ))}
-                  </ul>
+                  <div className={clsx(s.counts && 'mt-3 border-t border-line pt-2')}>
+                    {s.counts && <p className="mb-1 text-xs font-semibold text-muted">기타 답</p>}
+                    {(() => {
+                      // 같은 답은 한 번만, 많은 순(같으면 최근 순)으로
+                      const groups = new Map<string, { n: number; last: number }>()
+                      s.texts.forEach((t, i) => {
+                        const k = t.trim()
+                        const g = groups.get(k)
+                        groups.set(k, { n: (g?.n ?? 0) + 1, last: i })
+                      })
+                      const list = [...groups.entries()].sort((a, b) => b[1].n - a[1].n || b[1].last - a[1].last)
+                      return (
+                        <>
+                          <ul className="flex flex-col gap-1">
+                            {list.slice(0, 30).map(([t, g]) => (
+                              <li key={t} className="flex items-start gap-2 rounded-md bg-paper px-3 py-1.5 text-sm text-ink-2">
+                                <span className="min-w-0 flex-1 whitespace-pre-wrap">{t}</span>
+                                {g.n > 1 && <span className="shrink-0 rounded-full bg-sunken px-2 text-xs font-semibold tabular-nums text-ink">×{g.n}</span>}
+                              </li>
+                            ))}
+                          </ul>
+                          {list.length > 30 && <p className="mt-1 text-xs text-muted">많은 순 30가지만 보입니다(외 {list.length - 30}가지는 ‘개별 응답’·엑셀에서 확인).</p>}
+                        </>
+                      )
+                    })()}
+                  </div>
                 )}
               </div>
             ))}
