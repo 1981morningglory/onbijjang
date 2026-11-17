@@ -1,5 +1,5 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react'
-import { Barcode, Blend, Calculator, Camera, Carrot, Clapperboard, ClipboardCheck, ClipboardList, Crop, Download, Eraser, FilePenLine, FileText, Files, Film, Gavel, Gift, Grid3x3, Image as ImageIcon, Images, LayoutTemplate, Megaphone, MonitorPlay, NotebookPen, Package, PenLine, QrCode, ReceiptText, Rocket, Scale, Scissors, ShoppingBag, ShoppingCart, Signature, Sparkles, Store, Tags, Trophy, type LucideIcon } from 'lucide-react'
+import { Barcode, Blend, Calculator, Camera, Carrot, Clapperboard, ClipboardCheck, ClipboardList, Crop, Download, Eraser, FilePenLine, FileText, Files, Film, Gavel, Gift, ListChecks, Grid3x3, Image as ImageIcon, Images, LayoutTemplate, Megaphone, MonitorPlay, NotebookPen, Package, PenLine, QrCode, ReceiptText, Rocket, Scale, Scissors, ShoppingBag, ShoppingCart, Signature, Sparkles, Store, Tags, Trophy, type LucideIcon } from 'lucide-react'
 
 export type GroupId = 'image' | 'video' | 'doc' | 'fees' | 'sns' | 'life'
 
@@ -153,6 +153,13 @@ export const TOOLS: ToolDef[] = [
   },
 
   // ── 문서 ────────────────────────────────────────────────
+  {
+    id: 'forms', group: 'doc', title: '설문폼',
+    summary: '구글폼처럼 설문을 만들어 링크(짧은 주소 선택)로 받고, 응답을 바로 보고 엑셀·PDF·CSV 로 받기',
+    keywords: ['설문', '설문지', '구글폼', '네이버폼', '폼', '신청서', '참가신청', '만족도', '조사', '투표', '응답', '링크', '피드백'],
+    icon: ListChecks, art: 'forms', local: false, wide: true, roles: ['member', 'staff', 'admin'],
+    component: lazy(() => import('@/tools/forms')),
+  },
   {
     id: 'pdf', group: 'doc', title: 'PDF 변환·관리',
     summary: '변환·병합·분할·압축·암호·페이지 번호·글자 인식까지 한곳에서',
