@@ -1,6 +1,8 @@
 // 설문폼 — 화면 계산(질문 종류·템플릿·응답 요약). 서버 검사 규칙은 server/lib/forms.mjs
 
-export type QType = 'short' | 'long' | 'radio' | 'checkbox' | 'select' | 'scale' | 'date' | 'time' | 'section'
+export type QType = 'short' | 'long' | 'radio' | 'checkbox' | 'select' | 'rank' | 'scale' | 'date' | 'time' | 'section'
+/** 보기가 있는 종류 */
+export const OPTION_TYPES: QType[] = ['radio', 'checkbox', 'select', 'rank']
 export interface Question {
   id: string
   type: QType
@@ -8,6 +10,12 @@ export interface Question {
   desc: string
   required: boolean
   options?: string[]
+  /** 보기마다 사진(서버 주소, 없으면 '') */
+  optionImages?: string[]
+  /** 질문 사진 */
+  image?: string
+  /** 순위: 몇 위까지 매길지(없으면 보기 전부) */
+  rankLimit?: number
   /** 객관식·체크박스의 ‘기타(직접 입력)’ */
   other?: boolean
   scale?: { min: number; max: number; minLabel: string; maxLabel: string }
@@ -20,11 +28,15 @@ export interface Settings {
   oneResponse: boolean
   thanks: string
   linkType: 'short' | 'full'
+  /** 중복 응답 막기: IP, 고른 질문 값 — 각각(any: 하나라도 같으면) / 조합(all: 모두 같으면) */
+  dedupe?: { ip: boolean; fields: string[]; mode: 'any' | 'all' }
 }
 export interface Form {
   id: string
   title: string
   description: string
+  /** 설문 맨 위 사진 */
+  headerImage?: string
   questions: Question[]
   settings: Settings
   owner?: string
@@ -61,6 +73,7 @@ export const TYPE_LABEL: Record<QType, string> = {
   radio: '객관식(하나 고르기)',
   checkbox: '체크박스(여러 개)',
   select: '드롭다운',
+  rank: '순위 매기기',
   scale: '점수(선형 배율)',
   date: '날짜',
   time: '시간',
@@ -74,6 +87,10 @@ export const qid = () => Math.random().toString(36).slice(2, 10)
 export function newQuestion(type: QType = 'radio'): Question {
   const q: Question = { id: qid(), type, title: '', desc: '', required: false }
   if (type === 'radio' || type === 'checkbox' || type === 'select') q.options = ['옵션 1']
+  if (type === 'rank') {
+    q.options = ['옵션 1', '옵션 2', '옵션 3']
+    q.rankLimit = 3
+  }
   if (type === 'scale') q.scale = { min: 1, max: 5, minLabel: '전혀 아니다', maxLabel: '매우 그렇다' }
   if (type === 'short') q.format = 'text'
   return q
@@ -82,10 +99,23 @@ export function newQuestion(type: QType = 'radio'): Question {
 /** 종류를 바꿀 때: 보기는 살릴 수 있으면 살린다 */
 export function changeType(q: Question, type: QType): Question {
   const base = newQuestion(type)
-  return { ...base, id: q.id, title: q.title, desc: q.desc, required: type === 'section' ? false : q.required, options: base.options && q.options?.length ? q.options : base.options }
+  // 순위는 보기가 2개 이상이어야 의미가 있다 → 1개뿐이면 기본 보기 3개로
+  const keep = Boolean(base.options && q.options?.length && !(type === 'rank' && (q.options?.length ?? 0) < 2))
+  const options = keep ? q.options : base.options
+  return {
+    ...base,
+    id: q.id,
+    title: q.title,
+    desc: q.desc,
+    image: q.image,
+    required: type === 'section' ? false : q.required,
+    options,
+    optionImages: keep && base.options ? q.optionImages : undefined,
+    rankLimit: type === 'rank' ? Math.min(options?.length ?? 3, q.rankLimit ?? 3) : undefined,
+  }
 }
 
-export const DEFAULT_SETTINGS: Settings = { open: true, closeAt: null, oneResponse: false, thanks: '응답해 주셔서 감사합니다.', linkType: 'short' }
+export const DEFAULT_SETTINGS: Settings = { open: true, closeAt: null, oneResponse: false, thanks: '응답해 주셔서 감사합니다.', linkType: 'short', dedupe: { ip: false, fields: [], mode: 'any' } }
 
 const Q = (type: QType, title: string, extra: Partial<Question> = {}): Question => ({ ...newQuestion(type), title, ...extra })
 
@@ -104,6 +134,7 @@ export const TEMPLATES: Array<{ key: string; name: string; note: string; make: (
         Q('checkbox', '좋았던 점을 모두 골라 주세요.', { options: ['품질', '가격', '배송 속도', '포장 상태', '고객 응대'], other: true }),
         Q('radio', '다시 구매하실 의향이 있으신가요?', { required: true, options: ['꼭 다시 구매하겠다', '아마 구매하겠다', '잘 모르겠다', '구매하지 않겠다'] }),
         Q('radio', '주변에 추천하실 의향이 있으신가요?', { options: ['예', '아니요', '잘 모르겠다'] }),
+        Q('rank', '제품을 고를 때 중요한 것을 순서대로 골라 주세요.', { options: ['품질', '가격', '디자인', '브랜드', '후기'], rankLimit: 3 }),
         Q('long', '개선했으면 하는 점이 있다면 자유롭게 적어 주세요.'),
       ],
     }),
@@ -162,8 +193,9 @@ export const TEMPLATES: Array<{ key: string; name: string; note: string; make: (
   },
 ]
 
-/** 답 하나를 글자로 */
-export const answerText = (a: Answer | undefined) => (a === undefined || a === null ? '' : Array.isArray(a) ? a.join(', ') : String(a))
+/** 답 하나를 글자로(순위는 ‘1. A / 2. B’) */
+export const answerText = (a: Answer | undefined, q?: Pick<Question, 'type'>) =>
+  a === undefined || a === null ? '' : Array.isArray(a) ? (q?.type === 'rank' ? a.map((x, i) => `${i + 1}. ${x}`).join(' / ') : a.join(', ')) : String(a)
 
 /** 질문별 요약: 고르는 질문은 보기별 개수, 글 질문은 답 목록 */
 export interface QSummary {
@@ -172,6 +204,8 @@ export interface QSummary {
   counts?: Array<{ label: string; n: number }>
   texts?: string[]
   average?: number
+  /** 순위: 보기별 점수(1위일수록 큼)·1위 수·평균 순위·고른 사람 수 — 점수 큰 순 */
+  ranks?: Array<{ label: string; points: number; first: number; avg: number | null; n: number }>
 }
 export function summarize(form: Form, responses: Response[]): QSummary[] {
   return form.questions
@@ -190,6 +224,14 @@ export function summarize(form: Form, responses: Response[]): QSummary[] {
         const texts = vals.flatMap((v) => (Array.isArray(v) ? v : [String(v)])).filter((x) => x.startsWith('기타: ')).map((x) => x.slice(4))
         return { q, answered: vals.length, counts, texts: texts.length ? texts : undefined }
       }
+      if (q.type === 'rank') {
+        const limit = q.rankLimit ?? q.options?.length ?? 0
+        const ranks = (q.options ?? []).map((label) => {
+          const pos = vals.map((v) => (Array.isArray(v) ? v.indexOf(label) : -1)).filter((i) => i >= 0)
+          return { label, points: pos.reduce((s, i) => s + (limit - i), 0), first: pos.filter((i) => i === 0).length, avg: pos.length ? Math.round((pos.reduce((s, i) => s + i + 1, 0) / pos.length) * 100) / 100 : null, n: pos.length }
+        })
+        return { q, answered: vals.length, ranks: ranks.sort((a, b) => b.points - a.points || b.first - a.first) }
+      }
       if (q.type === 'scale') {
         const s = q.scale ?? { min: 1, max: 5, minLabel: '', maxLabel: '' }
         const counts = Array.from({ length: s.max - s.min + 1 }, (_, i) => ({ label: String(s.min + i), n: vals.filter((v) => Number(v) === s.min + i).length }))
@@ -204,7 +246,7 @@ export function summarize(form: Form, responses: Response[]): QSummary[] {
 export function responseRows(form: Form, responses: Response[]) {
   const qs = form.questions.filter((q) => q.type !== 'section')
   const head = ['번호', '제출 시각', ...qs.map((q) => q.title || '이름 없는 질문')]
-  const rows = responses.map((r, i) => [i + 1, formatAt(r.at), ...qs.map((q) => answerText(r.answers?.[q.id]))])
+  const rows = responses.map((r, i) => [i + 1, formatAt(r.at), ...qs.map((q) => answerText(r.answers?.[q.id], q))])
   return { head, rows }
 }
 
@@ -217,6 +259,7 @@ export function missingRequired(form: Pick<Form, 'questions'>, answers: Record<s
     if (!q.required || q.type === 'section') continue
     const a = answers[q.id]
     if (a === undefined || a === null || a === '' || (Array.isArray(a) && !a.length)) return q
+    if (q.type === 'rank' && Array.isArray(a) && a.length < (q.rankLimit ?? q.options?.length ?? 0)) return q
   }
   return null
 }

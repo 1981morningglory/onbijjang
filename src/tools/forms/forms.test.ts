@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cleanAnswers, cleanForm, isOpen, shortCode, toCsv } from '../../../server/lib/forms.mjs'
+import { cleanAnswers, cleanForm, findDuplicate, isOpen, normKey, shortCode, toCsv } from '../../../server/lib/forms.mjs'
 import { missingRequired, newQuestion, responseRows, summarize, TEMPLATES, type Form } from './logic'
 
 const make = (): Form => ({ id: 'x', ...cleanForm(TEMPLATES.find((t) => t.key === 'event')!.make()) })
@@ -85,5 +85,71 @@ describe('결과', () => {
   it('짧은 주소 코드는 6글자', () => {
     expect(shortCode()).toMatch(/^[a-z0-9]{6}$/)
     expect(newQuestion('scale').scale?.max).toBe(5)
+  })
+})
+
+describe('사진·순위', () => {
+  it('서버에 올린 사진 주소만 남긴다', () => {
+    const f = cleanForm({ title: 'a', headerImage: 'https://evil/x.png', questions: [{ type: 'radio', title: 'q', image: '/api/forms/img/0123456789abcdef0123.jpg', options: ['A', 'B'], optionImages: ['/api/forms/img/aaaaaaaaaaaaaaaa.png', 'javascript:x'] }] })
+    expect(f.headerImage).toBe('')
+    expect(f.questions[0].image).toBe('/api/forms/img/0123456789abcdef0123.jpg')
+    expect(f.questions[0].optionImages).toEqual(['/api/forms/img/aaaaaaaaaaaaaaaa.png', ''])
+  })
+  const f = cleanForm({ title: 'a', questions: [{ type: 'rank', title: '좋아하는 순서', required: true, options: ['A', 'B', 'C', 'D'], rankLimit: 2 }] })
+  const q = f.questions[0]
+  it('순위: 정한 개수까지, 서로 다른 보기만', () => {
+    expect(q.rankLimit).toBe(2)
+    expect(cleanAnswers(f, { [q.id]: ['C', 'A'] }).answers?.[q.id]).toEqual(['C', 'A'])
+    expect(cleanAnswers(f, { [q.id]: ['A', 'A'] }).error).toContain('순위')
+    expect(cleanAnswers(f, { [q.id]: ['A', 'B', 'C'] }).error).toContain('순위')
+    expect(cleanAnswers(f, { [q.id]: ['A'] }).error).toContain('2위까지')
+    expect(missingRequired(f, { [q.id]: ['A'] })?.id).toBe(q.id)
+  })
+  it('순위 요약: 점수(1위=2점, 2위=1점)·1위 수·평균 순위, CSV 는 ‘1. C / 2. A’', () => {
+    const responses = [
+      { id: '1', at: '2026-11-17T00:00:00Z', answers: { [q.id]: ['C', 'A'] } },
+      { id: '2', at: '2026-11-17T00:01:00Z', answers: { [q.id]: ['C', 'B'] } },
+      { id: '3', at: '2026-11-17T00:02:00Z', answers: { [q.id]: ['A', 'C'] } },
+    ]
+    const r = summarize({ id: 'x', ...f }, responses).find((x) => x.q.id === q.id)!.ranks!
+    expect(r[0]).toMatchObject({ label: 'C', points: 5, first: 2, avg: 1.33, n: 3 })
+    expect(r.find((x) => x.label === 'D')).toMatchObject({ points: 0, n: 0, avg: null })
+    expect(toCsv(f, responses)).toContain('1. C / 2. A')
+  })
+})
+
+describe('중복 응답 막기', () => {
+  const base = cleanForm({
+    title: 'a',
+    questions: [
+      { id: 'name1', type: 'short', title: '성명' },
+      { id: 'phone1', type: 'short', title: '핸드폰번호', format: 'phone' },
+      { id: 'memo1', type: 'long', title: '메모' },
+    ],
+  })
+  const prev = [{ answers: { name1: '김 온비', phone1: '010-1234-5678' }, ip: 'iphash1' }]
+  const withD = (dedupe: object) => ({ ...base, settings: { ...base.settings, dedupe: cleanForm({ ...base, settings: { dedupe } }).settings.dedupe } })
+  it('전화번호·이름 비교용 정리', () => {
+    expect(normKey('+82 10-1234-5678')).toBe('01012345678')
+    expect(normKey(' 김 온비 ')).toBe('김온비')
+  })
+  it('IP: 같은 IP 면 막는다', () => {
+    const f = withD({ ip: true })
+    expect(findDuplicate(f, prev, { name1: '박' }, 'iphash1')).toContain('IP')
+    expect(findDuplicate(f, prev, { name1: '박' }, 'iphash2')).toBeNull()
+  })
+  it('하나라도 같으면: 번호 표기가 달라도 같은 번호', () => {
+    const f = withD({ fields: ['name1', 'phone1'], mode: 'any' })
+    expect(findDuplicate(f, prev, { name1: '박응답', phone1: '01012345678' })).toContain('핸드폰번호')
+    expect(findDuplicate(f, prev, { name1: '김온비', phone1: '010-0000-0000' })).toContain('성명')
+    expect(findDuplicate(f, prev, { name1: '박응답', phone1: '010-0000-0000' })).toBeNull()
+  })
+  it('모두 같으면(조합): 이름+번호가 둘 다 같을 때만', () => {
+    const f = withD({ fields: ['name1', 'phone1'], mode: 'all' })
+    expect(findDuplicate(f, prev, { name1: '김온비', phone1: '+82 10 1234 5678' })).toContain('성명·핸드폰번호')
+    expect(findDuplicate(f, prev, { name1: '김온비', phone1: '010-0000-0000' })).toBeNull()
+  })
+  it('장문형·없는 질문은 기준으로 고를 수 없다', () => {
+    expect(withD({ fields: ['memo1', 'ghost'] }).settings.dedupe?.fields).toEqual([])
   })
 })
