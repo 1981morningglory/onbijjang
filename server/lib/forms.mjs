@@ -70,7 +70,8 @@ export function cleanForm(f) {
     settings: {
       open: s.open !== false,
       closeAt,
-      oneResponse: Boolean(s.oneResponse),
+      // 기본은 켬(끈 값을 저장한 설문만 끔)
+      oneResponse: s.oneResponse !== false,
       thanks: str(s.thanks, 500) || '응답해 주셔서 감사합니다.',
       linkType: s.linkType === 'full' ? 'full' : 'short',
       dedupe,

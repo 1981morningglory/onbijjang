@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { cleanAnswers, cleanForm, findDuplicate, isOpen, normKey, shortCode, toCsv } from '../../../server/lib/forms.mjs'
-import { missingRequired, newQuestion, responseRows, summarize, TEMPLATES, type Form } from './logic'
+import { DEFAULT_SETTINGS, isNameQuestion, missingRequired, newQuestion, phoneQuestion, responseRows, summarize, TEMPLATES, withPhoneDedupe, type Form } from './logic'
 
 const make = (): Form => ({ id: 'x', ...cleanForm(TEMPLATES.find((t) => t.key === 'event')!.make()) })
 
@@ -151,5 +151,28 @@ describe('중복 응답 막기', () => {
   })
   it('장문형·없는 질문은 기준으로 고를 수 없다', () => {
     expect(withD({ fields: ['memo1', 'ghost'] }).settings.dedupe?.fields).toEqual([])
+  })
+})
+
+describe('기본값: 한 사람 한 번만·핸드폰번호 중복 막기', () => {
+  it('한 사람 한 번만은 기본으로 켜짐(끈 값을 저장한 설문만 끔)', () => {
+    expect(DEFAULT_SETTINGS.oneResponse).toBe(true)
+    expect(cleanForm({ title: 'a', questions: [] }).settings.oneResponse).toBe(true)
+    expect(cleanForm({ title: 'a', questions: [], settings: { oneResponse: false } }).settings.oneResponse).toBe(false)
+  })
+  it('핸드폰번호 질문이 있으면 그 질문으로 막기(성명은 넣지 않음)', () => {
+    const ev = TEMPLATES.find((t) => t.key === 'event')!.make()
+    const s = withPhoneDedupe({ ...DEFAULT_SETTINGS }, ev.questions)
+    const phone = phoneQuestion(ev.questions)!
+    expect(phone.title).toBe('연락처')
+    expect(s.dedupe).toEqual({ ip: false, fields: [phone.id], mode: 'any' })
+    expect(isNameQuestion({ title: '이름' })).toBe(true)
+  })
+  it('핸드폰 질문이 없거나 이미 고른 기준이 있으면 그대로', () => {
+    const sat = TEMPLATES.find((t) => t.key === 'satisfaction')!.make()
+    expect(withPhoneDedupe({ ...DEFAULT_SETTINGS }, sat.questions).dedupe?.fields).toEqual([])
+    const ev = TEMPLATES.find((t) => t.key === 'event')!.make()
+    const mine = { ...DEFAULT_SETTINGS, dedupe: { ip: true, fields: [ev.questions[0].id], mode: 'all' as const } }
+    expect(withPhoneDedupe(mine, ev.questions)).toBe(mine)
   })
 })

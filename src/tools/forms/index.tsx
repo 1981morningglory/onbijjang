@@ -8,7 +8,7 @@ import { writeTable } from '@/tools/orders/excel'
 import { ChoiceChart, RankBars, RankChart, ScaleChart, StatTiles } from './charts'
 import { pickImage, uploadFormImage } from './upload'
 import { exportPdf } from '@/tools/saju/share'
-import { OPTION_TYPES, changeType, DEFAULT_SETTINGS, FORMAT_LABEL, fileSafe, formatAt, newQuestion, qid, responseRows, summarize, TEMPLATES, TYPE_LABEL, answerText, type Form, type FormSummary, type QType, type Question, type Response } from './logic'
+import { OPTION_TYPES, changeType, DEFAULT_SETTINGS, isNameQuestion, phoneQuestion, withPhoneDedupe, FORMAT_LABEL, fileSafe, formatAt, newQuestion, qid, responseRows, summarize, TEMPLATES, TYPE_LABEL, answerText, type Form, type FormSummary, type QType, type Question, type Response } from './logic'
 
 type View = { mode: 'list' } | { mode: 'edit'; id: string | null } | { mode: 'responses'; id: string }
 const readView = (): View => {
@@ -208,7 +208,8 @@ function Editor({ id, template, onBack, onSaved, onResponses }: { id: string | n
     if (!id) {
       const t = TEMPLATES.find((x) => x.key === template) ?? TEMPLATES[0]
       const made = t.make()
-      setForm({ id: '', ...made, settings: { ...DEFAULT_SETTINGS } })
+      // 기본: 한 사람 한 번만 + 핸드폰번호가 같으면 막기(핸드폰 질문이 있을 때)
+      setForm({ id: '', ...made, settings: withPhoneDedupe({ ...DEFAULT_SETTINGS }, made.questions) })
       setDirty(true)
       setActive(made.questions[0]?.id ?? null)
       return
@@ -259,7 +260,9 @@ function Editor({ id, template, onBack, onSaved, onResponses }: { id: string | n
     }
     setBusy(true)
     try {
-      const body = { title: form.title, description: form.description, headerImage: form.headerImage ?? '', questions: form.questions, settings: form.settings }
+      // 처음 만들 때 핸드폰 질문을 넣었고 막을 질문을 안 골랐으면 핸드폰번호로 막는다
+      const settings = form.id ? form.settings : withPhoneDedupe(form.settings, form.questions)
+      const body = { title: form.title, description: form.description, headerImage: form.headerImage ?? '', questions: form.questions, settings }
       const r = form.id ? await api<{ form: Form }>(`/forms/${form.id}`, { method: 'PUT', body }) : await api<{ form: Form }>('/forms', { method: 'POST', body })
       setForm(r.form)
       setDirty(false)
@@ -876,6 +879,16 @@ function DedupeSettings({ form, onChange }: { form: Form; onChange: (d: NonNulla
               { value: 'all', label: '모두 같으면(조합)' },
             ]}
           />
+        )}
+        {fields.some((id) => isNameQuestion(keyable.find((q) => q.id === id)!)) && (d.mode === 'any' || fields.length < 2) && (
+          <p className="rounded-md bg-warn-soft px-2.5 py-2 text-xs leading-relaxed text-ink">
+            성명만으로 막으면 동명이인도 응답하지 못합니다. 성명은 빼고 핸드폰번호로 막거나, 성명+핸드폰번호를 ‘모두 같으면(조합)’으로 쓰세요.
+          </p>
+        )}
+        {!fields.length && phoneQuestion(form.questions) && (
+          <button type="button" className="self-start text-xs font-semibold text-brand-ink hover:underline" onClick={() => onChange({ ...d, fields: [phoneQuestion(form.questions)!.id], mode: 'any' })}>
+            ‘{phoneQuestion(form.questions)!.title}’이(가) 같으면 막기(권장)
+          </button>
         )}
         {fields.length > 0 && (
           <p className="text-xs leading-relaxed text-muted">
