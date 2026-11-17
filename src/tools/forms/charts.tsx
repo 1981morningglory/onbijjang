@@ -138,3 +138,25 @@ export function StatTiles({ items }: { items: Array<{ label: string; value: stri
     </div>
   )
 }
+
+/** 순위 질문: 점수(1위일수록 큼) 큰 순 막대 + 1위 수·평균 순위 */
+export function RankChart({ ranks, limit }: { ranks: Array<{ label: string; points: number; first: number; avg: number | null; n: number }>; limit: number }) {
+  const max = Math.max(1, ...ranks.map((r) => r.points))
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-xs text-muted">점수 = 1위 {limit}점, 2위 {Math.max(1, limit - 1)}점 … 순으로 더한 값</p>
+      {ranks.map((r, i) => (
+        <div key={r.label} className="grid grid-cols-[22px_minmax(80px,170px)_1fr_auto] items-center gap-3 text-sm" title={`${r.label}: 점수 ${r.points} · 1위 ${r.first}명 · 평균 ${r.avg ?? '-'}위`}>
+          <span className={clsx('grid size-[22px] place-items-center rounded-full text-xs font-bold', i === 0 && r.points ? 'bg-ink text-white' : 'bg-sunken text-ink-2')}>{i + 1}</span>
+          <span className="truncate text-ink-2">{r.label}</span>
+          <span className="relative h-5 border-l border-line-strong">
+            <span className="absolute inset-y-0 left-0 rounded-r-[4px]" style={{ width: `${r.points ? Math.max(1.5, (r.points / max) * 100) : 0}%`, background: ONE }} />
+          </span>
+          <span className="w-40 text-right tabular-nums">
+            <span className="text-ink">{r.points}점</span> <span className="text-muted">· 1위 {r.first}명 · 평균 {r.avg ?? '-'}위</span>
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}

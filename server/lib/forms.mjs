@@ -1,20 +1,42 @@
 // 설문폼 — 설문 정리·응답 검사·CSV 만들기(서버 라우트 server/routes/forms.mjs 와 시험이 함께 쓴다)
 
-export const TYPES = ['short', 'long', 'radio', 'checkbox', 'select', 'scale', 'date', 'time', 'section']
+export const TYPES = ['short', 'long', 'radio', 'checkbox', 'select', 'rank', 'scale', 'date', 'time', 'section']
+/** 보기가 있는 종류 */
+export const OPTION_TYPES = ['radio', 'checkbox', 'select', 'rank']
 export const CHOICE_TYPES = ['radio', 'checkbox', 'select']
 export const LIMITS = { questions: 200, options: 60, title: 200, desc: 2000, option: 200, answer: 5000 }
 
 const str = (v, n) => (typeof v === 'string' ? v.replace(/\u0000/g, '').trim().slice(0, n) : '')
 const qid = () => Math.random().toString(36).slice(2, 10)
+/** 서버에 올린 설문 사진 주소만 받는다 */
+export const IMAGE_URL = /^\/api\/forms\/img\/[a-f0-9]{16,64}\.(jpg|png|webp|gif)$/
+const img = (v) => (typeof v === 'string' && IMAGE_URL.test(v) ? v : '')
 
 /** 질문 하나 정리(모르는 값은 버리고 길이를 자른다) */
 export function cleanQuestion(q) {
   const type = TYPES.includes(q?.type) ? q.type : 'short'
   const out = { id: /^[a-z0-9]{4,16}$/.test(q?.id ?? '') ? q.id : qid(), type, title: str(q?.title, LIMITS.title), desc: str(q?.desc, LIMITS.desc), required: type !== 'section' && Boolean(q?.required) }
-  if (CHOICE_TYPES.includes(type)) {
-    const opts = [...new Set((Array.isArray(q?.options) ? q.options : []).map((o) => str(o, LIMITS.option)).filter(Boolean))].slice(0, LIMITS.options)
+  if (img(q?.image)) out.image = img(q.image)
+  if (OPTION_TYPES.includes(type)) {
+    // 보기와 보기 사진을 함께 정리(빈 보기·겹친 보기는 뺀다)
+    const raw = Array.isArray(q?.options) ? q.options : []
+    const imgs = Array.isArray(q?.optionImages) ? q.optionImages : []
+    const opts = []
+    const optImgs = []
+    raw.forEach((o, i) => {
+      const t = str(o, LIMITS.option)
+      if (!t || opts.includes(t) || opts.length >= LIMITS.options) return
+      opts.push(t)
+      optImgs.push(img(imgs[i]))
+    })
     out.options = opts.length ? opts : ['옵션 1']
-    if (type !== 'select') out.other = Boolean(q?.other)
+    if (optImgs.some(Boolean)) out.optionImages = out.options.map((_, i) => optImgs[i] ?? '')
+    if (type === 'radio' || type === 'checkbox') out.other = Boolean(q?.other)
+    if (type === 'rank') {
+      const n = out.options.length
+      const lim = Math.round(Number(q?.rankLimit) || 0)
+      out.rankLimit = lim >= 1 && lim < n ? lim : n
+    }
   }
   if (type === 'scale') {
     const min = q?.scale?.min === 0 ? 0 : 1
@@ -35,10 +57,15 @@ export function cleanForm(f) {
     seen.add(q.id)
   }
   const s = f?.settings ?? {}
+  // 중복 응답 막기: IP, 고른 질문(이름·전화 등)의 값 — 각각(하나라도 같으면) 또는 조합(모두 같으면)
+  const keyable = new Set(questions.filter((q) => ['short', 'select', 'radio'].includes(q.type)).map((q) => q.id))
+  const d = s.dedupe ?? {}
+  const dedupe = { ip: Boolean(d.ip), fields: [...new Set((Array.isArray(d.fields) ? d.fields : []).filter((x) => keyable.has(x)))].slice(0, 5), mode: d.mode === 'all' ? 'all' : 'any' }
   const closeAt = typeof s.closeAt === 'string' && !Number.isNaN(Date.parse(s.closeAt)) ? new Date(s.closeAt).toISOString() : null
   return {
     title: str(f?.title, LIMITS.title) || '제목 없는 설문',
     description: str(f?.description, LIMITS.desc),
+    headerImage: img(f?.headerImage),
     questions,
     settings: {
       open: s.open !== false,
@@ -46,6 +73,7 @@ export function cleanForm(f) {
       oneResponse: Boolean(s.oneResponse),
       thanks: str(s.thanks, 500) || '응답해 주셔서 감사합니다.',
       linkType: s.linkType === 'full' ? 'full' : 'short',
+      dedupe,
     },
   }
 }
@@ -65,7 +93,13 @@ export function cleanAnswers(form, raw) {
     const v = src[q.id]
     const label = q.title || '이름 없는 질문'
     let a = null
-    if (q.type === 'checkbox') {
+    if (q.type === 'rank') {
+      // 순위: 1위부터 차례로 보기 이름(서로 다르게, 정한 개수까지)
+      const list = (Array.isArray(v) ? v : []).map((x) => str(x, LIMITS.option)).filter(Boolean)
+      if (list.some((x) => !q.options.includes(x)) || new Set(list).size !== list.length || list.length > (q.rankLimit ?? q.options.length)) return { error: `‘${label}’의 순위가 올바르지 않습니다.` }
+      if (q.required && list.length && list.length < (q.rankLimit ?? q.options.length)) return { error: `‘${label}’은(는) ${q.rankLimit ?? q.options.length}위까지 모두 골라 주세요.` }
+      a = list.length ? list : null
+    } else if (q.type === 'checkbox') {
       const list = (Array.isArray(v) ? v : []).map((x) => str(x, LIMITS.option)).filter(Boolean)
       const ok = list.filter((x) => q.options.includes(x) || (q.other && x.startsWith('기타: ')))
       if (ok.length !== list.length) return { error: `‘${label}’의 보기가 올바르지 않습니다.` }
@@ -101,15 +135,47 @@ export function cleanAnswers(form, raw) {
   return { answers }
 }
 
-/** 답 하나를 표·CSV 칸 글자로 */
-export const answerText = (a) => (a === null || a === undefined ? '' : Array.isArray(a) ? a.join(', ') : String(a))
+/** 답 하나를 표·CSV 칸 글자로(순위는 ‘1. A / 2. B’) */
+export const answerText = (a, q) => (a === null || a === undefined ? '' : Array.isArray(a) ? (q?.type === 'rank' ? a.map((x, i) => `${i + 1}. ${x}`).join(' / ') : a.join(', ')) : String(a))
+
+// ── 중복 응답 막기 ────────────────────────────────────────
+/** 비교용으로 다듬기: 전화번호는 숫자만(+82 → 0), 나머지는 띄어쓰기 빼고 소문자 */
+export function normKey(v) {
+  const t = Array.isArray(v) ? v.join(',') : String(v ?? '')
+  const digits = t.replace(/\D/g, '')
+  if (/^[0-9+\-()\s.]+$/.test(t.trim()) && digits.length >= 7) return digits.replace(/^82(?=1)/, '0')
+  return t.replace(/\s+/g, '').toLowerCase()
+}
+/**
+ * 이미 같은 사람이 응답했는지. 막을 이유(한국어) 또는 null.
+ * ipHash: 이번 응답의 IP 를 비밀 값으로 바꾼 것(IP 자체는 저장하지 않는다)
+ */
+export function findDuplicate(form, responses, answers, ipHash) {
+  const d = form.settings?.dedupe
+  if (!d) return null
+  if (d.ip && ipHash && responses.some((r) => r.ip === ipHash)) return '이 네트워크(IP)에서는 이미 응답했습니다. 한 번만 응답할 수 있는 설문입니다.'
+  const fields = (d.fields ?? []).filter((id) => form.questions.some((q) => q.id === id))
+  if (!fields.length) return null
+  const names = fields.map((id) => form.questions.find((q) => q.id === id)?.title || '항목')
+  const mine = fields.map((id) => (answers[id] === undefined ? '' : normKey(answers[id])))
+  for (const r of responses) {
+    const theirs = fields.map((id) => (r.answers?.[id] === undefined ? '' : normKey(r.answers[id])))
+    if (d.mode === 'all') {
+      if (mine.every((v, i) => v && v === theirs[i])) return `같은 ${names.join('·')}(으)로 이미 응답했습니다. 한 번만 응답할 수 있는 설문입니다.`
+    } else {
+      const i = mine.findIndex((v, k) => v && v === theirs[k])
+      if (i >= 0) return `같은 ${names[i]}(으)로 이미 응답했습니다. 한 번만 응답할 수 있는 설문입니다.`
+    }
+  }
+  return null
+}
 
 /** 응답 → 표(머리글 + 줄). 날짜는 한국 시간 */
 export function responseTable(form, responses) {
   const qs = form.questions.filter((q) => q.type !== 'section')
   const head = ['번호', '제출 시각', ...qs.map((q) => q.title || '이름 없는 질문')]
   const kst = (iso) => new Date(Date.parse(iso) + 9 * 3600e3).toISOString().slice(0, 19).replace('T', ' ')
-  const rows = responses.map((r, i) => [i + 1, kst(r.at), ...qs.map((q) => answerText(r.answers?.[q.id]))])
+  const rows = responses.map((r, i) => [i + 1, kst(r.at), ...qs.map((q) => answerText(r.answers?.[q.id], q))])
   return { head, rows }
 }
 

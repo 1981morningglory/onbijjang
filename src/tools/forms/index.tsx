@@ -1,13 +1,14 @@
 import clsx from 'clsx'
-import { ArrowDown, ArrowLeft, ArrowUp, BarChart3, ClipboardList, Copy, ExternalLink, FileDown, FileSpreadsheet, FileText, Link2, ListChecks, Pencil, Plus, RefreshCw, Save, Trash2, X } from 'lucide-react'
+import { ArrowDown, ArrowLeft, ArrowUp, BarChart3, ClipboardList, Copy, ExternalLink, FileDown, FileSpreadsheet, FileText, ImagePlus, Link2, ListChecks, Pencil, Plus, RefreshCw, Save, ShieldCheck, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { api, ApiError } from '@/lib/api'
 import { downloadBlob } from '@/lib/files'
 import { Badge, Button, Callout, EmptyState, IconButton, Panel, Segmented, Select, Spinner, Switch, Tabs, Textarea, TextInput, toast } from '@/ui'
 import { writeTable } from '@/tools/orders/excel'
-import { ChoiceChart, RankBars, ScaleChart, StatTiles } from './charts'
+import { ChoiceChart, RankBars, RankChart, ScaleChart, StatTiles } from './charts'
+import { pickImage, uploadFormImage } from './upload'
 import { exportPdf } from '@/tools/saju/share'
-import { changeType, DEFAULT_SETTINGS, FORMAT_LABEL, fileSafe, formatAt, newQuestion, qid, responseRows, summarize, TEMPLATES, TYPE_LABEL, answerText, type Form, type FormSummary, type QType, type Question, type Response } from './logic'
+import { OPTION_TYPES, changeType, DEFAULT_SETTINGS, FORMAT_LABEL, fileSafe, formatAt, newQuestion, qid, responseRows, summarize, TEMPLATES, TYPE_LABEL, answerText, type Form, type FormSummary, type QType, type Question, type Response } from './logic'
 
 type View = { mode: 'list' } | { mode: 'edit'; id: string | null } | { mode: 'responses'; id: string }
 const readView = (): View => {
@@ -81,7 +82,7 @@ function FormList({ onNew, onEdit, onResponses }: { onNew: (template: string) =>
   const duplicate = async (f: FormSummary) => {
     try {
       const full = (await api<{ form: Form }>(`/forms/${f.id}`)).form
-      await api('/forms', { method: 'POST', body: { title: `${full.title} (사본)`, description: full.description, questions: full.questions.map((x) => ({ ...x, id: qid() })), settings: full.settings } })
+      await api('/forms', { method: 'POST', body: { title: `${full.title} (사본)`, description: full.description, headerImage: full.headerImage, questions: full.questions, settings: full.settings } })
       toast.success('사본을 만들었습니다.')
       load()
     } catch (e) {
@@ -185,6 +186,18 @@ function FormList({ onNew, onEdit, onResponses }: { onNew: (template: string) =>
 }
 
 // ── 만들기·편집 ───────────────────────────────────────────
+/** 사진을 골라 올리고 주소를 넘긴다 */
+async function chooseImage(onUrl: (url: string) => void) {
+  const f = await pickImage()
+  if (!f) return
+  toast.info('사진을 올리는 중…')
+  try {
+    onUrl(await uploadFormImage(f))
+  } catch (e) {
+    toast.error(message(e))
+  }
+}
+
 function Editor({ id, template, onBack, onSaved, onResponses }: { id: string | null; template: string; onBack: () => void; onSaved: (id: string) => void; onResponses: (id: string) => void }) {
   const [form, setForm] = useState<Form | null>(null)
   const [dirty, setDirty] = useState(false)
@@ -246,7 +259,7 @@ function Editor({ id, template, onBack, onSaved, onResponses }: { id: string | n
     }
     setBusy(true)
     try {
-      const body = { title: form.title, description: form.description, questions: form.questions, settings: form.settings }
+      const body = { title: form.title, description: form.description, headerImage: form.headerImage ?? '', questions: form.questions, settings: form.settings }
       const r = form.id ? await api<{ form: Form }>(`/forms/${form.id}`, { method: 'PUT', body }) : await api<{ form: Form }>('/forms', { method: 'POST', body })
       setForm(r.form)
       setDirty(false)
@@ -291,10 +304,29 @@ function Editor({ id, template, onBack, onSaved, onResponses }: { id: string | n
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="mx-auto flex w-full max-w-[760px] flex-col gap-3">
           <div className="overflow-hidden rounded-xl border border-line bg-surface">
-            <div className="h-2.5 bg-brand" />
+            {form.headerImage ? (
+              <div className="relative">
+                <img src={form.headerImage} alt="설문 머리 사진" className="max-h-64 w-full object-cover" />
+                <div className="absolute right-2 top-2 flex gap-1">
+                  <Button size="sm" icon={ImagePlus} onClick={() => void chooseImage((url) => patch({ headerImage: url }))}>
+                    바꾸기
+                  </Button>
+                  <Button size="sm" icon={X} onClick={() => patch({ headerImage: '' })}>
+                    빼기
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="h-2.5 bg-brand" />
+            )}
             <div className="flex flex-col gap-2 px-5 py-4">
               <input value={form.title} onChange={(e) => patch({ title: e.target.value })} aria-label="설문 제목" placeholder="설문 제목" className="w-full border-0 border-b border-transparent bg-transparent py-1 text-2xl font-bold text-ink outline-none focus:border-brand" />
               <textarea value={form.description} onChange={(e) => patch({ description: e.target.value })} aria-label="설문 설명" placeholder="설문 설명(응답하는 사람에게 보입니다)" rows={2} className="w-full resize-y border-0 border-b border-transparent bg-transparent py-1 text-[15px] text-ink-2 outline-none focus:border-brand" />
+              {!form.headerImage && (
+                <button type="button" className="inline-flex items-center gap-1.5 self-start text-sm text-muted hover:text-ink" onClick={() => void chooseImage((url) => patch({ headerImage: url }))}>
+                  <ImagePlus className="size-4" aria-hidden /> 맨 위 사진 넣기
+                </button>
+              )}
             </div>
           </div>
           {form.questions.map((q, i) => (
@@ -381,6 +413,7 @@ function Editor({ id, template, onBack, onSaved, onResponses }: { id: string | n
               </div>
             </div>
             <Switch checked={form.settings.oneResponse} onChange={(v) => patch({ settings: { ...form.settings, oneResponse: v } })} label="한 사람 한 번만" hint="같은 기기·브라우저에서는 한 번만 응답할 수 있습니다." />
+            <DedupeSettings form={form} onChange={(dedupe) => patch({ settings: { ...form.settings, dedupe } })} />
             <div className="flex flex-col gap-1">
               <label htmlFor="thanks" className="text-sm font-medium text-ink-2">
                 제출 뒤 보일 문구
@@ -421,12 +454,24 @@ function QuestionEditor({
 }) {
   const optRefs = useRef<Array<HTMLInputElement | null>>([])
   const focusOpt = useRef<number | null>(null)
-  const choice = q.type === 'radio' || q.type === 'checkbox' || q.type === 'select'
+  const choice = OPTION_TYPES.includes(q.type)
   const setOpt = (i: number, v: string) => onChange({ options: (q.options ?? []).map((o, j) => (j === i ? v : o)) })
+  /** 보기가 바뀔 때 보기 사진·순위 개수도 같이 맞춘다 */
+  const setOptions = (options: string[], optionImages?: string[]) => {
+    const imgs = optionImages && optionImages.some(Boolean) ? optionImages : undefined
+    const patch: Partial<Question> = { options, optionImages: imgs }
+    if (q.type === 'rank') patch.rankLimit = Math.min(options.length, q.rankLimit && q.rankLimit < (q.options?.length ?? 0) ? q.rankLimit : options.length)
+    onChange(patch)
+  }
   const addOpt = () => {
     const opts = [...(q.options ?? []), `옵션 ${(q.options?.length ?? 0) + 1}`]
     focusOpt.current = opts.length - 1
-    onChange({ options: opts })
+    setOptions(opts, q.optionImages ? [...q.optionImages, ''] : undefined)
+  }
+  const removeOpt = (i: number) => setOptions(q.options!.filter((_, j) => j !== i), q.optionImages?.filter((_, j) => j !== i))
+  const setOptImage = (i: number, url: string) => {
+    const imgs = (q.options ?? []).map((_, j) => (j === i ? url : (q.optionImages?.[j] ?? '')))
+    onChange({ optionImages: imgs.some(Boolean) ? imgs : undefined })
   }
   // 새 보기가 그려지자마자 그 칸으로(빨리 이어 쳐도 앞 보기에 들어가지 않게)
   useLayoutEffect(() => {
@@ -448,12 +493,25 @@ function QuestionEditor({
           <Select<QType> aria-label={`질문 ${index + 1} 종류`} value={q.type} onValue={onType} className="w-auto! min-w-48" options={(Object.keys(TYPE_LABEL) as QType[]).map((t) => ({ value: t, label: TYPE_LABEL[t] }))} />
         </div>
         <input value={q.desc} onChange={(e) => onChange({ desc: e.target.value })} aria-label={`질문 ${index + 1} 설명`} placeholder="설명(선택)" className="w-full border-0 border-b border-line/70 bg-transparent py-1 text-sm text-ink-2 outline-none focus:border-brand" />
+        {q.image && (
+          <div className="relative self-start">
+            <img src={q.image} alt="질문 사진" className="max-h-64 max-w-full rounded-lg border border-line object-contain" />
+            <span className="absolute right-1.5 top-1.5">
+              <IconButton icon={X} label="질문 사진 빼기" size="sm" variant="secondary" onClick={() => onChange({ image: undefined })} />
+            </span>
+          </div>
+        )}
 
         {choice && (
           <div className="flex flex-col gap-1.5">
             {(q.options ?? []).map((o, i) => (
               <div key={i} className="flex items-center gap-2">
-                <span className={clsx('grid size-4 shrink-0 place-items-center border border-line-strong', q.type === 'radio' ? 'rounded-full' : q.type === 'checkbox' ? 'rounded-xs' : 'rounded-none border-0 text-xs text-muted')}>{q.type === 'select' ? `${i + 1}.` : ''}</span>
+                <span className={clsx('grid size-4 shrink-0 place-items-center border border-line-strong', q.type === 'radio' ? 'rounded-full' : q.type === 'checkbox' ? 'rounded-xs' : 'rounded-none border-0 text-xs text-muted')}>{q.type === 'select' || q.type === 'rank' ? `${i + 1}.` : ''}</span>
+                {q.optionImages?.[i] && (
+                  <span className="relative size-12 shrink-0 overflow-hidden rounded-md border border-line">
+                    <img src={q.optionImages[i]} alt="" className="size-full object-cover" />
+                  </span>
+                )}
                 <input
                   ref={(el) => {
                     optRefs.current[i] = el
@@ -469,7 +527,13 @@ function QuestionEditor({
                   aria-label={`질문 ${index + 1} 보기 ${i + 1}`}
                   className="min-w-0 flex-1 border-0 border-b border-transparent bg-transparent py-1 text-[15px] outline-none hover:border-line focus:border-brand"
                 />
-                {(q.options?.length ?? 0) > 1 && <IconButton icon={X} label={`보기 ${i + 1} 지우기`} size="sm" onClick={() => onChange({ options: q.options!.filter((_, j) => j !== i) })} />}
+                {q.type !== 'select' &&
+                  (q.optionImages?.[i] ? (
+                    <IconButton icon={X} label={`보기 ${i + 1} 사진 빼기`} size="sm" onClick={() => setOptImage(i, '')} />
+                  ) : (
+                    <IconButton icon={ImagePlus} label={`보기 ${i + 1} 사진 넣기`} size="sm" onClick={() => void chooseImage((url) => setOptImage(i, url))} />
+                  ))}
+                {(q.options?.length ?? 0) > 1 && <IconButton icon={Trash2} label={`보기 ${i + 1} 지우기`} size="sm" onClick={() => removeOpt(i)} />}
               </div>
             ))}
             {q.other && (
@@ -483,7 +547,19 @@ function QuestionEditor({
               <button type="button" className="text-muted hover:text-ink" onClick={addOpt}>
                 보기 추가
               </button>
-              {q.type !== 'select' && !q.other && (
+              {q.type === 'rank' && (q.options?.length ?? 0) > 1 && (
+                <span className="ml-auto inline-flex items-center gap-1.5 text-ink-2">
+                  <Select
+                    aria-label={`질문 ${index + 1} 몇 위까지`}
+                    value={String(q.rankLimit ?? q.options!.length)}
+                    onValue={(v) => onChange({ rankLimit: Number(v) })}
+                    className="w-auto!"
+                    options={q.options!.map((_, k) => ({ value: String(k + 1), label: k + 1 === q.options!.length ? `전부(${k + 1}위까지)` : `${k + 1}위까지` }))}
+                  />
+                  매기기
+                </span>
+              )}
+              {(q.type === 'radio' || q.type === 'checkbox') && !q.other && (
                 <>
                   <span className="text-muted">또는</span>
                   <button type="button" className="font-semibold text-brand-ink hover:underline" onClick={() => onChange({ other: true })}>
@@ -517,6 +593,7 @@ function QuestionEditor({
           <IconButton icon={ArrowUp} label="위로" size="sm" disabled={index === 0} onClick={() => onMove(-1)} />
           <IconButton icon={ArrowDown} label="아래로" size="sm" disabled={index === total - 1} onClick={() => onMove(1)} />
           <IconButton icon={Plus} label="아래에 질문 추가" size="sm" onClick={onAddAfter} />
+          <IconButton icon={ImagePlus} label={q.image ? '질문 사진 바꾸기' : '질문 사진 넣기'} size="sm" onClick={() => void chooseImage((url) => onChange({ image: url }))} />
           <span className="ml-auto" />
           <IconButton icon={Copy} label="질문 복제" size="sm" onClick={onCopy} />
           <IconButton icon={Trash2} label="질문 지우기" size="sm" onClick={onDelete} />
@@ -673,6 +750,7 @@ function Responses({ id, onBack, onEdit }: { id: string; onBack: () => void; onE
                 </p>
                 {s.counts && s.q.type === 'scale' && s.q.scale && <ScaleChart counts={s.counts} average={s.average} answered={s.answered} scale={s.q.scale} />}
                 {s.counts && s.q.type === 'checkbox' && <RankBars counts={s.counts} base={responses.length} />}
+                {s.ranks && (s.answered ? <RankChart ranks={s.ranks} limit={s.q.rankLimit ?? s.q.options?.length ?? 0} /> : <p className="text-sm text-muted">아직 이 질문에 답한 사람이 없습니다.</p>)}
                 {s.counts && (s.q.type === 'radio' || s.q.type === 'select') && (s.answered ? <ChoiceChart counts={s.counts} answered={s.answered} /> : <p className="text-sm text-muted">아직 이 질문에 답한 사람이 없습니다.</p>)}
                 {s.texts && (
                   <div className={clsx(s.counts && 'mt-3 border-t border-line pt-2')}>
@@ -720,7 +798,7 @@ function Responses({ id, onBack, onEdit }: { id: string; onBack: () => void; onE
                     .map((q) => (
                       <div key={q.id}>
                         <dt className="text-xs text-muted">{q.title || '질문'}</dt>
-                        <dd className="whitespace-pre-wrap text-[15px] text-ink">{answerText(r.answers?.[q.id]) || <span className="text-muted">(답 없음)</span>}</dd>
+                        <dd className="whitespace-pre-wrap text-[15px] text-ink">{answerText(r.answers?.[q.id], q) || <span className="text-muted">(답 없음)</span>}</dd>
                       </div>
                     ))}
                 </dl>
@@ -759,6 +837,52 @@ function Responses({ id, onBack, onEdit }: { id: string; onBack: () => void; onE
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+/** 중복 응답 막기: IP, 이름·전화번호 같은 질문 값(각각 / 조합) */
+function DedupeSettings({ form, onChange }: { form: Form; onChange: (d: NonNullable<Form['settings']['dedupe']>) => void }) {
+  const d = form.settings.dedupe ?? { ip: false, fields: [], mode: 'any' as const }
+  const keyable = form.questions.filter((q) => (q.type === 'short' || q.type === 'select' || q.type === 'radio') && q.title.trim())
+  const fields = d.fields.filter((id) => keyable.some((q) => q.id === id))
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-line bg-paper p-3">
+      <p className="flex items-center gap-1.5 text-sm font-semibold text-ink">
+        <ShieldCheck className="size-4 text-brand" aria-hidden /> 중복 응답 막기
+      </p>
+      <Switch checked={d.ip} onChange={(ip) => onChange({ ...d, fields, ip })} label="같은 IP(네트워크)는 한 번만" hint="회사·카페 와이파이처럼 같은 인터넷을 쓰면 여러 사람이 한 IP 로 보여 다른 사람도 막힐 수 있습니다." />
+      <div className="flex flex-col gap-1.5">
+        <p className="text-sm font-medium text-ink-2">같은 값이면 막을 질문</p>
+        {keyable.length ? (
+          keyable.map((q) => (
+            <label key={q.id} className="flex cursor-pointer items-center gap-2 text-sm text-ink-2">
+              <input type="checkbox" className="size-4" checked={fields.includes(q.id)} onChange={(e) => onChange({ ...d, fields: e.target.checked ? [...fields, q.id].slice(0, 5) : fields.filter((x) => x !== q.id) })} />
+              <span className="truncate">{q.title}</span>
+            </label>
+          ))
+        ) : (
+          <p className="text-xs text-muted">단답형·객관식·드롭다운 질문(예: 성명, 핸드폰번호)을 만들면 여기서 고를 수 있습니다.</p>
+        )}
+        {fields.length >= 2 && (
+          <Segmented
+            label="막는 방식"
+            size="sm"
+            block
+            value={d.mode}
+            onValue={(mode) => onChange({ ...d, fields, mode })}
+            options={[
+              { value: 'any', label: '하나라도 같으면' },
+              { value: 'all', label: '모두 같으면(조합)' },
+            ]}
+          />
+        )}
+        {fields.length > 0 && (
+          <p className="text-xs leading-relaxed text-muted">
+            {fields.length >= 2 && d.mode === 'all' ? '고른 질문의 값이 모두 같은 응답이 이미 있으면 막습니다(예: 이름+핸드폰번호).' : '고른 질문 중 하나라도 같은 값의 응답이 이미 있으면 막습니다.'} 핸드폰번호는 하이픈·띄어쓰기·+82 를 빼고 비교하고, 이름은 띄어쓰기를 빼고 비교합니다.
+          </p>
+        )}
+      </div>
     </div>
   )
 }
