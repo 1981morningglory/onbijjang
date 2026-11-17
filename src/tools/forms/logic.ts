@@ -115,7 +115,7 @@ export function changeType(q: Question, type: QType): Question {
   }
 }
 
-export const DEFAULT_SETTINGS: Settings = { open: true, closeAt: null, oneResponse: false, thanks: '응답해 주셔서 감사합니다.', linkType: 'short', dedupe: { ip: false, fields: [], mode: 'any' } }
+export const DEFAULT_SETTINGS: Settings = { open: true, closeAt: null, oneResponse: true, thanks: '응답해 주셔서 감사합니다.', linkType: 'short', dedupe: { ip: false, fields: [], mode: 'any' } }
 
 const Q = (type: QType, title: string, extra: Partial<Question> = {}): Question => ({ ...newQuestion(type), title, ...extra })
 
@@ -192,6 +192,20 @@ export const TEMPLATES: Array<{ key: string; name: string; note: string; make: (
     }),
   },
 ]
+
+/** 핸드폰번호 질문(전화번호 형식이거나 제목에 핸드폰·휴대폰·연락처·전화번호) — 중복 응답 막기의 기본 기준 */
+export function phoneQuestion(questions: Question[]): Question | null {
+  return questions.find((q) => q.type === 'short' && (q.format === 'phone' || /핸드폰|휴대폰|휴대전화|전화번호|연락처/.test(q.title))) ?? null
+}
+/** 이름 질문(동명이인이 있어 이것만으로 막으면 위험) */
+export const isNameQuestion = (q: Pick<Question, 'title'>) => /성명|이름|성함/.test(q.title)
+/** 새 설문: 핸드폰번호 질문이 있고 아직 막을 질문을 안 골랐으면 그 질문으로 중복 응답을 막는다 */
+export function withPhoneDedupe(settings: Settings, questions: Question[]): Settings {
+  const d = settings.dedupe ?? { ip: false, fields: [], mode: 'any' as const }
+  const phone = phoneQuestion(questions)
+  if (!phone || d.fields.length) return settings
+  return { ...settings, dedupe: { ...d, fields: [phone.id], mode: 'any' } }
+}
 
 /** 답 하나를 글자로(순위는 ‘1. A / 2. B’) */
 export const answerText = (a: Answer | undefined, q?: Pick<Question, 'type'>) =>
