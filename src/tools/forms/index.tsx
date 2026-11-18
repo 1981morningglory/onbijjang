@@ -1,14 +1,14 @@
 import clsx from 'clsx'
-import { ArrowDown, ArrowLeft, ArrowUp, BarChart3, ClipboardList, Copy, ExternalLink, FileDown, FileSpreadsheet, FileText, ImagePlus, Link2, ListChecks, Pencil, Plus, RefreshCw, Save, ShieldCheck, Trash2, X } from 'lucide-react'
+import { ArrowDown, ArrowLeft, ArrowUp, BarChart3, ClipboardList, Copy, ExternalLink, FileDown, FileSpreadsheet, FileText, ImagePlus, Link2, ListChecks, Pencil, Plus, RefreshCw, Save, Search, Share2, ShieldCheck, Trash2, UserPlus, Users, X } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { api, ApiError } from '@/lib/api'
 import { downloadBlob } from '@/lib/files'
-import { Badge, Button, Callout, EmptyState, IconButton, Panel, Segmented, Select, Spinner, Switch, Tabs, Textarea, TextInput, toast } from '@/ui'
+import { Badge, Button, Callout, Dialog, EmptyState, IconButton, Panel, Segmented, Select, Spinner, Switch, Tabs, Textarea, TextInput, toast } from '@/ui'
 import { writeTable } from '@/tools/orders/excel'
 import { ChoiceChart, RankBars, RankChart, ScaleChart, StatTiles } from './charts'
 import { pickImage, uploadFormImage } from './upload'
 import { exportPdf } from '@/tools/saju/share'
-import { OPTION_TYPES, changeType, DEFAULT_SETTINGS, isNameQuestion, phoneQuestion, withPhoneDedupe, FORMAT_LABEL, fileSafe, formatAt, newQuestion, qid, responseRows, summarize, TEMPLATES, TYPE_LABEL, answerText, type Form, type FormSummary, type QType, type Question, type Response } from './logic'
+import { OPTION_TYPES, changeType, DEFAULT_SETTINGS, isNameQuestion, phoneQuestion, withPhoneDedupe, FORMAT_LABEL, fileSafe, formatAt, newQuestion, qid, responseRows, summarize, TEMPLATES, TYPE_LABEL, answerText, peopleText, periodText, type Form, type FormSummary, type Person, type QType, type Question, type Response } from './logic'
 
 type View = { mode: 'list' } | { mode: 'edit'; id: string | null } | { mode: 'responses'; id: string }
 const readView = (): View => {
@@ -60,6 +60,7 @@ function FormList({ onNew, onEdit, onResponses }: { onNew: (template: string) =>
   const [isAdmin, setIsAdmin] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [q, setQ] = useState('')
+  const [sharing, setSharing] = useState<FormSummary | null>(null)
   const load = useCallback(() => {
     api<{ forms: FormSummary[]; isAdmin: boolean }>('/forms')
       .then((r) => {
@@ -138,7 +139,7 @@ function FormList({ onNew, onEdit, onResponses }: { onNew: (template: string) =>
                   <th className="px-3 py-2.5 font-semibold">상태</th>
                   <th className="px-3 py-2.5 text-right font-semibold">응답</th>
                   <th className="px-3 py-2.5 font-semibold">마지막 응답</th>
-                  <th className="px-3 py-2.5 font-semibold">고친 날</th>
+                  <th className="px-3 py-2.5 font-semibold">시작 · 마감</th>
                   <th className="px-3 py-2.5 text-right font-semibold">관리</th>
                 </tr>
               </thead>
@@ -146,25 +147,41 @@ function FormList({ onNew, onEdit, onResponses }: { onNew: (template: string) =>
                 {list.map((f) => (
                   <tr key={f.id} className="border-b border-line/60 last:border-0 hover:bg-paper/60">
                     <td className="max-w-[320px] px-4 py-3">
-                      <button type="button" className="block truncate text-left font-semibold text-ink hover:underline" onClick={() => onEdit(f.id)}>
+                      <button type="button" className="block truncate text-left font-semibold text-ink hover:underline" onClick={() => (f.canEdit ? onEdit(f.id) : onResponses(f.id))}>
                         {f.title}
                       </button>
                       <span className="block truncate text-xs text-muted">
-                        질문 {f.questions}개{isAdmin ? ` · ${f.ownerName}` : ''}
+                        질문 {f.questions}개{isAdmin || f.shared ? ` · ${f.ownerName}` : ''}
                       </span>
+                      {f.shared ? (
+                        <span className="mt-1 inline-flex items-center gap-1 rounded-md bg-sunken px-1.5 py-0.5 text-xs font-semibold text-ink-2">
+                          <Share2 className="size-3" aria-hidden /> 공유받음 · {f.ownerName}
+                        </span>
+                      ) : f.sharedWith.length > 0 ? (
+                        <button type="button" onClick={() => setSharing(f)} title={f.sharedWith.map((p) => p.name).join(', ')} className="mt-1 inline-flex max-w-full items-center gap-1 rounded-md bg-brand-soft px-1.5 py-0.5 text-xs font-semibold text-brand-ink hover:underline">
+                          <Users className="size-3 shrink-0" aria-hidden />
+                          <span className="truncate">
+                            공유 {f.sharedWith.length}명 · {peopleText(f.sharedWith)}
+                          </span>
+                        </button>
+                      ) : null}
                     </td>
                     <td className="px-3 py-3">{f.open ? <Badge tone="brand">응답 받는 중</Badge> : <Badge>마감</Badge>}</td>
                     <td className="px-3 py-3 text-right font-semibold tabular-nums">{f.responses}</td>
                     <td className="px-3 py-3 text-xs text-muted">{f.lastResponseAt ? formatAt(f.lastResponseAt) : '-'}</td>
-                    <td className="px-3 py-3 text-xs text-muted">{formatAt(f.updatedAt).slice(0, 10)}</td>
+                    <td className="whitespace-nowrap px-3 py-3 text-xs leading-relaxed text-muted">
+                      <span className="block">시작 {periodText(f).start}</span>
+                      <span className={clsx('block', !f.settings.closeAt && 'text-faint')}>{f.settings.closeAt ? `마감 ${periodText(f).end}` : periodText(f).end}</span>
+                    </td>
                     <td className="px-3 py-2">
                       <div className="flex justify-end gap-0.5">
                         <IconButton icon={BarChart3} label="응답 보기" size="sm" onClick={() => onResponses(f.id)} />
-                        <IconButton icon={Pencil} label="편집" size="sm" onClick={() => onEdit(f.id)} />
+                        {f.canEdit && <IconButton icon={Pencil} label="편집" size="sm" onClick={() => onEdit(f.id)} />}
+                        {f.canEdit && <IconButton icon={Share2} label="응답 공유" size="sm" onClick={() => setSharing(f)} />}
                         <IconButton icon={Link2} label="응답 링크 복사" size="sm" onClick={() => void copy(shareLink(f))} />
                         <IconButton icon={FileSpreadsheet} label="응답 엑셀로 받기" size="sm" onClick={() => void excel(f)} />
-                        <IconButton icon={Copy} label="사본 만들기" size="sm" onClick={() => void duplicate(f)} />
-                        <IconButton icon={Trash2} label="지우기" size="sm" onClick={() => void remove(f)} />
+                        {f.canEdit && <IconButton icon={Copy} label="사본 만들기" size="sm" onClick={() => void duplicate(f)} />}
+                        {f.canEdit && <IconButton icon={Trash2} label="지우기" size="sm" onClick={() => void remove(f)} />}
                       </div>
                     </td>
                   </tr>
@@ -181,6 +198,16 @@ function FormList({ onNew, onEdit, onResponses }: { onNew: (template: string) =>
           </div>
         )}
       </section>
+      {sharing && (
+        <ShareDialog
+          form={sharing}
+          onClose={() => setSharing(null)}
+          onSaved={(list) => {
+            setForms((l) => l?.map((x) => (x.id === sharing.id ? { ...x, sharedWith: list } : x)) ?? null)
+            setSharing(null)
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -684,14 +711,20 @@ function Responses({ id, onBack, onEdit }: { id: string; onBack: () => void; onE
           <p className="text-xs text-muted">
             응답 {responses.length}개{responses.length ? ` · 마지막 ${formatAt(responses[responses.length - 1].at)}` : ''}
           </p>
+          <p className="text-xs text-muted">
+            시작 {periodText(form).start} · {form.settings.closeAt ? `마감 ${periodText(form).end}` : periodText(form).end}
+            {form.canEdit === false ? ` · ${form.ownerName ?? ''}님이 공유한 설문(보기 전용)` : form.sharedWith?.length ? ` · 공유 ${form.sharedWith.length}명(${peopleText(form.sharedWith, 3)})` : ''}
+          </p>
         </div>
         <div className="ml-auto flex flex-wrap gap-2">
           <Button size="sm" icon={Link2} onClick={() => void copy(shareLink(form))}>
             응답 링크
           </Button>
-          <Button size="sm" icon={Pencil} onClick={onEdit}>
-            편집
-          </Button>
+          {form.canEdit !== false && (
+            <Button size="sm" icon={Pencil} onClick={onEdit}>
+              편집
+            </Button>
+          )}
           <IconButton icon={RefreshCw} label="새로 고침" onClick={load} />
         </div>
       </div>
@@ -791,9 +824,11 @@ function Responses({ id, onBack, onEdit }: { id: string; onBack: () => void; onE
                 <div className="mb-2 flex items-center gap-2">
                   <span className="font-semibold text-ink">응답 {responses.length - idx}</span>
                   <span className="text-xs text-muted">{formatAt(r.at)}</span>
-                  <span className="ml-auto" data-pdf-skip>
-                    <IconButton icon={Trash2} label="이 응답 지우기" size="sm" onClick={() => void removeOne(r)} />
-                  </span>
+                  {form.canEdit !== false && (
+                    <span className="ml-auto" data-pdf-skip>
+                      <IconButton icon={Trash2} label="이 응답 지우기" size="sm" onClick={() => void removeOne(r)} />
+                    </span>
+                  )}
                 </div>
                 <dl className="flex flex-col gap-2">
                   {form.questions
@@ -833,11 +868,13 @@ function Responses({ id, onBack, onEdit }: { id: string; onBack: () => void; onE
               </table>
             </div>
           )}
-          <div className="flex justify-end" data-pdf-skip>
-            <Button size="sm" variant="ghost" icon={Trash2} onClick={() => void removeAll()}>
-              응답 모두 지우기
-            </Button>
-          </div>
+          {form.canEdit !== false && (
+            <div className="flex justify-end" data-pdf-skip>
+              <Button size="sm" variant="ghost" icon={Trash2} onClick={() => void removeAll()}>
+                응답 모두 지우기
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -897,5 +934,105 @@ function DedupeSettings({ form, onChange }: { form: Form; onChange: (d: NonNulla
         )}
       </div>
     </div>
+  )
+}
+
+/** 응답 공유: 온비짱 직원을 이름으로 찾아 추가·빼기. 공유받은 직원은 응답 보기·내려받기만 할 수 있다 */
+function ShareDialog({ form, onClose, onSaved }: { form: FormSummary; onClose: () => void; onSaved: (list: Person[]) => void }) {
+  const [chosen, setChosen] = useState<Person[]>(form.sharedWith)
+  const [q, setQ] = useState('')
+  const [found, setFound] = useState<Person[] | null>(null)
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    let live = true
+    const t = setTimeout(() => {
+      api<{ people: Person[] }>(`/forms/people?q=${encodeURIComponent(q.trim())}`)
+        .then((r) => live && setFound(r.people))
+        .catch(() => live && setFound([]))
+    }, 200)
+    return () => {
+      live = false
+      clearTimeout(t)
+    }
+  }, [q])
+  const ids = new Set(chosen.map((p) => p.id))
+  const add = (p: Person) => setChosen((l) => (l.some((x) => x.id === p.id) ? l : [...l, p]))
+  const drop = (id: string) => setChosen((l) => l.filter((x) => x.id !== id))
+  const save = async () => {
+    setBusy(true)
+    try {
+      const r = await api<{ sharedWith: Person[] }>(`/forms/${form.id}/share`, { method: 'PUT', body: { userIds: chosen.map((p) => p.id) } })
+      toast.success(r.sharedWith.length ? `${r.sharedWith.length}명과 응답을 공유했습니다.` : '응답 공유를 모두 껐습니다.')
+      onSaved(r.sharedWith)
+    } catch (e) {
+      toast.error(message(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const candidates = (found ?? []).filter((p) => !ids.has(p.id))
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title="응답 공유"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            닫기
+          </Button>
+          <Button variant="primary" icon={Save} loading={busy} onClick={() => void save()}>
+            저장
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        <p className="text-sm leading-relaxed text-ink-2">
+          <b className="text-ink">‘{form.title}’</b>의 응답을 함께 볼 직원을 고르세요. 공유받은 직원은 응답 보기와 엑셀·PDF 내려받기만 할 수 있고, 설문을 고치거나 응답을 지울 수는 없습니다.
+        </p>
+        <section className="flex flex-col gap-2">
+          <h3 className="text-sm font-semibold text-ink">공유한 직원 {chosen.length}명</h3>
+          {chosen.length ? (
+            <ul className="flex flex-wrap gap-1.5">
+              {chosen.map((p) => (
+                <li key={p.id} className="inline-flex items-center gap-1 rounded-full bg-brand-soft py-1 pr-1 pl-3 text-sm text-brand-ink">
+                  <span className="font-semibold">{p.name}</span>
+                  <span className="text-xs opacity-70">{p.username}</span>
+                  <IconButton icon={X} label={`${p.name} 공유 빼기`} size="sm" onClick={() => drop(p.id)} />
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted">아직 아무와도 공유하지 않았습니다.</p>
+          )}
+        </section>
+        <section className="flex flex-col gap-2">
+          <label className="relative">
+            <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted" aria-hidden />
+            <TextInput aria-label="직원 이름으로 찾기" value={q} onChange={(e) => setQ(e.target.value)} placeholder="직원 이름·아이디로 찾기" className="pl-9!" autoFocus />
+          </label>
+          <ul className="max-h-64 overflow-y-auto rounded-lg border border-line">
+            {found === null ? (
+              <li className="flex items-center gap-2 px-3 py-3 text-sm text-muted">
+                <Spinner /> 찾는 중
+              </li>
+            ) : !candidates.length ? (
+              <li className="px-3 py-3 text-sm text-muted">{q.trim() ? '맞는 직원이 없습니다.' : '추가할 직원이 없습니다.'}</li>
+            ) : (
+              candidates.map((p) => (
+                <li key={p.id} className="flex items-center gap-2 border-b border-line/60 px-3 py-2 last:border-0">
+                  <span className="font-semibold text-ink">{p.name}</span>
+                  <span className="text-xs text-muted">{p.username}</span>
+                  <Button size="sm" variant="ghost" icon={UserPlus} className="ml-auto" onClick={() => add(p)}>
+                    추가
+                  </Button>
+                </li>
+              ))
+            )}
+          </ul>
+        </section>
+      </div>
+    </Dialog>
   )
 }

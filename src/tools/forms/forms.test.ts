@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { cleanAnswers, cleanForm, findDuplicate, isOpen, normKey, shortCode, toCsv } from '../../../server/lib/forms.mjs'
-import { DEFAULT_SETTINGS, isNameQuestion, missingRequired, newQuestion, phoneQuestion, responseRows, summarize, TEMPLATES, withPhoneDedupe, type Form } from './logic'
+import { DEFAULT_SETTINGS, isNameQuestion, peopleText, periodText, missingRequired, newQuestion, phoneQuestion, responseRows, summarize, TEMPLATES, withPhoneDedupe, type Form } from './logic'
 
 const make = (): Form => ({ id: 'x', ...cleanForm(TEMPLATES.find((t) => t.key === 'event')!.make()) })
 
@@ -174,5 +174,17 @@ describe('기본값: 한 사람 한 번만·핸드폰번호 중복 막기', () =
     const ev = TEMPLATES.find((t) => t.key === 'event')!.make()
     const mine = { ...DEFAULT_SETTINGS, dedupe: { ip: true, fields: [ev.questions[0].id], mode: 'all' as const } }
     expect(withPhoneDedupe(mine, ev.questions)).toBe(mine)
+  })
+})
+
+describe('설문 시작·마감, 공유 표시', () => {
+  it('마감 시각이 없으면 ‘마감기한 없음’', () => {
+    expect(periodText({ createdAt: '2026-11-18T00:30:00.000Z', settings: { closeAt: null } })).toEqual({ start: '2026-11-18 09:30', end: '마감기한 없음' })
+    expect(periodText({ createdAt: '2026-11-18T00:30:00.000Z', settings: { closeAt: '2026-11-30T09:00:00.000Z' } }).end).toBe('2026-11-30 18:00')
+  })
+  it('공유한 직원 이름은 둘까지, 나머지는 ‘외 N명’', () => {
+    const p = (name: string) => ({ name })
+    expect(peopleText([p('김철수')])).toBe('김철수')
+    expect(peopleText([p('김철수'), p('이영희'), p('박민수'), p('최지우')])).toBe('김철수, 이영희 외 2명')
   })
 })

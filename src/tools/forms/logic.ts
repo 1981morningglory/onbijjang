@@ -45,6 +45,16 @@ export interface Form {
   createdAt?: string
   updatedAt?: string
   links?: { full: string; short: string }
+  /** 응답을 공유한 직원(작성자·전체마스터에게만 온다) */
+  sharedWith?: Person[]
+  /** 편집·삭제할 수 있는가(공유받은 설문은 false) */
+  canEdit?: boolean
+}
+/** 공유 대상 직원 */
+export interface Person {
+  id: string
+  name: string
+  username: string
 }
 export interface FormSummary {
   id: string
@@ -59,6 +69,10 @@ export interface FormSummary {
   createdAt: string
   updatedAt: string
   links: { full: string; short: string }
+  canEdit: boolean
+  /** 남이 나에게 공유한 설문 */
+  shared: boolean
+  sharedWith: Person[]
 }
 export type Answer = string | string[] | number
 export interface Response {
@@ -265,6 +279,10 @@ export function responseRows(form: Form, responses: Response[]) {
 }
 
 /** 한국 시간 ‘2026-11-17 14:03’ */
+/** 설문 시작·마감 글자: 마감 시각이 없으면 ‘마감기한 없음’ */
+export const periodText = (f: { createdAt?: string; settings: { closeAt: string | null } }) => ({ start: f.createdAt ? formatAt(f.createdAt) : '-', end: f.settings.closeAt ? formatAt(f.settings.closeAt) : '마감기한 없음' })
+/** 공유한 직원 이름 줄이기: ‘김철수, 이영희 외 2명’ */
+export const peopleText = (list: { name: string }[], max = 2) => (list.length <= max ? list.map((p) => p.name).join(', ') : `${list.slice(0, max).map((p) => p.name).join(', ')} 외 ${list.length - max}명`)
 export const formatAt = (iso: string) => new Date(Date.parse(iso) + 9 * 3600e3).toISOString().slice(0, 16).replace('T', ' ')
 
 /** 꼭 답해야 하는데 빈 질문(화면에서 먼저 확인) */
