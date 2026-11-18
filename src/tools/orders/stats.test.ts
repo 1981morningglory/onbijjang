@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { orderStats, region } from '../../../server/lib/orderStats.mjs'
-import { change, niceScale, presetRange, won } from './stats'
+import { change, dayKind, HOLIDAYS, niceScale, presetRange, won } from './stats'
 
 const row = (o: Record<string, string | number | null>) => ({ 주문번호: '1', 쇼핑몰: '쿠팡', 수량: 1, 상품코드: 'A', 상품명: '플래너', 옵션: '블랙', 수취인주소: '서울특별시 강남구 테헤란로 1', 전화번호1: '010-1111-2222', 수취인명: '김', ...o })
 const batches = [
@@ -71,5 +71,18 @@ describe('대시보드 도우미', () => {
     expect(change(120, 100)).toBe(20)
     expect(change(5, 0)).toBeNull()
     expect(niceScale(87)).toEqual({ max: 100, step: 25 })
+  })
+})
+
+describe('토·일·공휴일', () => {
+  it('요일과 법정공휴일(대체공휴일 포함)', () => {
+    expect(dayKind('2026-11-18')).toBe('weekday') // 수
+    expect(dayKind('2026-11-21')).toBe('sat')
+    expect(dayKind('2026-11-22')).toBe('sun')
+    expect(dayKind('2026-10-03')).toBe('holiday') // 개천절(토요일이어도 공휴일)
+    expect(dayKind('2026-10-05')).toBe('holiday') // 대체공휴일
+    expect(HOLIDAYS['2026-05-01']).toBe('노동절')
+    expect(HOLIDAYS['2026-07-17']).toBe('제헌절')
+    expect(HOLIDAYS['2027-02-09']).toContain('대체공휴일')
   })
 })

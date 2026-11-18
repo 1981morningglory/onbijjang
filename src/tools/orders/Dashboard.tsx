@@ -3,12 +3,12 @@
 // 처음 보일 때·기간이나 기준을 바꿀 때 막대가 자라고 선이 그려지며 숫자가 올라간다(움직임 줄이기 설정이면 바로 보인다).
 // 색: 검증한 범주 색 순서(설문폼 그래프와 같은 SERIES). 글자는 늘 글자색, 색만으로 구분하지 않게 이름·값을 함께 적는다.
 import clsx from 'clsx'
-import { BarChart3, CalendarDays, Crown, MapPin, Package, Receipt, RefreshCw, ShoppingBag, Store, TrendingDown, TrendingUp, Undo2, Users, type LucideIcon } from 'lucide-react'
+import { BarChart3, CalendarDays, ChartLine, Crown, MapPin, Package, Receipt, RefreshCw, ShoppingBag, Store, TrendingDown, TrendingUp, Undo2, Users, type LucideIcon } from 'lucide-react'
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { api } from '@/lib/api'
 import { Callout, EmptyState, IconButton, Segmented, Spinner, TextInput } from '@/ui'
 import { SERIES } from '@/tools/forms/charts'
-import { change, daysBetween, fmt, kstToday, METRIC_LABEL, metricText, niceScale, presetRange, PRESETS, shortDay, WEEK_ORDER, WEEKDAYS, won, type DayStat, type Metric, type NamedStat, type Preset, type ProductStat, type Stats, type WeekdayStat } from './stats'
+import { change, dayKind, daysBetween, HOLIDAYS, fmt, kstToday, METRIC_LABEL, metricText, niceScale, presetRange, PRESETS, shortDay, WEEK_ORDER, WEEKDAYS, won, type DayStat, type Metric, type NamedStat, type Preset, type ProductStat, type Stats, type WeekdayStat } from './stats'
 
 /** 기준마다 한 색(한 그래프에는 한 기준만 그린다) */
 const METRIC_COLOR: Record<Metric, string> = { orders: SERIES[0], qty: SERIES[1], amount: SERIES[2], lines: SERIES[3] }
@@ -136,30 +136,48 @@ function WipeCover({ x, width, height }: { x: number; width: number; height: num
   return <rect x={x} y={0} width={width} height={height} fill="var(--color-surface)" className="animate-wipe" style={{ transformBox: 'fill-box' }} onAnimationEnd={() => setDone(true)} />
 }
 
-// ── 날짜별 추이(선) ───────────────────────────────────────
-function TrendChart({ data, metric, animKey }: { data: DayStat[]; metric: Metric; animKey: string }) {
+// ── 날짜별 추이(선·막대) ──────────────────────────────────
+/** 토요일 파랑·일요일과 공휴일 빨강(진하지 않게) */
+const DAY_COLOR = { sat: '#3f74d0', sun: '#d24a3c', holiday: '#d24a3c' } as const
+const dayColor = (date: string) => {
+  const k = dayKind(date)
+  return k === 'weekday' ? undefined : DAY_COLOR[k]
+}
+/** 위만 둥근 막대 */
+const barPath = (x0: number, y0: number, bw: number, bh: number) => {
+  const r = Math.min(3, bw / 2, bh)
+  return `M${x0},${y0 + bh}V${y0 + r}Q${x0},${y0} ${x0 + r},${y0}H${x0 + bw - r}Q${x0 + bw},${y0} ${x0 + bw},${y0 + r}V${y0 + bh}Z`
+}
+export type TrendView = 'line' | 'bar'
+
+function TrendChart({ data, metric, view, animKey }: { data: DayStat[]; metric: Metric; view: TrendView; animKey: string }) {
   const [ref, w] = useWidth<HTMLDivElement>()
   const [hover, setHover] = useState<number | null>(null)
   const gid = useId().replace(/:/g, '')
-  const H = 260
-  const pad = { l: 52, r: 16, t: 20, b: 30 }
+  const n = data.length
+  const pad = { l: 52, r: 12, t: 20, b: 50 }
+  const H = 300
   const vals = data.map((d) => d[metric])
   const { max, step } = niceScale(Math.max(...vals, 0))
-  const n = data.length
   const pw = Math.max(10, w - pad.l - pad.r)
   const ph = H - pad.t - pad.b
-  const x = (i: number) => pad.l + (n <= 1 ? pw / 2 : (i / (n - 1)) * pw)
+  // 하루 한 칸. 점·막대는 칸 가운데
+  const slot = pw / Math.max(1, n)
+  const x = (i: number) => pad.l + slot * (i + 0.5)
   const y = (v: number) => pad.t + (1 - v / max) * ph
+  const base = y(0)
   const line = vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join('')
-  const area = n > 1 ? `${line}L${x(n - 1).toFixed(1)},${y(0)}L${x(0).toFixed(1)},${y(0)}Z` : ''
+  const area = n > 1 ? `${line}L${x(n - 1).toFixed(1)},${base}L${x(0).toFixed(1)},${base}Z` : ''
   const avg = n ? vals.reduce((s, v) => s + v, 0) / n : 0
   const peak = vals.indexOf(Math.max(...vals))
-  const tickEvery = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(pw / 70))))
+  // 날짜는 칸이 좁지 않으면 모두(아주 긴 기간만 건너뛰며), 요일 글자는 칸이 넉넉할 때
+  const every = slot >= 13 ? 1 : Math.ceil(13 / slot)
+  const showDow = slot >= 12
   const color = METRIC_COLOR[metric]
+  const bw = Math.max(1, Math.min(26, slot * 0.66))
   const label = (v: number) => (metric === 'amount' ? (v >= 1e4 ? `${fmt(v / 1e4)}만` : fmt(v)) : fmt(v))
   const move = (clientX: number, rect: DOMRect) => {
-    const px = clientX - rect.left
-    const i = n <= 1 ? 0 : Math.round(((px - pad.l) / pw) * (n - 1))
+    const i = Math.floor((clientX - rect.left - pad.l) / slot)
     setHover(Math.max(0, Math.min(n - 1, i)))
   }
   const h = hover != null ? data[hover] : null
@@ -170,7 +188,7 @@ function TrendChart({ data, metric, animKey }: { data: DayStat[]; metric: Metric
           width={w}
           height={H}
           role="img"
-          aria-label={`${METRIC_LABEL[metric]} 날짜별 추이. 하루 평균 ${metricText(metric, avg)}, 가장 많은 날 ${shortDay(data[peak]?.date ?? '')} ${metricText(metric, vals[peak] ?? 0)}`}
+          aria-label={`${METRIC_LABEL[metric]} 날짜별 추이(${view === 'bar' ? '막대' : '선'}). 하루 평균 ${metricText(metric, avg)}, 가장 많은 날 ${shortDay(data[peak]?.date ?? '')} ${metricText(metric, vals[peak] ?? 0)}`}
           onPointerMove={(e) => move(e.clientX, e.currentTarget.getBoundingClientRect())}
           onPointerLeave={() => setHover(null)}
           className="touch-pan-y overflow-visible"
@@ -181,28 +199,68 @@ function TrendChart({ data, metric, animKey }: { data: DayStat[]; metric: Metric
               <stop offset="100%" stopColor={color} stopOpacity="0" />
             </linearGradient>
           </defs>
-          {data.map((d, i) =>
-            // 마지막 날짜는 늘 적고, 그 바로 앞 눈금이 너무 가까우면 뺀다
-            (i % tickEvery === 0 && (i === n - 1 || n - 1 - i >= tickEvery * 0.6)) || i === n - 1 ? (
-              <text key={d.date} x={x(i)} y={H - 8} textAnchor={i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle'} className="fill-muted text-[11px] tabular-nums">
-                {`${Number(d.date.slice(5, 7))}.${Number(d.date.slice(8, 10))}`}
-              </text>
-            ) : null,
-          )}
-          <g key={animKey}>
-            {area && <path d={area} fill={`url(#${gid})`} />}
-            <path d={line} fill="none" stroke={color} strokeWidth={2.25} strokeLinejoin="round" strokeLinecap="round" />
-            {/* 바탕색 덮개가 오른쪽으로 걷히며 선·면이 왼쪽부터 드러난다(선 길이·clipPath 에 기대지 않아 어느 화면에서도 안전) */}
-            <WipeCover x={pad.l - 3} width={pw + pad.r + 3} height={y(0) + 3} />
+          {/* 토·일·공휴일 칸은 아주 옅게 물들인다 */}
+          {slot >= 3 &&
+            data.map((d, i) => {
+              const c = dayColor(d.date)
+              return c ? <rect key={d.date} x={x(i) - slot / 2} y={pad.t} width={slot} height={ph} fill={c} opacity={0.07} /> : null
+            })}
+          {/* 날짜(아래 줄은 요일, 달이 바뀌는 날은 ‘11월’) */}
+          {data.map((d, i) => {
+            const day = Number(d.date.slice(8, 10))
+            const c = dayColor(d.date)
+            const first = i === 0 || day === 1
+            const shown = i % every === 0 || first
+            return (
+              <g key={d.date} className={clsx(hover === i && 'font-bold')}>
+                {shown && (
+                  <text x={x(i)} y={base + 15} textAnchor="middle" fill={c ?? 'var(--color-muted)'} className="text-[10px] tabular-nums">
+                    {day}
+                  </text>
+                )}
+                {shown && showDow && (
+                  <text x={x(i)} y={base + 28} textAnchor="middle" fill={c ?? 'var(--color-faint)'} className="text-[9.5px]">
+                    {WEEKDAYS[new Date(`${d.date}T00:00:00Z`).getUTCDay()]}
+                  </text>
+                )}
+                {first && (
+                  <text x={x(i) - Math.min(slot / 2, 6)} y={base + 43} textAnchor="start" className="fill-ink-2 text-[10px] font-semibold">
+                    {Number(d.date.slice(5, 7))}월
+                  </text>
+                )}
+              </g>
+            )
+          })}
+          <g key={`${animKey}|${view}`}>
+            {view === 'line' ? (
+              <>
+                {area && <path d={area} fill={`url(#${gid})`} />}
+                <path d={line} fill="none" stroke={color} strokeWidth={2.25} strokeLinejoin="round" strokeLinecap="round" />
+                {/* 바탕색 덮개가 오른쪽으로 걷히며 선·면이 왼쪽부터 드러난다 */}
+                <WipeCover x={pad.l - 3} width={pw + pad.r + 3} height={base + 3} />
+              </>
+            ) : (
+              vals.map((v, i) =>
+                v > 0 ? (
+                  <path
+                    key={data[i].date}
+                    d={barPath(x(i) - bw / 2, y(v), bw, base - y(v))}
+                    fill={color}
+                    className={clsx('animate-grow-y transition-opacity', hover != null && hover !== i && 'opacity-50')}
+                    style={{ transformBox: 'fill-box', animationDelay: `${Math.round((i / Math.max(1, n)) * 700)}ms` }}
+                  />
+                ) : null,
+              )
+            )}
             {/* 눈금(흐리게) */}
-          {Array.from({ length: Math.round(max / step) + 1 }, (_, k) => k * step).map((v) => (
-            <g key={v}>
-              <line x1={pad.l} x2={w - pad.r} y1={y(v)} y2={y(v)} stroke="var(--color-line)" strokeDasharray={v ? '2 4' : undefined} />
-              <text x={pad.l - 8} y={y(v)} dy="0.32em" textAnchor="end" className="fill-muted text-[11px] tabular-nums">
-                {label(v)}
-              </text>
-            </g>
-          ))}
+            {Array.from({ length: Math.round(max / step) + 1 }, (_, k) => k * step).map((v) => (
+              <g key={v}>
+                <line x1={pad.l} x2={w - pad.r} y1={y(v)} y2={y(v)} stroke="var(--color-line)" strokeDasharray={v ? '2 4' : undefined} />
+                <text x={pad.l - 8} y={y(v)} dy="0.32em" textAnchor="end" className="fill-muted text-[11px] tabular-nums">
+                  {label(v)}
+                </text>
+              </g>
+            ))}
             {/* 평균선 */}
             {n > 1 && (
               <g className="animate-fade" style={{ animationDelay: '1.1s', animationDuration: '0.5s' }}>
@@ -215,8 +273,8 @@ function TrendChart({ data, metric, animKey }: { data: DayStat[]; metric: Metric
             {/* 가장 많은 날 */}
             {vals[peak] > 0 && (
               <g className="animate-pop" style={{ animationDelay: '1.3s' }}>
-                <circle cx={x(peak)} cy={y(vals[peak])} r={5} fill={color} stroke="var(--color-surface)" strokeWidth={2} />
-                <text x={Math.min(Math.max(x(peak), pad.l + 40), w - pad.r - 40)} y={y(vals[peak]) - 12} textAnchor="middle" stroke="var(--color-surface)" strokeWidth={4} paintOrder="stroke" className="fill-ink text-[11px] font-bold">
+                {view === 'line' && <circle cx={x(peak)} cy={y(vals[peak])} r={5} fill={color} stroke="var(--color-surface)" strokeWidth={2} />}
+                <text x={Math.min(Math.max(x(peak), pad.l + 40), w - pad.r - 40)} y={y(vals[peak]) - (view === 'line' ? 12 : 7)} textAnchor="middle" stroke="var(--color-surface)" strokeWidth={4} paintOrder="stroke" className="fill-ink text-[11px] font-bold">
                   최고 {metricText(metric, vals[peak])}
                 </text>
               </g>
@@ -224,26 +282,38 @@ function TrendChart({ data, metric, animKey }: { data: DayStat[]; metric: Metric
           </g>
           {h && hover != null && (
             <g pointerEvents="none">
-              <line x1={x(hover)} x2={x(hover)} y1={pad.t} y2={y(0)} stroke="var(--color-ink-2)" strokeWidth={1} opacity={0.4} />
-              <circle cx={x(hover)} cy={y(vals[hover])} r={5} fill={color} stroke="var(--color-surface)" strokeWidth={2} />
+              <line x1={x(hover)} x2={x(hover)} y1={pad.t} y2={base} stroke="var(--color-ink-2)" strokeWidth={1} opacity={view === 'line' ? 0.4 : 0.2} />
+              {view === 'line' && <circle cx={x(hover)} cy={y(vals[hover])} r={5} fill={color} stroke="var(--color-surface)" strokeWidth={2} />}
             </g>
           )}
         </svg>
       )}
       {h && hover != null && (
-        <div className="pointer-events-none absolute top-1 z-10 min-w-36 rounded-lg border border-line bg-surface px-3 py-2 text-xs shadow-2" style={{ left: Math.min(Math.max(x(hover) - 72, 0), Math.max(0, w - 150)) }}>
-          <div className="mb-1 font-semibold text-ink">{shortDay(h.date)}</div>
-          {WITH_LINES
-            .filter((m) => m !== 'amount' || h.amount > 0)
-            .map((m) => (
-              <div key={m} className="flex items-center gap-2">
-                <span className="size-2 rounded-full" style={{ background: METRIC_COLOR[m], opacity: m === metric ? 1 : 0.35 }} aria-hidden />
-                <span className={clsx('text-muted', m === metric && 'font-semibold text-ink-2')}>{METRIC_LABEL[m]}</span>
-                <span className="ml-auto pl-3 font-semibold tabular-nums text-ink">{metricText(m, h[m])}</span>
-              </div>
-            ))}
+        <div className="pointer-events-none absolute top-1 z-10 min-w-36 rounded-lg border border-line bg-surface px-3 py-2 text-xs shadow-2" style={{ left: Math.min(Math.max(x(hover) - 72, 0), Math.max(0, w - 160)) }}>
+          <div className="mb-1 font-semibold" style={{ color: dayColor(h.date) ?? 'var(--color-ink)' }}>
+            {shortDay(h.date)}
+            {HOLIDAYS[h.date] && <span className="ml-1 font-normal">· {HOLIDAYS[h.date]}</span>}
+          </div>
+          {WITH_LINES.filter((m) => m !== 'amount' || h.amount > 0).map((m) => (
+            <div key={m} className="flex items-center gap-2">
+              <span className="size-2 rounded-full" style={{ background: METRIC_COLOR[m], opacity: m === metric ? 1 : 0.35 }} aria-hidden />
+              <span className={clsx('text-muted', m === metric && 'font-semibold text-ink-2')}>{METRIC_LABEL[m]}</span>
+              <span className="ml-auto pl-3 font-semibold tabular-nums text-ink">{metricText(m, h[m])}</span>
+            </div>
+          ))}
         </div>
       )}
+      {/* 범례: 날짜 글자색 */}
+      <div className="mt-1 flex flex-wrap justify-end gap-x-3 gap-y-1 text-2xs text-muted">
+        <span className="inline-flex items-center gap-1">
+          <span className="size-2 rounded-[2px]" style={{ background: DAY_COLOR.sat, opacity: 0.6 }} aria-hidden />
+          토요일
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="size-2 rounded-[2px]" style={{ background: DAY_COLOR.sun, opacity: 0.6 }} aria-hidden />
+          일요일·공휴일
+        </span>
+      </div>
     </div>
   )
 }
@@ -429,6 +499,22 @@ export function Dashboard() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [trendM, setTrendM] = useState<Metric>('orders')
+  // 날짜별 추이 모양(선·막대) — 고른 것을 기억
+  const [trendView, setTrendViewState] = useState<TrendView>(() => {
+    try {
+      return localStorage.getItem('orders.trendView') === 'bar' ? 'bar' : 'line'
+    } catch {
+      return 'line'
+    }
+  })
+  const setTrendView = (v: TrendView) => {
+    setTrendViewState(v)
+    try {
+      localStorage.setItem('orders.trendView', v)
+    } catch {
+      // 저장 못 해도 화면은 바뀐다
+    }
+  }
   const [weekM, setWeekM] = useState<Metric>('orders')
   const [mallM, setMallM] = useState<Metric>('orders')
   const [prodM, setProdM] = useState<Metric>('qty')
@@ -539,8 +625,23 @@ export function Dashboard() {
           )}
 
           <div className="grid gap-5 xl:grid-cols-3">
-            <Card title="날짜별 추이" icon={TrendingUp} className="xl:col-span-2" delay={120} right={<MetricSwitch value={metricOr(trendM)} onValue={setTrendM} hasAmount={hasAmount} only={WITH_LINES} />}>
-              <TrendChart data={data.daily} metric={metricOr(trendM)} animKey={`${k}|${trendM}`} />
+            <Card title="날짜별 추이" icon={TrendingUp} className="xl:col-span-2" delay={120} right={
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <Segmented
+                    size="sm"
+                    label="그래프 모양"
+                    value={trendView}
+                    onValue={setTrendView}
+                    options={[
+                      { value: 'line', label: '선', icon: ChartLine },
+                      { value: 'bar', label: '막대', icon: BarChart3 },
+                    ]}
+                  />
+                  <MetricSwitch value={metricOr(trendM)} onValue={setTrendM} hasAmount={hasAmount} only={WITH_LINES} />
+                </div>
+              }
+            >
+              <TrendChart data={data.daily} metric={metricOr(trendM)} view={trendView} animKey={`${k}|${trendM}`} />
             </Card>
             <Card title="요일별 주문" icon={CalendarDays} delay={180} right={<MetricSwitch value={metricOr(weekM)} onValue={setWeekM} hasAmount={hasAmount} only={WITH_LINES} />}>
               <WeekdayChart data={data.weekday} metric={metricOr(weekM)} animKey={`${k}|${weekM}`} />
