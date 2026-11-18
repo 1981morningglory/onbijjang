@@ -441,7 +441,9 @@ app.use('/api/convert', (req, res, next) => (req.method === 'GET' ? next() : req
 const routesDir = path.join(__dirname, 'routes')
 if (fs.existsSync(routesDir)) {
   // 라우트끼리 나눠 쓰는 도구(예: quote.mjs 가 넣는 sessionTeam)를 담는 한 객체. 파일 이름 순서로 불러온다.
-  const ctx = { requireAdmin, isAdmin, requireStaff, isStaff, canUseTool, requireTool, currentUser, DATA_DIR, ROOT, TRUSTED }
+  /** 직원 목록(이름·아이디·등급만, 비밀번호 등은 빼고) — 공유 대상 찾기 등에 쓴다 */
+  const listUsers = () => users.filter((u) => !u.disabled).map((u) => ({ id: u.id, name: u.name || u.username, username: u.username, role: u.role }))
+  const ctx = { requireAdmin, isAdmin, requireStaff, isStaff, canUseTool, requireTool, currentUser, listUsers, DATA_DIR, ROOT, TRUSTED }
   for (const file of fs.readdirSync(routesDir).filter((f) => f.endsWith('.mjs')).sort()) {
     const mod = await import(pathToFileURL(path.join(routesDir, file)).href)
     if (typeof mod.default === 'function') {

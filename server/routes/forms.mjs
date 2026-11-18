@@ -1,6 +1,7 @@
 // 설문폼 — 구글폼처럼 설문을 만들고 링크로 응답을 받는다.
 //
 // - 만들기·편집·응답 보기: 직원등급 이상(관리자 메뉴 설정·계정별 허용/차단을 따른다). 내가 만든 설문만, 전체마스터는 모두.
+// - 공유: 작성자(또는 전체마스터)가 직원을 골라 응답을 공유하면, 그 직원은 응답 보기·내려받기만 할 수 있다(편집·삭제 불가).
 // - 응답: 링크를 받은 누구나(로그인 없음). 전체 주소 /form/<설문ID> 또는 짧은 주소 /f/<6글자>.
 // - 저장: 데이터 폴더 forms/<설문ID>.json(설문), <설문ID>.responses.json(응답), <설문ID>.csv(응답이 올 때마다 새로 쓰는 파일).
 // - 응답 보내기는 한 사람(IP)이 한 설문에 한 시간 30번까지.
@@ -17,7 +18,7 @@ const SHORT = /^[a-z0-9]{6}$/
 const HOURLY = 30
 
 export default async function formsRoutes(app, ctx) {
-  const { requireTool, isAdmin, currentUser, DATA_DIR, ROOT } = ctx
+  const { requireTool, isAdmin, currentUser, listUsers, DATA_DIR, ROOT } = ctx
   const requireForms = requireTool('forms', ['member', 'staff', 'admin'], '설문폼을 쓸 권한이 없습니다. 관리자에게 허용을 요청해 주세요.')
   const DIR = path.join(DATA_DIR, 'forms')
   await fsp.mkdir(DIR, { recursive: true })
@@ -75,9 +76,16 @@ export default async function formsRoutes(app, ctx) {
     return u ? { owner: u.id, ownerName: u.name || u.username } : { owner: 'master', ownerName: '전체마스터' }
   }
   const mine = (req, f) => f && (isAdmin(req) || f.owner === me(req).owner)
+  /** 응답을 볼 수 있는가: 작성자·전체마스터 또는 공유받은 직원 */
+  const canRead = (req, f) => f && (mine(req, f) || (f.sharedWith ?? []).includes(me(req).owner))
+  const people = () => new Map((listUsers?.() ?? []).map((u) => [u.id, u]))
+  const sharedView = (f, map = people()) => (f.sharedWith ?? []).filter((id) => map.has(id)).map((id) => ({ id, name: map.get(id).name, username: map.get(id).username }))
   const base = (req) => process.env.SHARE_BASE_URL || `${req.protocol}://${req.get('host')}`
   const links = (req, f) => ({ full: `${base(req)}/form/${f.id}`, short: `${base(req)}/f/${f.short}` })
-  const summary = (req, f) => ({ id: f.id, title: f.title, description: f.description, owner: f.owner, ownerName: f.ownerName, questions: f.questions.length, responses: f.responseCount ?? 0, lastResponseAt: f.lastResponseAt ?? null, open: isOpen(f), settings: f.settings, createdAt: f.createdAt, updatedAt: f.updatedAt, links: links(req, f) })
+  const summary = (req, f, map) => {
+    const own = mine(req, f)
+    return { id: f.id, title: f.title, description: f.description, owner: f.owner, ownerName: f.ownerName, questions: f.questions.length, responses: f.responseCount ?? 0, lastResponseAt: f.lastResponseAt ?? null, open: isOpen(f), settings: f.settings, createdAt: f.createdAt, updatedAt: f.updatedAt, links: links(req, f), canEdit: own, shared: !own, sharedWith: own ? sharedView(f, map) : [] }
+  }
 
   // ── 사진 ──
   /** 사진 올리기: { data: 'data:image/jpeg;base64,…' } → { url }. 같은 사진은 같은 이름 */
@@ -103,8 +111,26 @@ export default async function formsRoutes(app, ctx) {
 
   // ── 만드는 사람 ──
   app.get('/api/forms', requireForms, (req, res) => {
-    const list = [...forms.values()].filter((f) => mine(req, f)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-    res.json({ forms: list.map((f) => summary(req, f)), isAdmin: isAdmin(req) })
+    const map = people()
+    const list = [...forms.values()].filter((f) => canRead(req, f)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    res.json({ forms: list.map((f) => summary(req, f, map)), isAdmin: isAdmin(req) })
+  })
+  /** 공유할 직원 찾기(이름·아이디) */
+  app.get('/api/forms/people', requireForms, (req, res) => {
+    const q = String(req.query.q ?? '').trim().toLowerCase()
+    const myId = me(req).owner
+    const list = (listUsers?.() ?? []).filter((u) => u.id !== myId && (!q || `${u.name} ${u.username}`.toLowerCase().includes(q))).slice(0, 30)
+    res.json({ people: list.map(({ id, name, username }) => ({ id, name, username })) })
+  })
+  /** 응답 공유 대상 정하기(작성자·전체마스터): { userIds } */
+  app.put('/api/forms/:fid/share', requireForms, async (req, res) => {
+    const f = forms.get(req.params.fid)
+    if (!mine(req, f)) return res.status(404).json({ error: '설문을 찾지 못했습니다.' })
+    const map = people()
+    const ids = [...new Set((Array.isArray(req.body?.userIds) ? req.body.userIds : []).map(String))].filter((id) => map.has(id) && id !== f.owner).slice(0, 100)
+    f.sharedWith = ids
+    await writeJson(file(f.id), f)
+    res.json({ sharedWith: sharedView(f, map) })
   })
   app.post('/api/forms', requireForms, async (req, res) => {
     const clean = cleanForm(req.body ?? {})
@@ -141,8 +167,9 @@ export default async function formsRoutes(app, ctx) {
   })
   app.get('/api/forms/:fid/responses', requireForms, async (req, res) => {
     const f = forms.get(req.params.fid)
-    if (!mine(req, f)) return res.status(404).json({ error: '설문을 찾지 못했습니다.' })
-    res.json({ form: { ...f, links: links(req, f) }, responses: (await responsesOf(f.id)).map(({ ip: _ip, ...r }) => r) })
+    if (!canRead(req, f)) return res.status(404).json({ error: '설문을 찾지 못했습니다.' })
+    const own = mine(req, f)
+    res.json({ form: { ...f, links: links(req, f), sharedWith: own ? sharedView(f) : undefined, canEdit: own }, responses: (await responsesOf(f.id)).map(({ ip: _ip, ...r }) => r) })
   })
   /** 응답 하나 지우기(:rid) 또는 전부 지우기(all) */
   app.delete('/api/forms/:fid/responses/:rid', requireForms, async (req, res) => {
@@ -163,7 +190,7 @@ export default async function formsRoutes(app, ctx) {
   /** 서버에 쌓아 둔 응답 파일(CSV) 그대로 */
   app.get('/api/forms/:fid/responses.csv', requireForms, async (req, res) => {
     const f = forms.get(req.params.fid)
-    if (!mine(req, f)) return res.status(404).json({ error: '설문을 찾지 못했습니다.' })
+    if (!canRead(req, f)) return res.status(404).json({ error: '설문을 찾지 못했습니다.' })
     if (!fs.existsSync(file(f.id, 'csv'))) await fsp.writeFile(file(f.id, 'csv'), toCsv(f, await responsesOf(f.id)), 'utf8')
     res.setHeader('Content-Type', 'text/csv; charset=utf-8')
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(`${f.title}_응답.csv`)}`)
