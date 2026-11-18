@@ -24,6 +24,8 @@ export interface DayStat {
 export interface WeekdayStat extends Omit<DayStat, 'date'> {
   dow: number
   days: number
+  /** 그 요일 중 주문이 1건이라도 있던 날 수(하루 평균의 분모) */
+  active: number
 }
 export interface NamedStat {
   name: string

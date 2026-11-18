@@ -168,7 +168,9 @@ function TrendChart({ data, metric, view, animKey }: { data: DayStat[]; metric: 
   const base = y(0)
   const line = vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join('')
   const area = n > 1 ? `${line}L${x(n - 1).toFixed(1)},${base}L${x(0).toFixed(1)},${base}Z` : ''
-  const avg = n ? vals.reduce((s, v) => s + v, 0) / n : 0
+  // 하루 평균: 주문이 1건이라도 있던 날만(주문 0건인 휴일 등은 뺀다)
+  const activeDays = data.filter((d) => d.orders > 0).length
+  const avg = activeDays ? data.reduce((s, d) => s + (d.orders > 0 ? d[metric] : 0), 0) / activeDays : 0
   const peak = vals.indexOf(Math.max(...vals))
   // 날짜는 칸이 좁지 않으면 모두(아주 긴 기간만 건너뛰며), 요일 글자는 칸이 넉넉할 때
   const every = slot >= 13 ? 1 : Math.ceil(13 / slot)
@@ -188,7 +190,7 @@ function TrendChart({ data, metric, view, animKey }: { data: DayStat[]; metric: 
           width={w}
           height={H}
           role="img"
-          aria-label={`${METRIC_LABEL[metric]} 날짜별 추이(${view === 'bar' ? '막대' : '선'}). 하루 평균 ${metricText(metric, avg)}, 가장 많은 날 ${shortDay(data[peak]?.date ?? '')} ${metricText(metric, vals[peak] ?? 0)}`}
+          aria-label={`${METRIC_LABEL[metric]} 날짜별 추이(${view === 'bar' ? '막대' : '선'}). 하루 평균(휴일 제외) ${metricText(metric, avg)}, 가장 많은 날 ${shortDay(data[peak]?.date ?? '')} ${metricText(metric, vals[peak] ?? 0)}`}
           onPointerMove={(e) => move(e.clientX, e.currentTarget.getBoundingClientRect())}
           onPointerLeave={() => setHover(null)}
           className="touch-pan-y overflow-visible"
@@ -268,6 +270,9 @@ function TrendChart({ data, metric, view, animKey }: { data: DayStat[]; metric: 
                 <text x={pad.l + 6} y={y(avg) - 6} textAnchor="start" stroke="var(--color-surface)" strokeWidth={4} paintOrder="stroke" className="fill-ink-2 text-[11px] font-semibold">
                   하루 평균 {metricText(metric, avg)}
                 </text>
+                <text x={pad.l + 6} y={y(avg) + 13} textAnchor="start" stroke="var(--color-surface)" strokeWidth={4} paintOrder="stroke" className="fill-muted text-[10px]">
+                  (휴일제외)
+                </text>
               </g>
             )}
             {/* 가장 많은 날 */}
@@ -330,7 +335,7 @@ function WeekdayChart({ data, metric, animKey }: { data: WeekdayStat[]; metric: 
       <div className="flex h-52 items-end gap-2 sm:gap-3">
         {rows.map((r, i) => {
           const v = r[metric]
-          const avg = r.days ? v / r.days : 0
+          const avg = r.active ? v / r.active : 0
           return (
             <div key={r.dow} className="relative flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1" onPointerEnter={() => setHover(r.dow)} onPointerLeave={() => setHover(null)}>
               {best[metric] > 0 && r.dow === best.dow && (
@@ -344,7 +349,7 @@ function WeekdayChart({ data, metric, animKey }: { data: WeekdayStat[]; metric: 
               <div
                 className={clsx('animate-grow-y w-full max-w-12 rounded-t-[4px] transition-opacity', hover != null && hover !== r.dow && 'opacity-45')}
                 style={{ height: `${Math.max(v ? 3 : 0, (v / max) * 78)}%`, background: color, animationDelay: `${i * 70}ms` }}
-                title={`${WEEKDAYS[r.dow]}요일: ${metricText(metric, v)} · 하루 평균 ${metricText(metric, avg)} (${r.days}일)`}
+                title={`${WEEKDAYS[r.dow]}요일: ${metricText(metric, v)} · 하루 평균 ${metricText(metric, avg)} (주문 있던 ${r.active}일 기준)`}
               />
               {hover === r.dow && (
                 <div className="pointer-events-none absolute bottom-full z-10 mb-2 w-max rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs shadow-2">
@@ -353,7 +358,7 @@ function WeekdayChart({ data, metric, animKey }: { data: WeekdayStat[]; metric: 
                     합계 <b className="text-ink">{metricText(metric, v)}</b>
                   </div>
                   <div className="text-muted">
-                    하루 평균 <b className="text-ink">{metricText(metric, avg)}</b> · {r.days}일
+                    하루 평균 <b className="text-ink">{metricText(metric, avg)}</b> · 주문 있던 {r.active}일
                   </div>
                 </div>
               )}
@@ -561,6 +566,8 @@ export function Dashboard() {
   const t = data.totals
   const p = data.prev.totals
   const len = daysBetween(data.from, data.to)
+  // 하루 평균의 분모: 주문이 1건이라도 있던 날 수
+  const active = Math.max(1, data.daily.filter((d) => d.orders > 0).length)
   const hasAmount = data.hasAmount
   const regionTotal = data.regions.reduce((s, r) => s + r[regionM], 0)
   const mallTotal = data.malls.reduce((s, r) => s + r[mallM], 0)
@@ -602,7 +609,7 @@ export function Dashboard() {
         <>
           {/* 숫자 카드 */}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-            <Kpi icon={Receipt} label="주문건수 / 주문줄수" value={t.orders} before={p.orders} format={(v) => `${fmt(v)}건`} extra={{ label: '주문줄수', value: t.lines, before: p.lines, format: (v) => `${fmt(v)}줄` }} sub={`하루 평균 ${fmt(t.orders / len)}건 · ${fmt(t.lines / len)}줄`} delay={0} />
+            <Kpi icon={Receipt} label="주문건수 / 주문줄수" value={t.orders} before={p.orders} format={(v) => `${fmt(v)}건`} extra={{ label: '주문줄수', value: t.lines, before: p.lines, format: (v) => `${fmt(v)}줄` }} sub={`하루 평균 ${fmt(t.orders / active)}건 · ${fmt(t.lines / active)}줄(휴일제외)`} delay={0} />
             {hasAmount && t.amount != null ? (
               <Kpi icon={TrendingUp} label="매출액(결제금액)" value={t.amount} before={p.amount} format={won} sub={`지난 기간 ${p.amount != null ? won(p.amount) : '-'}`} delay={60} />
             ) : (
@@ -645,7 +652,7 @@ export function Dashboard() {
             </Card>
             <Card title="요일별 주문" icon={CalendarDays} delay={180} right={<MetricSwitch value={metricOr(weekM)} onValue={setWeekM} hasAmount={hasAmount} only={WITH_LINES} />}>
               <WeekdayChart data={data.weekday} metric={metricOr(weekM)} animKey={`${k}|${weekM}`} />
-              <p className="text-xs text-muted">막대에 마우스를 올리면 그 요일 하루 평균이 보입니다. 날짜는 주문서 날짜 기준입니다.</p>
+              <p className="text-xs text-muted">막대에 마우스를 올리면 그 요일 하루 평균(주문이 있던 날 기준)이 보입니다. 날짜는 주문서 날짜 기준입니다.</p>
             </Card>
           </div>
 

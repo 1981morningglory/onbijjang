@@ -171,11 +171,12 @@ export function orderStats(batches, from, to, opts = {}) {
     x.qty += o.qty
     x.amount += o.amount
   }
-  // 요일별(일 0 … 토 6) + 기간 안 그 요일 날 수(하루 평균용)
-  const weekday = Array.from({ length: 7 }, (_, i) => ({ dow: i, orders: 0, lines: 0, qty: 0, amount: 0, days: 0 }))
+  // 요일별(일 0 … 토 6) + 기간 안 그 요일 날 수, 그중 주문이 1건이라도 있던 날 수(active — 하루 평균은 이것으로 나눈다)
+  const weekday = Array.from({ length: 7 }, (_, i) => ({ dow: i, orders: 0, lines: 0, qty: 0, amount: 0, days: 0, active: 0 }))
   for (const x of byDate.values()) {
     const w = weekday[dow(x.date)]
     w.days++
+    if (x.orders > 0) w.active++
     w.orders += x.orders
     w.lines += x.lines
     w.qty += x.qty
