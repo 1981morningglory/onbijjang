@@ -516,6 +516,8 @@ function MallPicker({ malls, value, onValue, colorOf, stats }: { malls: string[]
             title={name === '기타' ? `6위부터 거래처 ${stats.length - malls.length}곳 합계 · 주문 ${fmt(n)}건` : `${name || '전체 거래처'} · 주문 ${fmt(n)}건`}
             className={clsx(
               'group animate-rise flex w-[4.75rem] shrink-0 flex-col items-center gap-1 rounded-xl border px-1 py-2 transition-colors',
+              // ‘전체’는 왼쪽에 두고, 거래처 아이콘들은 오른쪽 끝으로
+              i === 1 && 'ml-auto',
               on ? 'border-brand bg-brand-soft/60' : 'border-transparent hover:border-line hover:bg-paper',
             )}
             style={{ animationDelay: `${i * 40}ms` }}
