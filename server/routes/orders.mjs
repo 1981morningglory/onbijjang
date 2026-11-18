@@ -7,6 +7,7 @@
 import crypto from 'node:crypto'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
+import { addDays, daysBetween, orderStats } from '../lib/orderStats.mjs'
 
 const ID_RE = /^[a-f0-9]{16}$/
 /** 담당자가 적는 비고(CS내용) 칸 이름 · 마지막으로 적은 사람·시각 · 취소내용 */
@@ -347,6 +348,26 @@ export default async function ordersRoutes(app, ctx) {
     }
     const malls = [...new Set([...batches.values()].flatMap((b) => b.rows.map((r) => str(r['쇼핑몰']))).filter(Boolean))].sort()
     res.json({ batches: list, malls, hasAmount: [...batches.values()].some((b) => b.cols.some((c) => AMOUNT_RE.test(c))), closed: closedDays })
+  })
+
+  /**
+   * 통계 대시보드: ?from=&to= (기본 이번 달). 숫자만 돌려준다(고객 개인정보 없음).
+   * prev: 바로 앞 같은 길이 기간의 합계(늘었는지 줄었는지 비교)
+   */
+  app.get('/api/orders/stats', requireAllowed, (req, res) => {
+    const today = kstDate(new Date().toISOString())
+    let from = String(req.query.from ?? '')
+    let to = String(req.query.to ?? '')
+    if (!DATE_RE.test(to)) to = today
+    if (!DATE_RE.test(from)) from = `${to.slice(0, 8)}01`
+    if (from > to) [from, to] = [to, from]
+    // 너무 긴 기간은 3년으로 자른다
+    if (daysBetween(from, to) > 1100) from = addDays(to, -1099)
+    const list = [...batches.values()]
+    const len = daysBetween(from, to)
+    const prev = orderStats(list, addDays(from, -len), addDays(from, -1), { detail: false })
+    const first = list.reduce((m, b) => (!m || b.date < m ? b.date : m), '')
+    res.json({ ...orderStats(list, from, to), prev: { from: prev.from, to: prev.to, totals: prev.totals }, today, firstDate: first || null })
   })
 
   /** 차수 하나 전부(줄·운송장·CS 기록·센터주문서 순서) */

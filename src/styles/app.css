@@ -206,6 +206,16 @@
 @utility animate-fade { animation: ob-fade 0.18s ease-out both; }
 @utility animate-spin-slow { animation: ob-spin 0.9s linear infinite; }
 
+/* 통계 그래프: 막대가 자라고, 선이 왼쪽부터 드러나고, 카드가 떠오른다(움직임 줄이기 설정이면 아래 규칙으로 바로 끝난다) */
+@keyframes ob-grow-x { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes ob-grow-y { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+@keyframes ob-wipe { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+@keyframes ob-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@utility animate-grow-x { transform-origin: left center; animation: ob-grow-x 0.9s var(--ease-out-expo) both; }
+@utility animate-grow-y { transform-origin: center bottom; animation: ob-grow-y 0.8s var(--ease-out-expo) both; }
+@utility animate-wipe { transform-origin: right center; animation: ob-wipe 1.4s cubic-bezier(0.65, 0, 0.35, 1) both; }
+@utility animate-rise { animation: ob-rise 0.6s var(--ease-out-expo) both; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
