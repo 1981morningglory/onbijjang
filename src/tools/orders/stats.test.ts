@@ -32,10 +32,13 @@ describe('주문 통계', () => {
   })
   it('날짜·요일·거래처·상품·지역', () => {
     expect(s.daily).toHaveLength(8)
-    expect(s.daily.find((d) => d.date === '2026-11-02')).toMatchObject({ orders: 2, qty: 4, amount: 35000 })
+    // 11-02: 주문 2건, 줄 3개(주문 1의 두 줄 + 주문 2) — 취소 줄은 빼고
+    expect(s.daily.find((d) => d.date === '2026-11-02')).toMatchObject({ orders: 2, lines: 3, qty: 4, amount: 35000 })
     expect(s.weekday[1]).toMatchObject({ orders: 2, days: 1 }) // 기간 안 월요일은 11-02 하루
-    expect(s.weekday[6].orders).toBe(1)
-    expect(s.malls[0]).toMatchObject({ name: '쿠팡', orders: 2, qty: 4, amount: 25000 })
+    expect(s.weekday[1].lines).toBe(3)
+    expect(s.weekday[6]).toMatchObject({ orders: 1, lines: 1 })
+    expect(s.daily.reduce((n, d) => n + d.lines, 0)).toBe(s.totals.lines)
+    expect(s.malls[0]).toMatchObject({ name: '쿠팡', orders: 2, lines: 3, qty: 4, amount: 25000 })
     expect(s.products[0]).toMatchObject({ code: 'A', qty: 4, orders: 3 })
     expect(s.regions.map((r) => r.name)).toEqual(expect.arrayContaining(['서울', '경기', '부산']))
     expect(s.cities.map((c) => c.name)).toContain('경기 수원시')

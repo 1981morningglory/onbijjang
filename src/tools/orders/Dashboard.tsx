@@ -11,7 +11,9 @@ import { SERIES } from '@/tools/forms/charts'
 import { change, daysBetween, fmt, kstToday, METRIC_LABEL, metricText, niceScale, presetRange, PRESETS, shortDay, WEEK_ORDER, WEEKDAYS, won, type DayStat, type Metric, type NamedStat, type Preset, type ProductStat, type Stats, type WeekdayStat } from './stats'
 
 /** 기준마다 한 색(한 그래프에는 한 기준만 그린다) */
-const METRIC_COLOR: Record<Metric, string> = { orders: SERIES[0], qty: SERIES[1], amount: SERIES[2] }
+const METRIC_COLOR: Record<Metric, string> = { orders: SERIES[0], qty: SERIES[1], amount: SERIES[2], lines: SERIES[3] }
+/** 날짜별·요일별은 주문줄수까지, 거래처·상품·지역은 세 기준 */
+const WITH_LINES: Metric[] = ['orders', 'lines', 'qty', 'amount']
 const OTHER = '#a8a49a'
 
 // ── 작은 도구 ─────────────────────────────────────────────
@@ -77,8 +79,17 @@ function MetricSwitch({ value, onValue, hasAmount, only }: { value: Metric; onVa
 }
 
 // ── 숫자 카드 ─────────────────────────────────────────────
-function Kpi({ icon: Icon, label, value, format, before, sub, delay, invert }: { icon: LucideIcon; label: string; value: number; format: (n: number) => string; before?: number | null; sub?: ReactNode; delay: number; invert?: boolean }) {
+/** 카드 큰 숫자 옆에 함께 보이는 둘째 숫자(예: 주문건수 옆 주문줄수) */
+interface KpiExtra {
+  label: string
+  value: number
+  before?: number | null
+  format: (n: number) => string
+}
+function Kpi({ icon: Icon, label, value, format, before, sub, delay, invert, extra }: { icon: LucideIcon; label: string; value: number; format: (n: number) => string; before?: number | null; sub?: ReactNode; delay: number; invert?: boolean; extra?: KpiExtra }) {
   const shown = useCountUp(value)
+  const shownExtra = useCountUp(extra?.value ?? 0)
+  const pctExtra = extra ? change(extra.value, extra.before) : null
   const pct = change(value, before)
   const up = pct != null && pct > 0
   const good = pct == null || pct === 0 ? null : invert ? !up : up
@@ -88,7 +99,14 @@ function Kpi({ icon: Icon, label, value, format, before, sub, delay, invert }: {
         <Icon className="size-4 shrink-0" aria-hidden />
         <span className="truncate">{label}</span>
       </div>
-      <div className="num truncate text-2xl font-bold tracking-tight text-ink sm:text-[26px]">{format(shown)}</div>
+      <div className="num flex min-w-0 items-baseline gap-1.5 truncate">
+        <span className="text-2xl font-bold tracking-tight text-ink sm:text-[26px]">{format(shown)}</span>
+        {extra && (
+          <span className="truncate text-base font-semibold text-ink-2" title={extra.label}>
+            / {extra.format(shownExtra)}
+          </span>
+        )}
+      </div>
       <div className="flex min-h-5 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
         {pct != null ? (
           <span className={clsx('inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 font-semibold', good === null ? 'bg-sunken text-ink-2' : good ? 'bg-success-soft text-success' : 'bg-danger-soft text-danger')}>
@@ -99,6 +117,12 @@ function Kpi({ icon: Icon, label, value, format, before, sub, delay, invert }: {
         ) : before === 0 && value > 0 ? (
           <span className="rounded-full bg-sunken px-1.5 py-0.5 font-semibold text-ink-2">새로</span>
         ) : null}
+        {extra && pctExtra != null && (
+          <span className="inline-flex items-center rounded-full bg-sunken px-1.5 py-0.5 font-semibold text-ink-2" title={`${extra.label} 지난 기간 대비`}>
+            줄 {pctExtra > 0 ? '+' : ''}
+            {pctExtra}%
+          </span>
+        )}
         {sub && <span className="truncate text-muted">{sub}</span>}
       </div>
     </div>
@@ -209,7 +233,7 @@ function TrendChart({ data, metric, animKey }: { data: DayStat[]; metric: Metric
       {h && hover != null && (
         <div className="pointer-events-none absolute top-1 z-10 min-w-36 rounded-lg border border-line bg-surface px-3 py-2 text-xs shadow-2" style={{ left: Math.min(Math.max(x(hover) - 72, 0), Math.max(0, w - 150)) }}>
           <div className="mb-1 font-semibold text-ink">{shortDay(h.date)}</div>
-          {(['orders', 'qty', 'amount'] as Metric[])
+          {WITH_LINES
             .filter((m) => m !== 'amount' || h.amount > 0)
             .map((m) => (
               <div key={m} className="flex items-center gap-2">
@@ -492,7 +516,7 @@ export function Dashboard() {
         <>
           {/* 숫자 카드 */}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-            <Kpi icon={Receipt} label="주문건수" value={t.orders} before={p.orders} format={(v) => `${fmt(v)}건`} sub={`하루 평균 ${fmt(t.orders / len)}건`} delay={0} />
+            <Kpi icon={Receipt} label="주문건수 / 주문줄수" value={t.orders} before={p.orders} format={(v) => `${fmt(v)}건`} extra={{ label: '주문줄수', value: t.lines, before: p.lines, format: (v) => `${fmt(v)}줄` }} sub={`하루 평균 ${fmt(t.orders / len)}건 · ${fmt(t.lines / len)}줄`} delay={0} />
             {hasAmount && t.amount != null ? (
               <Kpi icon={TrendingUp} label="매출액(결제금액)" value={t.amount} before={p.amount} format={won} sub={`지난 기간 ${p.amount != null ? won(p.amount) : '-'}`} delay={60} />
             ) : (
@@ -515,10 +539,10 @@ export function Dashboard() {
           )}
 
           <div className="grid gap-5 xl:grid-cols-3">
-            <Card title="날짜별 추이" icon={TrendingUp} className="xl:col-span-2" delay={120} right={<MetricSwitch value={metricOr(trendM)} onValue={setTrendM} hasAmount={hasAmount} />}>
+            <Card title="날짜별 추이" icon={TrendingUp} className="xl:col-span-2" delay={120} right={<MetricSwitch value={metricOr(trendM)} onValue={setTrendM} hasAmount={hasAmount} only={WITH_LINES} />}>
               <TrendChart data={data.daily} metric={metricOr(trendM)} animKey={`${k}|${trendM}`} />
             </Card>
-            <Card title="요일별 주문" icon={CalendarDays} delay={180} right={<MetricSwitch value={metricOr(weekM)} onValue={setWeekM} hasAmount={hasAmount} />}>
+            <Card title="요일별 주문" icon={CalendarDays} delay={180} right={<MetricSwitch value={metricOr(weekM)} onValue={setWeekM} hasAmount={hasAmount} only={WITH_LINES} />}>
               <WeekdayChart data={data.weekday} metric={metricOr(weekM)} animKey={`${k}|${weekM}`} />
               <p className="text-xs text-muted">막대에 마우스를 올리면 그 요일 하루 평균이 보입니다. 날짜는 주문서 날짜 기준입니다.</p>
             </Card>
