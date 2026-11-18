@@ -50,6 +50,10 @@ export interface Stats {
   weekday: WeekdayStat[]
   malls: NamedStat[]
   products: ProductStat[]
+  /** 주문건수 상위 5개 거래처(순서대로) */
+  topMalls: string[]
+  /** 거래처별 베스트 상품: 상위 5곳 각각 + ‘기타’(6위부터 묶음) */
+  productsByMall: Record<string, ProductStat[]>
   regions: NamedStat[]
   cities: NamedStat[]
 }
