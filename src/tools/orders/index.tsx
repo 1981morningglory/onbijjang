@@ -5,6 +5,7 @@
 import clsx from 'clsx'
 import {
   Archive,
+  BarChart3,
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
@@ -39,6 +40,7 @@ import { downloadBlob, makeZip } from '@/lib/files'
 import { Badge, Button, Callout, Dialog, Dropzone, EmptyState, Field, Panel, Segmented, Select, Spinner, Switch, Tabs, Textarea, TextInput, toast } from '@/ui'
 import { readAnyTable, readSabangnet, writeOutput, writeTable } from './excel'
 import { mallCode } from './mallCodes'
+import { Dashboard } from './Dashboard'
 import {
   batchStamp,
   centerOrder,
@@ -132,9 +134,12 @@ const trackUrl = (invoice: string) => `https://trace.cjlogistics.com/next/tracki
 /** 운송장 번호 칩(누르면 CJ 배송조회) */
 function WaybillChips({ list, compact }: { list: Waybill[]; compact?: boolean }) {
   if (!list.length) return <span className="text-xs text-faint">-</span>
+  // 표 안(compact)에서는 첫 송장만 보이고 나머지는 ‘+N’ — 송장이 여럿인 주문 하나 때문에 칸 전체가 넓어지지 않게(펼치면 모두 보인다)
+  const shown = compact ? list.slice(0, 1) : list
+  const rest = list.length - shown.length
   return (
-    <div className="flex flex-wrap gap-1">
-      {list.map((w) => (
+    <div className={clsx('flex gap-1', compact ? 'items-center' : 'flex-wrap')}>
+      {shown.map((w) => (
         <a
           key={w.invoice}
           href={trackUrl(w.invoice)}
@@ -151,6 +156,11 @@ function WaybillChips({ list, compact }: { list: Waybill[]; compact?: boolean })
           {w.invoice}
         </a>
       ))}
+      {rest > 0 && (
+        <span className="num shrink-0 rounded-full bg-sunken px-1.5 py-0.5 text-2xs font-semibold text-ink-2" title={`송장 ${list.length}개: ${list.map((w) => w.invoice).join(', ')}`}>
+          +{rest}
+        </span>
+      )}
     </div>
   )
 }
@@ -161,7 +171,7 @@ interface Mapping {
   option: string
   warehouse?: string
 }
-type Tab = 'make' | 'search'
+type Tab = 'make' | 'search' | 'stats'
 type FileSet = Array<{ kind: OutputKind; name: string; blob: Blob }>
 
 const str = (v: unknown) => (v == null ? '' : String(v).trim())
@@ -225,9 +235,10 @@ export default function OrdersTool() {
         tabs={[
           { value: 'search', label: '주문 조회', icon: History },
           { value: 'make', label: '주문서 만들기', icon: FileSpreadsheet },
+          { value: 'stats', label: '통계 대시보드', icon: BarChart3 },
         ]}
       />
-      <MeContext.Provider value={me.me ?? { id: null, name: null, master: false }}>{tab === 'make' ? <Make onGoList={() => setTab('search')} /> : <OrdersList admin={me.admin} />}</MeContext.Provider>
+      <MeContext.Provider value={me.me ?? { id: null, name: null, master: false }}>{tab === 'make' ? <Make onGoList={() => setTab('search')} /> : tab === 'stats' ? <Dashboard /> : <OrdersList admin={me.admin} />}</MeContext.Provider>
       <p className="text-right text-2xs text-faint">
         화면 {CENTER_FORM_UI} · 서버 {me.form ?? '이전 버전'} · 배포 {me.version ?? '?'}
       </p>
