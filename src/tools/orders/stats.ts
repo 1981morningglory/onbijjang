@@ -16,6 +16,8 @@ export interface Totals {
 export interface DayStat {
   date: string
   orders: number
+  /** 주문줄수(상품 줄 수) */
+  lines: number
   qty: number
   amount: number
 }
@@ -26,6 +28,7 @@ export interface WeekdayStat extends Omit<DayStat, 'date'> {
 export interface NamedStat {
   name: string
   orders: number
+  lines: number
   qty: number
   amount: number
 }
@@ -48,9 +51,9 @@ export interface Stats {
   regions: NamedStat[]
   cities: NamedStat[]
 }
-export type Metric = 'orders' | 'qty' | 'amount'
-export const METRIC_LABEL: Record<Metric, string> = { orders: '주문건수', qty: '판매수량', amount: '매출액' }
-export const METRIC_UNIT: Record<Metric, string> = { orders: '건', qty: '개', amount: '원' }
+export type Metric = 'orders' | 'lines' | 'qty' | 'amount'
+export const METRIC_LABEL: Record<Metric, string> = { orders: '주문건수', lines: '주문줄수', qty: '판매수량', amount: '매출액' }
+export const METRIC_UNIT: Record<Metric, string> = { orders: '건', lines: '줄', qty: '개', amount: '원' }
 
 export type Preset = 'month' | '30d' | 'lastMonth' | '7d' | 'year' | 'custom'
 export const PRESETS: { value: Preset; label: string }[] = [

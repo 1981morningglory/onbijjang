@@ -99,15 +99,17 @@ export function orderStats(batches, from, to, opts = {}) {
       const isNew = !orders.has(orderKey)
       const phone = [digits(r['전화번호1']), digits(r['전화번호2'])].find((p) => p.length >= 8)
       const customer = phone ?? `${str(r['수취인명'])}|${str(r['수취인주소'])}`
-      const o = orders.get(orderKey) ?? { date: b.date, qty: 0, amount: 0, customer }
+      const o = orders.get(orderKey) ?? { date: b.date, lines: 0, qty: 0, amount: 0, customer }
+      o.lines++
       o.qty += q
       o.amount += a
       orders.set(orderKey, o)
       if (isNew) customers.set(customer, (customers.get(customer) ?? 0) + 1)
       if (!detail) return
 
-      const m = malls.get(mall) ?? { name: mall, orders: 0, qty: 0, amount: 0 }
+      const m = malls.get(mall) ?? { name: mall, orders: 0, lines: 0, qty: 0, amount: 0 }
       if (isNew) m.orders++
+      m.lines++
       m.qty += q
       m.amount += a
       malls.set(mall, m)
@@ -116,7 +118,8 @@ export function orderStats(batches, from, to, opts = {}) {
       const name = str(r['상품명']) || str(r['상품명(수집/삭제)']) || '(상품명 없음)'
       const option = str(r['옵션'])
       const pk = code || `${name}|${option}`
-      const p = products.get(pk) ?? { code, name, option, qty: 0, orders: new Set(), amount: 0 }
+      const p = products.get(pk) ?? { code, name, option, lines: 0, qty: 0, orders: new Set(), amount: 0 }
+      p.lines++
       p.name = name
       p.option = option
       p.qty += q
@@ -125,13 +128,15 @@ export function orderStats(batches, from, to, opts = {}) {
       products.set(pk, p)
 
       const { sido, city } = region(r['수취인주소'])
-      const g = regions.get(sido) ?? { name: sido, orders: new Set(), qty: 0, amount: 0 }
+      const g = regions.get(sido) ?? { name: sido, orders: new Set(), lines: 0, qty: 0, amount: 0 }
+      g.lines++
       g.orders.add(orderKey)
       g.qty += q
       g.amount += a
       regions.set(sido, g)
       if (city && sido !== '기타') {
-        const c = cities.get(city) ?? { name: city, orders: new Set(), qty: 0, amount: 0 }
+        const c = cities.get(city) ?? { name: city, orders: new Set(), lines: 0, qty: 0, amount: 0 }
+        c.lines++
         c.orders.add(orderKey)
         c.qty += q
         c.amount += a
@@ -157,20 +162,22 @@ export function orderStats(batches, from, to, opts = {}) {
 
   // 날짜별(빈 날도 0으로)
   const byDate = new Map()
-  for (let d = from; d <= to; d = addDays(d, 1)) byDate.set(d, { date: d, orders: 0, qty: 0, amount: 0 })
+  for (let d = from; d <= to; d = addDays(d, 1)) byDate.set(d, { date: d, orders: 0, lines: 0, qty: 0, amount: 0 })
   for (const o of orders.values()) {
     const x = byDate.get(o.date)
     if (!x) continue
     x.orders++
+    x.lines += o.lines
     x.qty += o.qty
     x.amount += o.amount
   }
   // 요일별(일 0 … 토 6) + 기간 안 그 요일 날 수(하루 평균용)
-  const weekday = Array.from({ length: 7 }, (_, i) => ({ dow: i, orders: 0, qty: 0, amount: 0, days: 0 }))
+  const weekday = Array.from({ length: 7 }, (_, i) => ({ dow: i, orders: 0, lines: 0, qty: 0, amount: 0, days: 0 }))
   for (const x of byDate.values()) {
     const w = weekday[dow(x.date)]
     w.days++
     w.orders += x.orders
+    w.lines += x.lines
     w.qty += x.qty
     w.amount += x.amount
   }
