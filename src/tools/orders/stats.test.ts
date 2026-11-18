@@ -34,7 +34,8 @@ describe('주문 통계', () => {
     expect(s.daily).toHaveLength(8)
     // 11-02: 주문 2건, 줄 3개(주문 1의 두 줄 + 주문 2) — 취소 줄은 빼고
     expect(s.daily.find((d) => d.date === '2026-11-02')).toMatchObject({ orders: 2, lines: 3, qty: 4, amount: 35000 })
-    expect(s.weekday[1]).toMatchObject({ orders: 2, days: 1 }) // 기간 안 월요일은 11-02 하루
+    expect(s.weekday[1]).toMatchObject({ orders: 2, days: 1, active: 1 })
+    expect(s.weekday[0]).toMatchObject({ orders: 0, days: 2, active: 0 }) // 일요일 11-01·11-08 은 주문 없음 // 기간 안 월요일은 11-02 하루
     expect(s.weekday[1].lines).toBe(3)
     expect(s.weekday[6]).toMatchObject({ orders: 1, lines: 1 })
     expect(s.daily.reduce((n, d) => n + d.lines, 0)).toBe(s.totals.lines)
