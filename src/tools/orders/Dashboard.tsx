@@ -3,7 +3,7 @@
 // 처음 보일 때·기간이나 기준을 바꿀 때 막대가 자라고 선이 그려지며 숫자가 올라간다(움직임 줄이기 설정이면 바로 보인다).
 // 색: 검증한 범주 색 순서(설문폼 그래프와 같은 SERIES). 글자는 늘 글자색, 색만으로 구분하지 않게 이름·값을 함께 적는다.
 import clsx from 'clsx'
-import { BarChart3, CalendarDays, ChartLine, Crown, MapPin, Package, Receipt, RefreshCw, ShoppingBag, Store, TrendingDown, TrendingUp, Undo2, Users, type LucideIcon } from 'lucide-react'
+import { BarChart3, CalendarDays, ChartLine, LayoutGrid, MoreHorizontal, Crown, MapPin, Package, Receipt, RefreshCw, ShoppingBag, Store, TrendingDown, TrendingUp, Undo2, Users, type LucideIcon } from 'lucide-react'
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { api } from '@/lib/api'
 import { Callout, EmptyState, IconButton, Segmented, Spinner, TextInput } from '@/ui'
@@ -496,6 +496,46 @@ function ProductTable({ items, metric, hasAmount, animKey }: { items: ProductSta
   )
 }
 
+/** 베스트 상품 거래처 고르기: 전체 · 주문건수 상위 5곳 · 기타(6위부터). 동그란 아이콘을 눌러 고른다 */
+function MallPicker({ malls, value, onValue, colorOf, stats }: { malls: string[]; value: string; onValue: (v: string) => void; colorOf: (name: string) => string; stats: NamedStat[] }) {
+  const total = stats.reduce((s, m) => s + m.orders, 0)
+  const ordersOf = (name: string) => (name === '' ? total : name === '기타' ? stats.filter((m) => !malls.includes(m.name)).reduce((s, m) => s + m.orders, 0) : (stats.find((m) => m.name === name)?.orders ?? 0))
+  const items = ['', ...malls, ...(stats.length > malls.length ? ['기타'] : [])]
+  return (
+    <div role="radiogroup" aria-label="거래처별 베스트 상품" className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
+      {items.map((name, i) => {
+        const on = value === name
+        const n = ordersOf(name)
+        return (
+          <button
+            key={name || 'all'}
+            type="button"
+            role="radio"
+            aria-checked={on}
+            onClick={() => onValue(name)}
+            title={name === '기타' ? `6위부터 거래처 ${stats.length - malls.length}곳 합계 · 주문 ${fmt(n)}건` : `${name || '전체 거래처'} · 주문 ${fmt(n)}건`}
+            className={clsx(
+              'group animate-rise flex w-[4.75rem] shrink-0 flex-col items-center gap-1 rounded-xl border px-1 py-2 transition-colors',
+              on ? 'border-brand bg-brand-soft/60' : 'border-transparent hover:border-line hover:bg-paper',
+            )}
+            style={{ animationDelay: `${i * 40}ms` }}
+          >
+            <span
+              className={clsx('grid size-10 place-items-center rounded-full text-base font-bold text-white shadow-1 transition-transform', on ? 'scale-110 ring-2 ring-brand ring-offset-2 ring-offset-surface' : 'group-hover:scale-105')}
+              style={{ background: name === '' ? 'var(--color-brand)' : name === '기타' ? OTHER : colorOf(name) }}
+              aria-hidden
+            >
+              {name === '' ? <LayoutGrid className="size-5" /> : name === '기타' ? <MoreHorizontal className="size-5" /> : name.slice(0, 1)}
+            </span>
+            <span className={clsx('w-full truncate text-center text-xs', on ? 'font-bold text-ink' : 'font-semibold text-ink-2')}>{name || '전체'}</span>
+            <span className="text-2xs tabular-nums text-muted">{total ? `${Math.round((n / total) * 100)}%` : '-'}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 // ── 대시보드 ──────────────────────────────────────────────
 export function Dashboard() {
   const [preset, setPreset] = useState<Preset>('month')
@@ -523,6 +563,8 @@ export function Dashboard() {
   const [weekM, setWeekM] = useState<Metric>('orders')
   const [mallM, setMallM] = useState<Metric>('orders')
   const [prodM, setProdM] = useState<Metric>('qty')
+  /** 베스트 상품을 볼 거래처('' = 전체) */
+  const [prodMall, setProdMall] = useState('')
   const [regionM, setRegionM] = useState<Metric>('orders')
   const [tick, setTick] = useState(0)
 
@@ -571,6 +613,8 @@ export function Dashboard() {
   const hasAmount = data.hasAmount
   const regionTotal = data.regions.reduce((s, r) => s + r[regionM], 0)
   const mallTotal = data.malls.reduce((s, r) => s + r[mallM], 0)
+  // 기간을 바꿔 고른 거래처가 상위 5곳에서 빠지면 전체로
+  const mallSel = prodMall && data.productsByMall[prodMall] ? prodMall : ''
   const metricOr = (m: Metric): Metric => (m === 'amount' && !hasAmount ? 'orders' : m)
 
   return (
@@ -662,7 +706,13 @@ export function Dashboard() {
               <RankList items={data.malls} metric={metricOr(mallM)} colorOf={mallColor} total={mallTotal} animKey={`${k}|${mallM}`} sub={(it) => [`주문 ${fmt(it.orders)}건`, `수량 ${fmt(it.qty)}개`, hasAmount ? `매출 ${won(it.amount)}` : ''].filter(Boolean).join(' · ')} />
             </Card>
             <Card title="베스트 판매 제품" icon={Crown} delay={260} className="xl:col-span-3" right={<MetricSwitch value={metricOr(prodM)} onValue={setProdM} hasAmount={hasAmount} />}>
-              <ProductTable items={data.products} metric={metricOr(prodM)} hasAmount={hasAmount} animKey={`${k}|${prodM}`} />
+              <MallPicker malls={data.topMalls} value={mallSel} onValue={setProdMall} colorOf={mallColor} stats={data.malls} />
+              {mallSel && (
+                <p className="-mt-2 text-xs text-muted">
+                  <b className="text-ink-2">{mallSel === '기타' ? '기타(6위부터 거래처 합계)' : mallSel}</b>에서 많이 팔린 제품입니다.
+                </p>
+              )}
+              <ProductTable key={mallSel || 'all'} items={mallSel ? (data.productsByMall[mallSel] ?? []) : data.products} metric={metricOr(prodM)} hasAmount={hasAmount} animKey={`${k}|${prodM}|${mallSel}`} />
             </Card>
           </div>
 

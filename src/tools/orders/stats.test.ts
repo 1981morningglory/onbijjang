@@ -87,3 +87,18 @@ describe('토·일·공휴일', () => {
     expect(HOLIDAYS['2027-02-09']).toContain('대체공휴일')
   })
 })
+
+describe('거래처별 베스트 상품', () => {
+  it('주문건수 상위 5곳은 각각, 6위부터는 기타로 묶는다', () => {
+    const malls = ['A몰', 'B몰', 'C몰', 'D몰', 'E몰', 'F몰', 'G몰']
+    const rows = malls.flatMap((m, mi) =>
+      // A몰 7건 … G몰 1건, F·G몰은 같은 상품 X
+      Array.from({ length: 7 - mi }, (_, i) => row({ 쇼핑몰: m, 주문번호: `${m}${i}`, 상품코드: mi >= 5 ? 'X' : `P${mi}`, 상품명: mi >= 5 ? '기타상품' : `상품${mi}`, 수량: 2 })),
+    )
+    const s = orderStats([{ id: 'b', date: '2026-11-03', cols: ['주문번호'], rows }], '2026-11-01', '2026-11-30')
+    expect(s.topMalls).toEqual(['A몰', 'B몰', 'C몰', 'D몰', 'E몰'])
+    expect(s.productsByMall['A몰'][0]).toMatchObject({ code: 'P0', orders: 7, qty: 14 })
+    expect(s.productsByMall['기타']).toHaveLength(1)
+    expect(s.productsByMall['기타'][0]).toMatchObject({ code: 'X', orders: 3, qty: 6, lines: 3 }) // F몰 2건 + G몰 1건
+  })
+})

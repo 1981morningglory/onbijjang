@@ -75,6 +75,7 @@ export function orderStats(batches, from, to, opts = {}) {
   const cancelled = new Set()
   const malls = new Map()
   const products = new Map()
+  const mallProducts = new Map() // 거래처 → (상품 → 통계): 거래처별 베스트 상품
   const regions = new Map()
   const cities = new Map()
   const customers = new Map() // 고객 → 주문 수
@@ -118,14 +119,19 @@ export function orderStats(batches, from, to, opts = {}) {
       const name = str(r['상품명']) || str(r['상품명(수집/삭제)']) || '(상품명 없음)'
       const option = str(r['옵션'])
       const pk = code || `${name}|${option}`
-      const p = products.get(pk) ?? { code, name, option, lines: 0, qty: 0, orders: new Set(), amount: 0 }
-      p.lines++
-      p.name = name
-      p.option = option
-      p.qty += q
-      p.orders.add(orderKey)
-      p.amount += a
-      products.set(pk, p)
+      const addProduct = (map) => {
+        const p = map.get(pk) ?? { code, name, option, lines: 0, qty: 0, orders: new Set(), amount: 0 }
+        p.lines++
+        p.name = name
+        p.option = option
+        p.qty += q
+        p.orders.add(orderKey)
+        p.amount += a
+        map.set(pk, p)
+      }
+      addProduct(products)
+      if (!mallProducts.has(mall)) mallProducts.set(mall, new Map())
+      addProduct(mallProducts.get(mall))
 
       const { sido, city } = region(r['수취인주소'])
       const g = regions.get(sido) ?? { name: sido, orders: new Set(), lines: 0, qty: 0, amount: 0 }
@@ -183,6 +189,24 @@ export function orderStats(batches, from, to, opts = {}) {
     w.amount += x.amount
   }
   const flat = (x) => ({ ...x, orders: x.orders instanceof Set ? x.orders.size : x.orders })
+  const bestOf = (map) => [...map.values()].map(flat).sort((a, b) => b.qty - a.qty || b.orders - a.orders).slice(0, 30)
+  // 거래처별 베스트 상품: 주문건수 상위 5곳은 각각, 6위부터는 ‘기타’로 묶는다
+  const topMalls = top(malls, 'orders', 5).map((m) => m.name)
+  const productsByMall = {}
+  for (const name of topMalls) productsByMall[name] = bestOf(mallProducts.get(name) ?? new Map())
+  const rest = new Map()
+  for (const [name, map] of mallProducts) {
+    if (topMalls.includes(name)) continue
+    for (const [pk, p] of map) {
+      const r = rest.get(pk) ?? { code: p.code, name: p.name, option: p.option, lines: 0, qty: 0, orders: new Set(), amount: 0 }
+      r.lines += p.lines
+      r.qty += p.qty
+      r.amount += p.amount
+      for (const o of p.orders) r.orders.add(o)
+      rest.set(pk, r)
+    }
+  }
+  if (rest.size) productsByMall['기타'] = bestOf(rest)
   return {
     from,
     to,
@@ -191,7 +215,9 @@ export function orderStats(batches, from, to, opts = {}) {
     daily: [...byDate.values()],
     weekday,
     malls: top(malls, 'orders', 30),
-    products: [...products.values()].map(flat).sort((a, b) => b.qty - a.qty || b.orders - a.orders).slice(0, 30),
+    products: bestOf(products),
+    topMalls,
+    productsByMall,
     regions: [...regions.values()].map(flat).sort((a, b) => b.orders - a.orders),
     cities: [...cities.values()].map(flat).sort((a, b) => b.orders - a.orders).slice(0, 12),
   }
