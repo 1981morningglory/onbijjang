@@ -1,9 +1,9 @@
 import clsx from 'clsx'
-import { ArrowDown, ArrowUp, Ban, Check, Eye, EyeOff, KeyRound, Link2, Plus, Search, ShieldCheck, Sparkles, Trash2, UserPlus } from 'lucide-react'
+import { ArrowDown, ArrowUp, Ban, Check, Eye, EyeOff, Globe, KeyRound, LayoutList, Link2, Plus, Search, ShieldCheck, Sparkles, Star, Trash2, User, UserPlus, Users } from 'lucide-react'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { api } from '@/lib/api'
 import { Badge, Button, Callout, Dialog, EmptyState, Field, IconButton, Panel, Segmented, Select, Spinner, Switch, TextInput, toast } from '@/ui'
-import { canSee, groupOf, orderedGroups, useSite, type LinkApp, type SiteConfig } from './config'
+import { canSee, groupOf, minRole, orderedGroups, ROLE_LADDER, useSite, type LinkApp, type MinRole, type SiteConfig } from './config'
 import { GROUPS, TOOLS, artUrl, type GroupId } from './registry'
 import { ACCOUNT_ROLES, ALL_ROLES, ROLE_LABEL, ROLE_OPTIONS, useViewerStore, type Access, type AccountRole, type PublicUser, type Role } from './viewer'
 
@@ -171,6 +171,32 @@ export function DeletedEditor({ draft, setDraft }: { draft: SiteConfig; setDraft
   )
 }
 
+// ── 최소 사용 등급 배지 ───────────────────────────────────
+/** 등급마다 옅은 색 하나 + 아이콘(색만으로 구분하지 않게 글자도 함께) */
+const MIN_ROLE_STYLE: Record<MinRole, { label: string; icon: typeof User; cls: string }> = {
+  guest: { label: '전체', icon: Globe, cls: 'border-line-strong bg-sunken text-ink-2' },
+  general: { label: '사용자', icon: User, cls: 'border-info/25 bg-info-soft text-info' },
+  member: { label: '직원', icon: Users, cls: 'border-brand/25 bg-brand-soft text-brand-ink' },
+  staff: { label: '스탭', icon: Star, cls: 'border-violet/25 bg-violet-soft text-violet' },
+}
+/** 따로 허용하지 않아도 이 앱을 쓸 수 있는 최소 등급: [직원] · [스탭] … */
+export function MinRoleBadge({ entry, className }: { entry: Pick<SiteConfig['tools'][string], 'roles'> | undefined; className?: string }) {
+  const r = minRole(entry)
+  const st = MIN_ROLE_STYLE[r]
+  const Icon = st.icon
+  // 최소 등급보다 높은데 빠진 등급이 있으면(드문 설정) 알려 준다
+  const gaps = ROLE_LADDER.slice(ROLE_LADDER.indexOf(r) + 1).filter((x) => x !== 'staff' && !entry?.roles.includes(x))
+  const title = `따로 허용하지 않아도 ${ROLE_LABEL[r]}${r === 'staff' ? '' : ' 이상'}이면 쓸 수 있습니다${gaps.length ? ` (단, ${gaps.map((g) => ROLE_LABEL[g]).join('·')}에게는 감춤)` : ''}`
+  return (
+    <span title={title} className={clsx('inline-flex h-5 shrink-0 items-center gap-0.5 rounded-full border px-1.5 text-2xs font-bold whitespace-nowrap', st.cls, className)}>
+      <Icon className="size-3" aria-hidden />
+      {st.label}
+      {gaps.length > 0 && '*'}
+      <span className="sr-only"> 등급부터 사용</span>
+    </span>
+  )
+}
+
 // ── 계정 관리 ─────────────────────────────────────────────
 const ROLE_RANK: Record<AccountRole, number> = { admin: 0, staff: 1, member: 2, general: 3 }
 const fmtDate = (s: string | null) => (s ? new Date(s).toLocaleString('ko-KR', { year: '2-digit', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-')
@@ -239,6 +265,7 @@ function AccessDialog({ user, onClose, onSaved }: { user: PublicUser | null; onC
                           <span className="flex items-center gap-2 font-semibold text-ink">
                             {it.art ? <img src={artUrl(it.art)} alt="" className="size-7 object-contain" /> : <Link2 className="size-5 text-brand" aria-hidden />}
                             {it.title}
+                            <MinRoleBadge entry={it.entry} />
                             {!it.entry.enabled && <Badge>꺼짐</Badge>}
                           </span>
                         </td>
@@ -421,6 +448,8 @@ export function AccountsEditor() {
         )}
       </Panel>
 
+      {users && users.length > 0 && <AppUsersBoard users={users} />}
+
       <AccessDialog user={accessOf} onClose={() => setAccessOf(null)} onSaved={(u) => { replace(u); setAccessOf(u) }} />
 
       <Dialog
@@ -485,6 +514,122 @@ export function AccountsEditor() {
         </p>
       </Dialog>
     </div>
+  )
+}
+
+// ── 앱별 사용 가능한 사람(게시판) ─────────────────────────
+const ROLE_DOT: Record<AccountRole, string> = { admin: 'bg-accent', staff: 'bg-violet', member: 'bg-brand', general: 'bg-info' }
+/** 앱마다 지금 쓸 수 있는 계정(등급으로 또는 개인 허용으로). 사용 중지한 계정·개인 차단은 뺀다 */
+function AppUsersBoard({ users }: { users: PublicUser[] }) {
+  const config = useSite((s) => s.config)
+  const [q, setQ] = useState('')
+  const [withTop, setWithTop] = useState(true)
+  const items: Array<{ key: string; title: string; group: GroupId; entry: SiteConfig['tools'][string]; art?: string }> = [
+    ...TOOLS.filter((t) => !config.tools[t.id]?.deleted).map((t) => ({ key: t.id, title: t.title, group: groupOf(config, t), entry: config.tools[t.id], art: t.art })),
+    ...config.links.filter((l) => !l.deleted).map((l) => ({ key: `link-${l.id}`, title: l.title, group: l.group, entry: l })),
+  ]
+  const active = users.filter((u) => !u.disabled).sort((a, b) => ROLE_RANK[a.role] - ROLE_RANK[b.role] || a.name.localeCompare(b.name, 'ko'))
+  const k = q.trim().toLowerCase()
+  const hit = (u: PublicUser) => !!k && `${u.name} ${u.username}`.toLowerCase().includes(k)
+  const whoCan = (key: string, entry: SiteConfig['tools'][string] | undefined) =>
+    active
+      .filter((u) => (u.role === 'admin' ? !!entry?.enabled || !entry : canSee(entry, key, { role: u.role as Role, access: u.access ?? {} })))
+      .map((u) => ({ u, allowed: u.access?.[key] === 'allow' && u.role !== 'admin' && u.role !== 'staff' && !entry?.roles.includes(u.role as Role) }))
+  return (
+    <Panel className="overflow-hidden">
+      <div className="flex flex-wrap items-center gap-3 border-b border-line bg-paper px-4 py-3">
+        <LayoutList className="size-[18px] text-brand" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <h3 className="text-base">앱별 사용 가능한 사람</h3>
+          <p className="text-xs text-muted">지금 설정으로 각 앱을 쓸 수 있는 계정입니다(등급 + 개인 허용, 개인 차단·사용 중지 계정은 뺌). <span className="font-semibold text-accent">허용</span> 표시는 등급으로는 못 쓰지만 따로 허용한 사람입니다.</p>
+        </div>
+        <Switch className="w-auto!" checked={withTop} onChange={setWithTop} label={<span className="text-sm">전체마스터·스탭도 보기</span>} />
+        <label className="flex h-9 w-full items-center gap-2 rounded-md border border-line-strong bg-surface px-3 sm:w-56">
+          <Search className="size-4 text-muted" aria-hidden />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="사람 이름으로 찾기" aria-label="사람으로 앱 찾기" className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-faint" />
+        </label>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[720px] text-sm">
+          <thead className="text-left text-xs text-muted">
+            <tr className="border-b border-line">
+              <th className="w-56 px-4 py-2 font-semibold">앱</th>
+              <th className="w-20 px-2 py-2 font-semibold">최소 등급</th>
+              <th className="px-4 py-2 font-semibold">사용 가능한 사람(아이디)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {orderedGroups(config).map((g) => {
+              const rows = items
+                .filter((it) => it.group === g.id)
+                .map((it) => ({ it, list: whoCan(it.key, it.entry) }))
+                .filter(({ list }) => !k || list.some(({ u }) => hit(u)))
+              if (!rows.length) return null
+              return [
+                <tr key={`g-${g.id}`} className="bg-paper">
+                  <td colSpan={3} className="px-4 py-1.5 text-xs font-bold text-muted">
+                    {g.title}
+                  </td>
+                </tr>,
+                ...rows.map(({ it, list }) => {
+                  const off = it.entry && !it.entry.enabled
+                  const everyone = minRole(it.entry) === 'guest' && !off
+                  const shown = list.filter(({ u }) => withTop || (u.role !== 'admin' && u.role !== 'staff'))
+                  const hiddenTop = list.length - shown.length
+                  return (
+                    <tr key={it.key} className="border-t border-line align-top">
+                      <td className="px-4 py-2.5">
+                        <span className="flex items-center gap-2 font-semibold text-ink">
+                          {it.art ? <img src={artUrl(it.art)} alt="" className="size-7 shrink-0 object-contain" /> : <Link2 className="size-5 shrink-0 text-brand" aria-hidden />}
+                          <span className="min-w-0">
+                            {it.title}
+                            <span className="num ml-1 text-xs font-normal text-muted">{off ? '' : `${list.length}명`}</span>
+                          </span>
+                        </span>
+                      </td>
+                      <td className="px-2 py-3">
+                        <MinRoleBadge entry={it.entry} />
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {off ? (
+                          <span className="text-xs text-muted">메뉴가 꺼져 있어 아무도 쓸 수 없습니다(전체마스터만 관리 화면에서 확인).</span>
+                        ) : (
+                          <div className="flex flex-wrap items-center gap-1">
+                            {everyone && <span className="mr-1 rounded-full bg-sunken px-2 py-0.5 text-xs font-semibold text-ink-2">로그인하지 않아도 누구나</span>}
+                            {shown.map(({ u, allowed }) => (
+                              <span
+                                key={u.id}
+                                title={`${u.name}(${u.username}) · ${ROLE_LABEL[u.role]}${allowed ? ' · 개인 허용' : ''}`}
+                                className={clsx('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs', hit(u) ? 'border-mark bg-mark-soft font-bold text-ink' : allowed ? 'border-accent/40 bg-accent-soft/60 text-ink' : 'border-line bg-surface text-ink-2')}
+                              >
+                                <span className={clsx('size-1.5 rounded-full', ROLE_DOT[u.role])} aria-hidden />
+                                <span className="font-semibold">{u.name}</span>
+                                <span className="num text-muted">{u.username}</span>
+                                {allowed && <span className="font-bold text-accent">허용</span>}
+                              </span>
+                            ))}
+                            {hiddenTop > 0 && <span className="text-xs text-muted">+ 전체마스터·스탭 {hiddenTop}명</span>}
+                            {!list.length && <span className="text-xs text-muted">쓸 수 있는 계정이 없습니다.</span>}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                }),
+              ]
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-line px-4 py-2 text-2xs text-muted">
+        {(['admin', 'staff', 'member', 'general'] as AccountRole[]).map((r) => (
+          <span key={r} className="inline-flex items-center gap-1">
+            <span className={clsx('size-1.5 rounded-full', ROLE_DOT[r])} aria-hidden />
+            {ROLE_LABEL[r]}
+          </span>
+        ))}
+      </div>
+    </Panel>
   )
 }
 
