@@ -266,6 +266,15 @@ export function canSee(entry: MenuEntry | undefined, id: string, viewer: Viewer)
   return entry.roles.includes(viewer.role)
 }
 
+/** 아래 등급부터: 전체공개 → 사용자등급 → 직원등급 → 스탭(스탭은 켜진 앱을 모두 쓴다) */
+export const ROLE_LADDER = ['guest', 'general', 'member', 'staff'] as const
+export type MinRole = (typeof ROLE_LADDER)[number]
+/** 따로 허용하지 않아도 이 앱을 쓸 수 있는 가장 낮은 등급 */
+export function minRole(entry: Pick<MenuEntry, 'roles'> | undefined): MinRole {
+  if (!entry) return 'guest'
+  return ROLE_LADDER.find((r) => r === 'staff' || entry.roles.includes(r)) ?? 'staff'
+}
+
 /** 등급 때문에 못 보는 것인가(꺼짐·삭제가 아니라) */
 export function hiddenByRole(entry: MenuEntry | undefined, id: string, viewer: Viewer): boolean {
   return Boolean(entry && entry.enabled && !entry.deleted && !canSee(entry, id, viewer))
