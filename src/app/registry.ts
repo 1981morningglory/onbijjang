@@ -175,6 +175,13 @@ export const TOOLS: ToolDef[] = [
     component: lazy(() => import('@/tools/orders')),
   },
   {
+    id: 'rocket', group: 'doc', title: '로켓발주입고관리(온비팀전용)',
+    summary: '쿠팡 서플라이어 허브 발주서(CSV)를 열어 센터별 확정·미확정을 요약하고, SKU합계·상품목록(인쇄 양식) 엑셀로 받기',
+    keywords: ['쿠팡', '로켓', '로켓배송', '발주', '발주서', '입고', '서플라이어', '서플라이어허브', 'PO', 'SKU', '물류센터', '미확정', '확정', '상품목록', '온비'],
+    icon: Rocket, art: 'rocket', local: true, wide: true, roles: ['staff', 'admin'],
+    component: lazy(() => import('@/tools/rocket')),
+  },
+  {
     id: 'quote', group: 'doc', title: '견적서·거래명세서',
     summary: '팀 코드로 들어가 견적서·거래명세서를 만들고, 팀 문서함에서 날짜·거래처·품목별로 찾아 PDF·엑셀로',
     keywords: ['견적', '견적서', '거래명세서', '명세표', '명세서', '인보이스', '직인', '사업자등록증', '통장사본', '엑셀', '팀', '문서함', '거래처'],

@@ -3,7 +3,7 @@ import { normalizeConfig } from './config'
 
 describe('신상앱', () => {
   it('설정이 없던 서버: 출시 뒤 추가한 앱(바코드·당근·설문폼·주문서만들기·사주풀이·추첨 시스템·SNS 영상 받기·체험단 SNS 선발)이 신상앱', () => {
-    expect(normalizeConfig({ version: 1, tools: {} }).newApps.items.sort()).toEqual(['barcode', 'carrot', 'draw', 'forms', 'orders', 'saju', 'saver', 'sns'])
+    expect(normalizeConfig({ version: 1, tools: {} }).newApps.items.sort()).toEqual(['barcode', 'carrot', 'draw', 'forms', 'orders', 'rocket', 'saju', 'saver', 'sns'])
   })
   it('SNS 영상 받기는 처음엔 직원등급 이상만', () => {
     expect(normalizeConfig({ version: 1, tools: {} }).tools.saver.roles.sort()).toEqual(['admin', 'member', 'staff'])
